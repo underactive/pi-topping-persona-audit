@@ -1,0 +1,48 @@
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# TypeScript build output
+dist/
+out/
+*.tsbuildinfo
+
+# OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# IDE
+.idea/
+.vscode/
+*.sublime-*
+*.code-workspace
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Pi runtime — generated output only; agent definitions live in agents/
+.pi/
+
+# Test artifacts
+coverage/
+.tmp/
+*.test.ts.snap
+
+# Logs
+logs/
+*.log
+
+# Temp
+tmp/
+temp/
+scratchpad*
+
+# Local agent notes (not part of this repo's tracked docs)
+AGENTS.md

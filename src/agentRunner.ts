@@ -1,0 +1,339 @@
+/**
+ * In-process agent-session task runner — replaces the headless
+ * `pi --mode json -p --no-session --no-extensions` subprocess with pi's
+ * public createAgentSession() SDK.
+ *
+ * createAgentSession() takes a ModelRuntime, not the ModelRegistry facade
+ * extensions receive as ctx.modelRegistry, so a bridge/extension-registered
+ * provider (mutated as data onto the *interactive* session's own runtime)
+ * is invisible to the fresh ModelRuntime createAgentSession would otherwise
+ * build. buildRuntimeWithExtensionProviders() replays each registration onto
+ * a fresh runtime instead: registerProvider()'s config carries live closures
+ * (e.g. a bridge's streamSimple dispatcher) by reference, so behavior is
+ * preserved even though the runtime object itself is a new instance.
+ *
+ * noExtensions: true is a self-recursion guard, not just isolation:
+ * pi-topping-persona-audit is itself an extension, and a child session that loaded it
+ * could re-register /persona-audit.
+ */
+
+import { join } from "node:path";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import {
+  createAgentSession,
+  DefaultResourceLoader,
+  getAgentDir,
+  ModelRuntime,
+  SessionManager,
+  SettingsManager,
+  type AgentSession,
+  type AgentSessionEvent,
+  type ModelRegistry,
+} from "@earendil-works/pi-coding-agent";
+import { formatToolActivity, OutputActivityTracker } from "./subprocess.ts";
+import type { HeadlessOptions, HeadlessResult, HeadlessUsage } from "./types.ts";
+
+export type SessionMessage = AgentSession["messages"][number];
+
+/** Last assistant text block — primary output channel. */
+export function getFinalAssistantText(messages: readonly SessionMessage[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg && msg.role === "assistant") {
+      for (const part of msg.content) {
+        if (part.type === "text") return part.text;
+      }
+    }
+  }
+  return "";
+}
+
+/**
+ * Concatenate ALL assistant text blocks in order. Reviewer JSON-lines output
+ * may be spread across multiple assistant messages (interleaved with tool
+ * calls), so collection parses this superset rather than only the last block.
+ */
+export function getAllAssistantText(messages: readonly SessionMessage[]): string {
+  const parts: string[] = [];
+  for (const msg of messages) {
+    if (msg.role !== "assistant") continue;
+    for (const part of msg.content) {
+      if (part.type === "text" && part.text.trim()) parts.push(part.text);
+    }
+  }
+  return parts.join("\n");
+}
+
+// ── Model resolution (ported from @tintinweb/pi-subagents' model-resolver.ts) ──
+
+/** Exact "provider/id" match, then fuzzy fallback (frontmatter `model:` may hold a fuzzy string like "sonnet"); throws with the available-model list when nothing matches. */
+export function resolveModelRef(input: string | undefined, registry: ModelRegistry): Model<Api> | undefined {
+  if (!input) return undefined;
+
+  const all = registry.getAvailable();
+  const availableSet = new Set(all.map((m) => `${m.provider}/${m.id}`.toLowerCase()));
+
+  const slashIdx = input.indexOf("/");
+  if (slashIdx !== -1) {
+    const provider = input.slice(0, slashIdx);
+    const modelId = input.slice(slashIdx + 1);
+    if (availableSet.has(input.toLowerCase())) {
+      const found = registry.find(provider, modelId);
+      if (found) return found;
+    }
+  }
+
+  const normalize = (s: string) => s.toLowerCase().replace(/\./g, "-");
+  const query = normalize(input);
+
+  let bestMatch: Model<Api> | undefined;
+  let bestScore = 0;
+  for (const m of all) {
+    const id = normalize(m.id);
+    const name = normalize(m.name);
+    const full = normalize(`${m.provider}/${m.id}`);
+    let score = 0;
+    if (id === query || full === query) {
+      score = 100;
+    } else if (id.includes(query) || full.includes(query)) {
+      score = 60 + (query.length / id.length) * 30;
+    } else if (name.includes(query)) {
+      score = 40 + (query.length / name.length) * 20;
+    } else if (
+      query
+        .split(/[\s\-/]+/)
+        .every((part) => /^\d{8}$/.test(part) || id.includes(part) || name.includes(part) || m.provider.toLowerCase().includes(part))
+    ) {
+      score = 20;
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      bestMatch = m;
+    }
+  }
+
+  if (bestMatch && bestScore >= 20) {
+    const found = registry.find(bestMatch.provider, bestMatch.id);
+    if (found) return found;
+  }
+
+  // Retry bare (no provider) so the same model under a different provider still resolves.
+  if (slashIdx !== -1) {
+    const bare = resolveModelRef(input.slice(slashIdx + 1), registry);
+    if (bare) return bare;
+  }
+
+  const modelList = all
+    .map((m) => `  ${m.provider}/${m.id}`)
+    .sort()
+    .join("\n");
+  throw new Error(`Model not found: "${input}".\n\nAvailable models:\n${modelList}`);
+}
+
+// Lives for as long as the registry object itself: pi hands extensions a
+// stable registry per session, and dropping the registry drops its runtime
+// cache with it — same lifetime rule as CATALOGUES in modelCatalogue.ts.
+const RUNTIMES = new WeakMap<ModelRegistry, Promise<ModelRuntime>>();
+
+function emptyUsage(): HeadlessUsage {
+  return { turns: 0, contextTokens: 0 };
+}
+
+function failedResult(errorMessage: string): HeadlessResult {
+  return {
+    finalText: "",
+    allText: "",
+    aborted: false,
+    stopReason: "error",
+    errorMessage,
+    usage: emptyUsage(),
+  };
+}
+
+/** Builds the resource loader with noExtensions: true — the self-recursion guard — broken out so it's directly testable rather than only reachable through a full session run. */
+export function createIsolatedResourceLoader(cwd: string, agentDir: string, systemPrompt: string): DefaultResourceLoader {
+  return new DefaultResourceLoader({
+    cwd,
+    agentDir,
+    noExtensions: true,
+    noContextFiles: true,
+    // Appends rather than replaces, matching --append-system-prompt's semantics.
+    appendSystemPromptOverride: (base) => (systemPrompt.trim() ? [...base, systemPrompt] : base),
+  });
+}
+
+/**
+ * Builds a ModelRuntime scoped to agentDir's auth.json/models.json (so normal
+ * stored-credential models resolve exactly as createAgentSession's own default
+ * runtime would), replaying every provider the extension host has registered
+ * at runtime (bridge/extension providers registered via
+ * ModelRegistry.registerProvider()) so those models carry the same auth here.
+ *
+ * Cached per registry — building costs two JSON reads plus a refresh(), and a
+ * session's registry stays the same across the ~200 agent sessions one audit runs.
+ */
+export function buildRuntimeWithExtensionProviders(source: ModelRegistry, agentDir: string): Promise<ModelRuntime> {
+  const cached = RUNTIMES.get(source);
+  if (cached) return cached;
+  const built = buildRuntime(source, agentDir);
+  RUNTIMES.set(source, built);
+  return built;
+}
+
+async function buildRuntime(source: ModelRegistry, agentDir: string): Promise<ModelRuntime> {
+  const runtime = await ModelRuntime.create({
+    authPath: join(agentDir, "auth.json"),
+    modelsPath: join(agentDir, "models.json"),
+  });
+  for (const providerId of source.getRegisteredProviderIds()) {
+    const native = source.getRegisteredNativeProvider(providerId);
+    if (native) {
+      runtime.registerNativeProvider(native);
+      continue;
+    }
+    const config = source.getRegisteredProviderConfig(providerId);
+    if (config) runtime.registerProvider(providerId, config);
+  }
+  await runtime.refresh({ allowNetwork: false });
+  return runtime;
+}
+
+/** Never rejects; all failures land in the returned HeadlessResult. */
+export async function runAgentSession(opts: HeadlessOptions): Promise<HeadlessResult> {
+  let session: AgentSession;
+  try {
+    const resolvedModel = resolveModelRef(opts.model, opts.modelRegistry);
+    const agentDir = getAgentDir();
+    const modelRuntime = await buildRuntimeWithExtensionProviders(opts.modelRegistry, agentDir);
+    const loader = createIsolatedResourceLoader(opts.cwd, agentDir, opts.systemPrompt);
+    await loader.reload();
+
+    const created = await createAgentSession({
+      cwd: opts.cwd,
+      agentDir,
+      modelRuntime,
+      model: resolvedModel,
+      // "max" isn't in the installed SDK's ThinkingLevel type yet; the picker can never produce it, so fall back to the session default.
+      thinkingLevel: opts.thinking === "max" ? undefined : opts.thinking,
+      tools: opts.tools,
+      resourceLoader: loader,
+      sessionManager: SessionManager.inMemory(opts.cwd),
+      settingsManager: SettingsManager.create(opts.cwd, agentDir),
+    });
+    session = created.session;
+    session.setSessionName(opts.agentName);
+  } catch (error) {
+    return failedResult(error instanceof Error ? error.message : String(error));
+  }
+
+  const tracker = new OutputActivityTracker();
+  const usage = emptyUsage();
+  let activity: string | undefined;
+  let lastProgressAt = 0;
+  let provider: string | undefined;
+  let modelId: string | undefined;
+  let stopReason: string | undefined;
+  let errorMessage: string | undefined;
+  let aborted = false;
+  let idleTimedOut = false;
+
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  let lastEventAt = Date.now();
+  const armIdleTimer = () => {
+    if (!opts.idleTimeoutMs || opts.idleTimeoutMs <= 0) return;
+    const idleTimeoutMs = opts.idleTimeoutMs;
+    if (idleTimer) clearTimeout(idleTimer);
+    const checkIdle = () => {
+      const elapsed = Date.now() - lastEventAt;
+      if (elapsed >= idleTimeoutMs) {
+        idleTimedOut = true;
+        aborted = true;
+        session.abort();
+        return;
+      }
+      idleTimer = setTimeout(checkIdle, idleTimeoutMs - elapsed);
+    };
+    idleTimer = setTimeout(checkIdle, idleTimeoutMs);
+  };
+
+  const unsubscribe = session.subscribe((event: AgentSessionEvent) => {
+    lastEventAt = Date.now();
+    if (event.type === "message_start" && event.message.role === "assistant") {
+      tracker.messageStart(event.message);
+    }
+    if (event.type === "message_update" && event.message.role === "assistant") {
+      tracker.messageUpdate(event.assistantMessageEvent, event.message);
+      const liveTotal = event.message.usage?.totalTokens;
+      if (liveTotal && liveTotal > usage.contextTokens) usage.contextTokens = liveTotal;
+    }
+    if (event.type === "message_end" && event.message.role === "assistant") {
+      const msg = event.message;
+      tracker.messageEnd(msg);
+      usage.turns++;
+      if (msg.usage) {
+        usage.contextTokens = msg.usage.totalTokens || 0;
+      }
+      if (!provider && msg.provider) provider = msg.provider;
+      if (!modelId && msg.model) modelId = msg.model;
+      if (msg.stopReason) stopReason = msg.stopReason;
+      if (msg.errorMessage) errorMessage = msg.errorMessage;
+    }
+    if (event.type === "tool_execution_start") {
+      activity = formatToolActivity(event.toolName, event.args);
+    }
+    const output = tracker.snapshot();
+    const now = Date.now();
+    if (event.type === "message_end" || now - lastProgressAt >= 50) {
+      lastProgressAt = now;
+      opts.onProgress?.({
+        contextTokens: usage.contextTokens,
+        turns: usage.turns,
+        activity,
+        outputTokens: output.tokens,
+        outputRevision: output.revision,
+        provider,
+        model: modelId,
+      });
+    }
+  });
+
+  const abortListener = () => {
+    aborted = true;
+    session.abort();
+  };
+  if (opts.signal?.aborted) {
+    // Already aborted before this task was scheduled (e.g. a queued
+    // mapWithConcurrencyLimit task whose turn came up after cancellation) —
+    // skip the LLM call entirely rather than starting a prompt only to abort it.
+    aborted = true;
+    unsubscribe();
+  } else {
+    opts.signal?.addEventListener("abort", abortListener, { once: true });
+    armIdleTimer();
+    try {
+      await session.prompt(opts.task);
+    } finally {
+      if (idleTimer) clearTimeout(idleTimer);
+      unsubscribe();
+      opts.signal?.removeEventListener("abort", abortListener);
+    }
+  }
+
+  if (idleTimedOut) {
+    stopReason = "error";
+    errorMessage = `killed after ${opts.idleTimeoutMs}ms with no output (hang detected)`;
+  }
+
+  const finalText = getFinalAssistantText(session.messages);
+  const allText = getAllAssistantText(session.messages);
+  session.dispose();
+
+  return {
+    finalText,
+    allText,
+    aborted,
+    stopReason,
+    errorMessage,
+    usage,
+  };
+}
