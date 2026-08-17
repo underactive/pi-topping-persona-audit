@@ -241,13 +241,14 @@ export function extractJsonArray(text: string): unknown[] | null {
 export function annotateFindings(
   base: Finding[],
   texts: string[],
-): { findings: Finding[]; note?: string } {
+): { findings: Finding[]; note?: string; matched: number } {
   const items = firstJsonArray(texts);
 
   if (!items || items.length === 0) {
     return {
       findings: base.map((f) => ({ ...f, recommendation: "defer" })),
       note: "adjudicator output was unparsable — findings triaged without recommendations",
+      matched: 0,
     };
   }
 
@@ -282,7 +283,7 @@ export function annotateFindings(
     matched < base.length
       ? `adjudicator annotated ${matched}/${base.length} findings — the rest default to apply in triage`
       : undefined;
-  return { findings, note };
+  return { findings, note, matched };
 }
 
 function firstJsonArray(texts: string[]): unknown[] | null {
@@ -1550,13 +1551,31 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
       }) — findings triaged without recommendations`;
       progress?.settleRow(RECONCILE_ROW, "error", "no recommendations");
     } else {
-      const annotated = annotateFindings(collection.dedupedFindings, [
+      let annotated = annotateFindings(collection.dedupedFindings, [
         reconcileResult.finalText,
         reconcileResult.allText,
       ]);
+      // A session that succeeded but produced nothing usable gets one more
+      // chance before every finding falls back to a reason-less defer.
+      if (annotated.matched === 0 && collection.dedupedFindings.length > 0 && !input.signal?.aborted) {
+        progress?.startRow(RECONCILE_ROW, "output unusable — retrying…");
+        const retryRun = await runAgentSession(reconcileOptions);
+        if (!isFailedRun(retryRun)) {
+          const retried = annotateFindings(collection.dedupedFindings, [retryRun.finalText, retryRun.allText]);
+          if (retried.matched > 0) {
+            annotated = retried;
+          } else if (retried.note) {
+            annotated = { ...retried, note: `${retried.note} (after one retry)` };
+          }
+        }
+      }
       annotatedFindings = annotated.findings;
       diagnostics.annotationNote = annotated.note;
-      progress?.settleRow(RECONCILE_ROW, "done", `${annotatedFindings.length} annotated`);
+      progress?.settleRow(
+        RECONCILE_ROW,
+        annotated.matched > 0 ? "done" : "error",
+        `${annotated.matched}/${collection.dedupedFindings.length} annotated`,
+      );
     }
 
     if (input.signal?.aborted) {
@@ -1572,12 +1591,17 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
     runSummary.note = "awaiting triage decisions";
     refreshSummary();
     const { showFindingsReview } = await import("./components/FindingsReview.ts");
-    const review = await showFindingsReview(ctx, annotatedFindings, {
-      slug,
-      isoDate: iso,
-      scope: input.scope,
-      reviewers: selection.reviewers,
-    });
+    const review = await showFindingsReview(
+      ctx,
+      annotatedFindings,
+      {
+        slug,
+        isoDate: iso,
+        scope: input.scope,
+        reviewers: selection.reviewers,
+      },
+      diagnostics.annotationNote,
+    );
 
     if (!review) {
       const relPath = await writePartial(

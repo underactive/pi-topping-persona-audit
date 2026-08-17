@@ -211,3 +211,20 @@ test("any other key disarms the cancel and keeps the triage decisions", () => {
   assert.equal(result.rejected.length, 1, "the earlier reject survived the disarmed cancel");
   assert.equal(result.accepted.length, 2);
 });
+
+test("a degradation note renders as a header warning, and only when provided", () => {
+  const host: ReviewHost = { requestRender: () => {}, terminal: { rows: 40 } };
+  const note = "adjudicator output was unparsable — findings triaged without recommendations";
+
+  const withNote = new FindingsReview([finding(1)], theme, () => {}, host, async () => "handoff.md", note);
+  assert.ok(
+    withNote.render(WIDTH).map(strip).some((line) => line.includes("⚠ adjudicator output was unparsable")),
+    "the warning line appears in the header",
+  );
+
+  const withoutNote = new FindingsReview([finding(1)], theme, () => {}, host, async () => "handoff.md");
+  assert.ok(
+    !withoutNote.render(WIDTH).map(strip).some((line) => line.includes("⚠")),
+    "no warning line without a note",
+  );
+});

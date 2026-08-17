@@ -21,12 +21,32 @@ test("annotateFindings defaults every finding to defer when adjudicator output i
     finding({ file: "src/c.ts", line: 7, category: "performance" }),
   ];
 
-  const { findings, note } = annotateFindings(base, ["the adjudicator rambled instead"]);
+  const { findings, note, matched } = annotateFindings(base, ["the adjudicator rambled instead"]);
 
   for (const f of findings) {
     assert.equal(f.recommendation, "defer", `expected defer for ${f.file}:${f.line} ${f.category}`);
   }
   assert.ok(note?.includes("unparsable"));
+  assert.equal(matched, 0);
+});
+
+test("annotateFindings reports how many findings the adjudicator actually matched", () => {
+  const base = [finding(), finding({ file: "src/b.ts", line: 3, category: "bug" })];
+  const output = JSON.stringify([
+    { ...finding(), recommendation: "apply" },
+  ]);
+
+  const { matched, note } = annotateFindings(base, [output]);
+  assert.equal(matched, 1);
+  assert.ok(note?.includes("1/2"));
+
+  const full = JSON.stringify([
+    { ...finding(), recommendation: "apply" },
+    { ...finding({ file: "src/b.ts", line: 3, category: "bug" }), recommendation: "defer", recommendationReason: "hot path" },
+  ]);
+  const fullResult = annotateFindings(base, [full]);
+  assert.equal(fullResult.matched, 2);
+  assert.equal(fullResult.note, undefined);
 });
 
 test("annotateFindings defaults every finding to defer when all texts are empty", () => {

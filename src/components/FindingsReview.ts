@@ -94,7 +94,9 @@ export class FindingsReview implements Component {
     done: (result: FindingsReviewResult | null) => void,
     tui: ReviewHost,
     onWriteHandoff: (deferred: Finding[]) => Promise<string>,
+    degradationNote?: string,
   ) {
+    this.degradationNote = degradationNote;
     // Sort findings by recommendation (apply → defer → reject), then by file
     const sorted = [...findings].sort((a, b) => {
       const recA = REC_ORDER[a.recommendation ?? "apply"];
@@ -109,6 +111,9 @@ export class FindingsReview implements Component {
     this.onWriteHandoff = onWriteHandoff;
     this.populateGroups();
   }
+
+  /** Adjudication degradation to surface in the header (recommendations are defaults, not judgments). */
+  private readonly degradationNote?: string;
 
   // ── Group findings by recommendation, then by file ─────────────────────
 
@@ -437,6 +442,9 @@ export class FindingsReview implements Component {
     const header = [
       renderFramedTop(t, inner, `Findings Review (${this.items.length} total)`),
       ...this.wordWrap(keybinds, Math.max(2, inner - 1)).map((line) => " " + t.fg("dim", line)),
+      ...(this.degradationNote
+        ? this.wordWrap(`⚠ ${this.degradationNote}`, Math.max(2, inner - 1)).map((line) => " " + t.fg("warning", line))
+        : []),
       "",
     ];
 
@@ -502,6 +510,7 @@ export async function showFindingsReview(
   ctx: Pick<ExtensionCommandContext, "cwd" | "ui">,
   findings: Finding[],
   handoff: { slug: string; isoDate: string; scope: string; reviewers: string[] },
+  degradationNote?: string,
 ): Promise<FindingsReviewResult | null> {
   const onWriteHandoff = async (deferred: Finding[]): Promise<string> => {
     const relPath = handoffRelPath(handoff.slug);
@@ -518,7 +527,7 @@ export async function showFindingsReview(
 
   return ctx.ui.custom<FindingsReviewResult | null>(
     (tui: TUI, theme: Theme, _kb: KeybindingsManager, done: (result: FindingsReviewResult | null) => void) =>
-      new FindingsReview(findings, theme, done, tui, onWriteHandoff),
+      new FindingsReview(findings, theme, done, tui, onWriteHandoff, degradationNote),
     {
       overlay: true,
       overlayOptions: {
