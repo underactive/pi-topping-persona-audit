@@ -977,7 +977,7 @@ export const ADJUDICATOR_RECONCILE_DIRECTIVE = `You are in RECONCILIATION-ONLY m
 Analyze the deduplicated findings below for conflicts (contradictory fixes to the same code region: the same function or expression, or within 20 lines of each other), risky fixes (>20 lines, could break functionality, uncertain rationale), and semantic near-duplicates. Exact file+line+category duplicates were already collapsed deterministically.
 
 When two fixes conflict, choose the winner by this precedence, in order:
-1. Category: security > bug > performance > maintainability > style/documentation
+1. Category: security > bug > performance > maintainability > style > documentation > accessibility > reliability
 2. Severity within the same category: critical > high > medium > low > info
 3. Smaller blast radius (fewer lines changed)
 4. Root cause over symptom

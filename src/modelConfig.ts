@@ -56,7 +56,7 @@ export const DEFAULT_METER_SETTINGS: MeterSettings = { color: "accent", directio
 /**
  * Register levels for the Linus Torvalds reviewer, ordered coolest first.
  * Changes the persona's tone only — lenses, focus areas, and severity grading
- * are identical at every level. See `docs/temperament.md`.
+ * are identical at every level.
  */
 export const TEMPERAMENTS = ["calibrated", "caustic", "lkml"] as const;
 export type Temperament = (typeof TEMPERAMENTS)[number];
