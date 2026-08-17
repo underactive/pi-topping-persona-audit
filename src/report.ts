@@ -425,7 +425,8 @@ function roundsSection(rounds: VerificationRound[]): string[] {
       round.scripts.length > 0
         ? `${round.scripts.filter((s) => s.status === "pass").length}/${round.scripts.length} passed`
         : "—";
-    const repairCell = round.repairOutcome ? cell(round.repairOutcome) : round.round === 1 ? "—" : "none reported";
+    const repairText = round.repairOutcome ? cell(round.repairOutcome) : round.round === 1 ? "—" : "none reported";
+    const repairCell = round.repairEscalated ? `(escalated) ${repairText}` : repairText;
     lines.push(`| ${round.round} | ${round.status} | ${cell(verdicts)} | ${scriptsCell} | ${repairCell} |`);
   }
   return lines;
@@ -454,6 +455,17 @@ function verificationSection(outcome: VerificationOutcome): string {
 
   const rounds = roundsSection(outcome.rounds);
   if (rounds.length > 0) lines.push("", ...rounds);
+  if (outcome.contested.length > 0) {
+    lines.push(
+      "",
+      "#### Contested Verdicts",
+      "",
+      "The repair agent disputed these verifier verdicts. They still count as failures;",
+      "review the evidence and adjudicate manually.",
+      "",
+      ...outcome.contested.map((c) => `- \`${findingRef(c)}\` ${c.category} — ${cell(c.reason)}`),
+    );
+  }
   if (outcome.fixes.length > 0) lines.push("", ...fixVerdictsTable(outcome.fixes));
   if (outcome.regressions.length > 0) lines.push("", ...regressionEvidence(outcome.regressions));
 

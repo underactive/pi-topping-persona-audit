@@ -90,6 +90,7 @@ const verificationOutcome = (overrides: Partial<VerificationOutcome> = {}): Veri
   scripts: [],
   notes: [],
   rounds: [],
+  contested: [],
   ...overrides,
 });
 
@@ -368,6 +369,53 @@ test("validation summary renders verdict counts, the verdict table, and regressi
   assert.ok(report.includes("#### Verification Scripts"));
   assert.ok(report.includes("`npm run test`: fail (exit 1)"));
   assert.ok(report.includes("1 failing"));
+});
+
+const verificationRound = (overrides: Partial<VerificationRound> = {}): VerificationRound => ({
+  round: 1,
+  status: "failed",
+  fixVerdicts: [fixVerification({ verdict: "not-fixed", changed: "changed" })],
+  regressions: [],
+  scripts: [],
+  notes: [],
+  ...overrides,
+});
+
+test("rounds table marks a repair round that ran escalated", () => {
+  const report = fullReportWith(
+    verificationOutcome({
+      status: "failed",
+      fixes: [fixVerification({ verdict: "not-fixed" })],
+      rounds: [
+        verificationRound({ repairOutcome: "first repair" }),
+        verificationRound({ round: 2, repairOutcome: "root-cause repair", repairEscalated: true }),
+        verificationRound({ round: 3 }),
+      ],
+    }),
+  );
+  assert.ok(report.includes("| 1 | failed |"));
+  assert.ok(report.includes("(escalated) root-cause repair"));
+  assert.ok(!report.includes("(escalated) first repair"));
+});
+
+test("contested verdicts render with the adjudication caveat, and only when present", () => {
+  const contestedReport = fullReportWith(
+    verificationOutcome({
+      status: "failed",
+      fixes: [fixVerification({ verdict: "not-fixed" })],
+      contested: [
+        { file: "src/a.ts", line: 12, category: "security", reason: "diff shows the guard landed; verifier read the snapshot", round: 3 },
+      ],
+    }),
+  );
+  assert.ok(contestedReport.includes("#### Contested Verdicts"));
+  assert.ok(contestedReport.includes("They still count as failures;"));
+  assert.ok(contestedReport.includes("- `src/a.ts:12` security — diff shows the guard landed; verifier read the snapshot"));
+
+  const plainReport = fullReportWith(
+    verificationOutcome({ status: "failed", fixes: [fixVerification({ verdict: "not-fixed" })] }),
+  );
+  assert.ok(!plainReport.includes("#### Contested Verdicts"));
 });
 
 test("validation summary omits sub-sections that have no content", () => {

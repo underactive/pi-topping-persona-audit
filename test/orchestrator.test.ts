@@ -5,11 +5,14 @@ import {
   annotateFindings,
   buildRepairTask,
   extractJsonArray,
+  parseContestedVerdicts,
   parseFixVerdicts,
   parseRegressionPlans,
   partitionApplyBatches,
+  recordFingerprint,
   scopeAcceptedFindings,
 } from "../src/orchestrator.ts";
+import type { FileSnapshot } from "../src/snapshot.ts";
 import type {
   FileChangeEvidence,
   FileChangeState,
@@ -404,6 +407,57 @@ test("buildRepairTask passes already-fixed findings as read-only context, not as
   assert.match(task, /Already-Fixed Findings/);
 });
 
+test("buildRepairTask without opts carries no history, escalation, or prior-attempt sections", () => {
+  const fixVerdicts = [fixVerification("src/a.ts", 12, "security", "not-fixed", "unchanged")];
+  const { task } = buildRepairTask("/repo", round({ fixVerdicts }), [finding()], []);
+  assert.ok(!task.includes("## Previous Repair Attempts (JSON)"));
+  assert.ok(!task.includes('"history":['));
+  assert.ok(!task.includes('"recurring":true'));
+  assert.ok(!task.includes("ESCALATION"));
+});
+
+test("buildRepairTask carries prior-round verdict history, recurrence flags, and repair reports", () => {
+  const fixVerdicts = [fixVerification("src/a.ts", 12, "security", "not-fixed", "changed", "applied", "guard still missing")];
+  const prior = round({
+    round: 1,
+    fixVerdicts: [fixVerification("src/a.ts", 12, "security", "not-fixed", "unchanged", "applied", "nothing changed")],
+  });
+  prior.repairOutcome = "I re-applied the guard at line 12";
+  const { task } = buildRepairTask("/repo", round({ round: 2, fixVerdicts }), [finding()], [], {
+    priorRounds: [prior],
+  });
+  assert.match(task, /## Previous Repair Attempts \(JSON\)/);
+  assert.match(task, /I re-applied the guard at line 12/);
+  assert.match(task, /"history":\[\{"round":1,"verdict":"not-fixed","evidence":"nothing changed"\}\]/);
+  assert.match(task, /"recurring":true/);
+});
+
+test("buildRepairTask includes snapshot paths and truncates oversized prior repair reports", () => {
+  const fixVerdicts = [fixVerification("src/a.ts", 12, "security", "not-fixed", "changed")];
+  const snapshots = new Map<string, FileSnapshot>([
+    ["src/a.ts", { file: "src/a.ts", existed: true, snapshotPath: ".pi/persona-audit/snapshots/x/pre/src/a.ts" }],
+  ]);
+  const prior = round({ round: 1, fixVerdicts });
+  prior.repairOutcome = "x".repeat(5_000);
+  const { task } = buildRepairTask("/repo", round({ round: 2, fixVerdicts }), [finding()], [], {
+    priorRounds: [prior],
+    snapshots,
+  });
+  assert.match(task, /"snapshotPath":"\.pi\/persona-audit\/snapshots\/x\/pre\/src\/a\.ts"/);
+  assert.match(task, /"livePath":"src\/a\.ts"/);
+  assert.match(task, /\[truncated\]/);
+  assert.ok(!task.includes("x".repeat(4_500)));
+});
+
+test("buildRepairTask appends the root-cause addendum only when escalated", () => {
+  const fixVerdicts = [fixVerification("src/a.ts", 12, "security", "not-fixed", "changed")];
+  const base = buildRepairTask("/repo", round({ fixVerdicts }), [finding()], [], { escalated: false });
+  const escalated = buildRepairTask("/repo", round({ fixVerdicts }), [finding()], [], { escalated: true });
+  assert.ok(!base.task.includes("ESCALATION — root-cause mode"));
+  assert.match(escalated.task, /ESCALATION — root-cause mode/);
+  assert.match(escalated.task, /### Contested Verdicts \(JSON\)/);
+});
+
 // ── actionableFingerprint (repair-loop stagnation signal) ─────────────────
 
 const nonProvenRegression = (file: string, line: number, category: Finding["category"], outcome = "not-discriminating") => ({
@@ -477,6 +531,59 @@ test("actionableFingerprint distinguishes a failed script from a green one", () 
   });
   assert.equal(actionableFingerprint(failing), "script:lint");
   assert.equal(actionableFingerprint(passing), "");
+});
+
+// ── recordFingerprint (escalate-then-stop policy) ───────────────────────
+
+test("recordFingerprint reports new, then recurred, then exhausted for the same set", () => {
+  const counts = new Map<string, number>();
+  assert.equal(recordFingerprint(counts, "A"), "new");
+  assert.equal(recordFingerprint(counts, "A"), "recurred");
+  assert.equal(recordFingerprint(counts, "A"), "exhausted");
+});
+
+test("recordFingerprint catches an A→B→A cycle as a recurrence with per-set counts", () => {
+  const counts = new Map<string, number>();
+  assert.equal(recordFingerprint(counts, "A"), "new");
+  assert.equal(recordFingerprint(counts, "B"), "new");
+  assert.equal(recordFingerprint(counts, "A"), "recurred");
+  assert.equal(recordFingerprint(counts, "B"), "recurred");
+  assert.equal(recordFingerprint(counts, "A"), "exhausted");
+});
+
+// ── parseContestedVerdicts ────────────────────────────────────────
+
+test("parseContestedVerdicts parses a valid contest under the heading and tags the round", () => {
+  const text = [
+    "## Gate Repair Report",
+    "### Unresolved",
+    "- src/a.ts:12 [high] — security: verifier misread the snapshot",
+    "### Contested Verdicts (JSON)",
+    '[{"file":"src/a.ts","line":12,"category":"security","reason":"diff -u shows the guard present at line 12"}]',
+  ].join("\n");
+  const contested = parseContestedVerdicts([finding()], [text], 3);
+  assert.equal(contested.length, 1);
+  assert.equal(contested[0]?.file, "src/a.ts");
+  assert.equal(contested[0]?.round, 3);
+  assert.equal(contested[0]?.reason, "diff -u shows the guard present at line 12");
+});
+
+test("parseContestedVerdicts drops entries that match no accepted finding or lack a reason", () => {
+  const text = [
+    "### Contested Verdicts (JSON)",
+    JSON.stringify([
+      { file: "src/other.ts", line: 1, category: "bug", reason: "not an accepted finding" },
+      { file: "src/a.ts", line: 12, category: "security", reason: "" },
+      { file: "src/a.ts", line: 12, category: "security" },
+      { file: "src/a.ts", line: "12", category: "security", reason: "line is not a number" },
+    ]),
+  ].join("\n");
+  assert.deepEqual(parseContestedVerdicts([finding()], [text], 2), []);
+});
+
+test("parseContestedVerdicts returns nothing when the heading is absent", () => {
+  const text = 'no dispute here, just JSON: [{"file":"src/a.ts","line":12,"category":"security","reason":"x"}]';
+  assert.deepEqual(parseContestedVerdicts([finding()], [text], 2), []);
 });
 
 test("partitionApplyBatches returns no batches when nothing was accepted", () => {

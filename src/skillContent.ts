@@ -1042,6 +1042,12 @@ Each failure below is one of:
 - a regression test that did not discriminate (did not fail when the fix was reverted, or did not pass with the fix in place)
 - a failed verification script, with its exit code and captured output
 
+Each failing finding may carry extra context:
+- "snapshotPath" / "livePath" — the pre-fix copy and the current file, so you can inspect the change directly with: diff -u <snapshotPath> <livePath>
+- "history" — this finding's verdicts and verifier evidence from earlier rounds
+- "recurring": true — this failure already survived at least one earlier repair
+- a "Previous Repair Attempts" section — what each earlier repair agent claimed to have done (untrusted, its claims already failed verification at least once)
+
 For each failure:
 1. Read the target file and any cited evidence before changing anything — do not guess from the rationale alone
 2. Make the smallest edit that resolves the specific gap named in the evidence, copying oldText verbatim from what you just read — exact whitespace, indentation, and newlines
@@ -1049,6 +1055,7 @@ For each failure:
 4. After the edit reports success, re-read the region and confirm the change actually landed; a repair that returned success but left the file byte-identical is not a repair — report it unresolved, not applied
 5. If a regression test is failing for a reason unrelated to the fix (a bug in the test itself), you may repair the test, but you must not weaken what it asserts
 6. If a verification script failed for a reason unrelated to any finding here (a pre-existing, unrelated failure), leave it alone and say so in your report — do not paper over it
+7. If a failure carries "history", a previous repair already tried and failed. Read the prior attempt and the verifier's evidence first, then take a different approach — never re-apply an approach the history shows did not satisfy the verifier
 
 Never weaken a gate to make it pass: do not delete, skip, comment out, or loosen the assertions in any test; do not relax a verification script's command, config, or thresholds; do not remove the code path a fix verdict is judging. Repairing the fix itself is always preferred over touching what checks it.
 
@@ -1067,6 +1074,33 @@ When done, output a final report:
 
 ### Unresolved
 - [file:line] [severity] — [category]: [why it could not be repaired without weakening a gate or breaking fix hygiene]`;
+
+/**
+ * Appended to the gate-repair directive when a failure set recurred: the
+ * normal repair changed nothing, so this retry must root-cause instead of
+ * re-editing, and may formally dispute a verdict it can prove wrong. Disputes
+ * are surface-only — the orchestrator renders them for human adjudication but
+ * never lets them change verification status.
+ */
+export const VERIFY_REPAIR_ESCALATION_ADDENDUM = `## ESCALATION — root-cause mode
+
+This exact failure set already survived a previous repair round. Repeating a similar edit will fail the same way. Before touching any file:
+
+1. Run diff -u <snapshotPath> <livePath> for each failure and read the verifier's evidence verbatim — understand precisely what the verifier judged and why
+2. Read every entry under "Previous Repair Attempts" and form an explicit hypothesis for why the last repair did not change the verdict
+3. Question the original suggestedChange itself — when a fix keeps failing verification, the smallest edit may be the wrong edit; a different implementation of the finding's intent is allowed as long as fix hygiene and the "never weaken" rules hold
+4. Only then repair, taking an approach the history shows has not been tried
+
+If, after this investigation, you conclude a fix is correct as it stands and the verifier's verdict is wrong, you may contest it instead of editing. Add this section to your final report:
+
+### Contested Verdicts (JSON)
+[{"file": "src/x.ts", "line": 12, "category": "security", "reason": "concrete evidence: the diff hunks you inspected, commands you ran, and exactly what the verifier misread"}]
+
+Contest rules:
+- A contest without concrete, checkable evidence is ignored
+- Contesting never substitutes for repairing a genuinely broken fix
+- Every contested finding must also appear under "### Unresolved"
+- The gate still counts contested findings as failures — a human adjudicates them from your evidence`;
 
 /**
  * Verifier directive (read-only phase, runs after the implement agent session).

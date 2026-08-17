@@ -39,6 +39,7 @@ import {
   UNTRUSTED_DATA_RULE,
   VERIFIER_DIRECTIVE,
   VERIFY_REPAIR_DIRECTIVE,
+  VERIFY_REPAIR_ESCALATION_ADDENDUM,
   getPersonality,
   registerEnforcement,
 } from "./skillContent.ts";
@@ -88,6 +89,7 @@ import type {
   AuditStatus,
   AuditSummary,
   CollectReviewerFindingsResult,
+  ContestedVerdict,
   FileChangeEvidence,
   Finding,
   FindingCategory,
@@ -139,6 +141,7 @@ const skippedVerification = (): VerificationOutcome => ({
   scripts: [],
   notes: [],
   rounds: [],
+  contested: [],
 });
 
 export interface AuditInput {
@@ -880,12 +883,23 @@ const isRepairableVerdict = (v: FixVerification): boolean =>
  * Returns an empty task when nothing is actionable (a stop condition for the
  * repair loop, not an error): a script can fail for reasons no fix touches,
  * and cannot-verify on an unreadable file is not something a repair can fix.
+ *
+ * `opts.priorRounds` makes the retry informed rather than blind: each failing
+ * finding carries its verdict history and each prior repair's report rides
+ * along, so the agent can see what was already tried and why it failed.
+ * `opts.escalated` appends the root-cause addendum for a repair that follows a
+ * recurred failure set.
  */
 export function buildRepairTask(
   cwd: string,
   round: VerificationRound,
   accepted: Finding[],
   fileManifest: string[],
+  opts?: {
+    priorRounds?: VerificationRound[];
+    escalated?: boolean;
+    snapshots?: Map<string, FileSnapshot>;
+  },
 ): { task: string; targetCount: number } {
   const byKey = new Map(accepted.map((f) => [verificationKey(f.file, f.line, f.category), f]));
   const actionable = round.fixVerdicts.filter(isRepairableVerdict);
@@ -897,8 +911,20 @@ export function buildRepairTask(
     return { task: "", targetCount: 0 };
   }
 
+  const priorRounds = opts?.priorRounds ?? [];
   const failingFindings = actionable.map((v) => {
-    const finding = byKey.get(verificationKey(v.file, v.line, v.category));
+    const key = verificationKey(v.file, v.line, v.category);
+    const finding = byKey.get(key);
+    const history = priorRounds.flatMap((prior) =>
+      prior.fixVerdicts
+        .filter((pv) => verificationKey(pv.file, pv.line, pv.category) === key)
+        .map((pv) => ({ round: prior.round, verdict: pv.verdict, evidence: pv.evidence })),
+    );
+    const recurring = priorRounds.some((prior) =>
+      prior.fixVerdicts.some(
+        (pv) => isRepairableVerdict(pv) && verificationKey(pv.file, pv.line, pv.category) === key,
+      ),
+    );
     return {
       file: v.file,
       line: v.line,
@@ -908,6 +934,10 @@ export function buildRepairTask(
       suggestedChange: finding?.suggestedChange ?? "",
       verdict: v.verdict,
       evidence: v.evidence,
+      snapshotPath: opts?.snapshots?.get(v.file)?.snapshotPath ?? null,
+      livePath: v.file,
+      ...(history.length > 0 ? { history } : {}),
+      ...(recurring ? { recurring: true } : {}),
     };
   });
   const passingFindings = passing.map((v) => ({ file: v.file, line: v.line, category: v.category }));
@@ -927,8 +957,16 @@ export function buildRepairTask(
     output: s.relevantOutput,
   }));
 
+  const priorRepairs = priorRounds
+    .filter((prior) => prior.repairOutcome !== undefined)
+    .map((prior) => ({
+      afterRound: prior.round,
+      escalated: prior.repairEscalated === true,
+      report: clampRepairReport(prior.repairOutcome ?? ""),
+    }));
+
   const task = [
-    VERIFY_REPAIR_DIRECTIVE,
+    opts?.escalated ? `${VERIFY_REPAIR_DIRECTIVE}\n\n${VERIFY_REPAIR_ESCALATION_ADDENDUM}` : VERIFY_REPAIR_DIRECTIVE,
     "",
     UNTRUSTED_DATA_RULE,
     "",
@@ -940,6 +978,9 @@ export function buildRepairTask(
     "",
     JSON.stringify(failingFindings),
     "",
+    ...(priorRepairs.length > 0
+      ? ["## Previous Repair Attempts (JSON)", "", JSON.stringify(priorRepairs), ""]
+      : []),
     "## Already-Fixed Findings — read-only context, do not touch (JSON)",
     "",
     JSON.stringify(passingFindings),
@@ -958,6 +999,60 @@ export function buildRepairTask(
   ].join("\n");
 
   return { task, targetCount: actionable.length + regressionFailures.length + scriptFailures.length };
+}
+
+/** Prior repair reports are agent output and can be huge; the history only needs the gist. */
+const MAX_REPAIR_REPORT_CHARS = 4_000;
+function clampRepairReport(report: string): string {
+  if (report.length <= MAX_REPAIR_REPORT_CHARS) return report;
+  return `${report.slice(0, MAX_REPAIR_REPORT_CHARS)}… [truncated]`;
+}
+
+/**
+ * Parse the optional "### Contested Verdicts" section of a repair report: the
+ * repair agent's evidence-backed claim that a verifier verdict is wrong.
+ * Surface-only — entries are validated against the accepted findings and
+ * rendered for human adjudication, never used to change verification status.
+ */
+export function parseContestedVerdicts(
+  accepted: Finding[],
+  texts: string[],
+  round: number,
+): ContestedVerdict[] {
+  const byKey = new Map(accepted.map((f) => [verificationKey(f.file, f.line, f.category), f]));
+  for (const text of texts) {
+    const match = /^#{2,4}\s*Contested Verdicts.*$/im.exec(text);
+    if (!match) continue;
+    const entries = extractJsonArray(text.slice(match.index + match[0].length));
+    if (!entries) continue;
+    const contested: ContestedVerdict[] = [];
+    for (const entry of entries) {
+      if (!isRecord(entry)) continue;
+      const { file, line, category } = entry;
+      if (typeof file !== "string" || typeof line !== "number" || typeof category !== "string") continue;
+      const finding = byKey.get(verificationKey(file, line, category));
+      const reason = normalizeFindingText(entry.reason, 500);
+      if (!finding || !reason) continue;
+      contested.push({ file: finding.file, line: finding.line, category: finding.category, reason, round });
+    }
+    return contested;
+  }
+  return [];
+}
+
+/**
+ * Track how often a failure set has been seen across verification rounds and
+ * decide the repair loop's next move: a first sighting is normal progress, a
+ * second escalates the next repair to root-cause mode, and a third means even
+ * the escalated repair changed nothing — stop rather than burn budget.
+ */
+export function recordFingerprint(
+  counts: Map<string, number>,
+  fingerprint: string,
+): "new" | "recurred" | "exhausted" {
+  const count = (counts.get(fingerprint) ?? 0) + 1;
+  counts.set(fingerprint, count);
+  return count === 1 ? "new" : count === 2 ? "recurred" : "exhausted";
 }
 
 /**
@@ -1839,25 +1934,36 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
       let currentApplyReport = applyReport;
       let round = await runVerificationRound(1, currentApplyReport);
       verification.rounds.push(round);
-      // Every actionable failure set seen so far. A repair that leaves the set
-      // unchanged (or returns it to an earlier state — A→B→A) will not make
-      // progress on the next pass either, so the loop stops rather than burn
-      // the remaining round budget re-attempting the same repair.
-      const seenFingerprints = new Set<string>([actionableFingerprint(round)]);
+      // How often each actionable failure set has been seen. A repair that
+      // leaves the set unchanged (or returns it to an earlier state — A→B→A)
+      // gets one escalated root-cause retry with the full attempt history; a
+      // set that survives even that will not converge, so the loop stops
+      // rather than burn the remaining round budget on identical repairs.
+      const fingerprintCounts = new Map<string, number>();
+      recordFingerprint(fingerprintCounts, actionableFingerprint(round));
+      const contested: ContestedVerdict[] = [];
+      let escalateNext = false;
 
       while (round.status !== "passed" && verification.rounds.length < maxRounds && !input.signal?.aborted) {
-        const repair = buildRepairTask(ctx.cwd, round, review.accepted, input.fileManifest);
+        const escalated = escalateNext;
+        escalateNext = false;
+        const repair = buildRepairTask(ctx.cwd, round, review.accepted, input.fileManifest, {
+          priorRounds: verification.rounds.slice(0, -1),
+          escalated,
+          snapshots,
+        });
         if (repair.targetCount === 0) break;
 
         const nextRound = verification.rounds.length + 1;
         const repairRow = `repair:round:${nextRound}`;
-        notifyPhase(`repairing verification failures (round ${nextRound})…`);
-        progress?.addRow("Verify", repairRow, `gate repair ${nextRound}`, {
+        const escalatedSuffix = escalated ? " (escalated)" : "";
+        notifyPhase(`repairing verification failures (round ${nextRound}${escalatedSuffix})…`);
+        progress?.addRow("Verify", repairRow, `gate repair ${nextRound}${escalatedSuffix}`, {
           state: "working",
           statusText: `${repair.targetCount} target(s)`,
         });
         const repairRun = await runAgentSession({
-          agentName: `adjudicator repair round ${nextRound}`,
+          agentName: `adjudicator repair round ${nextRound}${escalatedSuffix}`,
           systemPrompt: adjudicatorAgent.systemPrompt,
           tools: adjudicatorAgent.tools ?? EDIT_TOOLS,
           model: implementModel.model,
@@ -1873,32 +1979,51 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
         if (isFailedRun(repairRun)) {
           const detail = repairRun.errorMessage || repairRun.stopReason || "aborted";
           round.repairOutcome = `gate repair round ${nextRound} failed — ${detail}`;
+          round.repairEscalated = escalated || undefined;
           progress?.settleRow(repairRow, "error", "repair failed");
           break;
         }
 
         const repairText = repairRun.finalText || repairRun.allText;
         round.repairOutcome = repairText;
+        round.repairEscalated = escalated || undefined;
+        contested.push(...parseContestedVerdicts(review.accepted, [repairText], nextRound));
         progress?.settleRow(repairRow, "done", "repair applied");
         currentApplyReport = [currentApplyReport, `## Gate repair round ${nextRound}`, "", repairText].join("\n\n");
 
         round = await runVerificationRound(nextRound, currentApplyReport);
         verification.rounds.push(round);
 
-        const fingerprint = actionableFingerprint(round);
-        if (seenFingerprints.has(fingerprint)) {
+        const outcome = recordFingerprint(fingerprintCounts, actionableFingerprint(round));
+        if (outcome === "recurred") {
           verification.notes.push(
-            `repair loop stopped after round ${nextRound}: the same verification failures recurred, so further repair rounds were skipped`,
+            `round ${nextRound}: the same verification failures recurred — escalating the next repair to root-cause mode`,
+          );
+          escalateNext = true;
+        } else if (outcome === "exhausted") {
+          verification.notes.push(
+            `repair loop stopped after round ${nextRound}: the same verification failures recurred even after an escalated root-cause repair`,
           );
           break;
         }
-        seenFingerprints.add(fingerprint);
       }
 
       verification.fixes = round.fixVerdicts;
       verification.regressions = round.regressions;
       verification.scripts = round.scripts;
       verification.notes.push(...round.notes);
+
+      // Disputes about findings the loop subsequently repaired are moot; the
+      // rest are surfaced for human adjudication but never change the status.
+      const stillFailing = new Set(
+        round.fixVerdicts.filter(isRepairableVerdict).map((v) => verificationKey(v.file, v.line, v.category)),
+      );
+      verification.contested = contested.filter((c) => stillFailing.has(verificationKey(c.file, c.line, c.category)));
+      for (const dispute of verification.contested) {
+        verification.notes.push(
+          `repair agent contested the verifier verdict on ${dispute.file}:${dispute.line} (${dispute.category}) — see Contested Verdicts in the report`,
+        );
+      }
     }
 
     verification.status = aggregateVerificationStatus({

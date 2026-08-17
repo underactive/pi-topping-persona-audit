@@ -67,8 +67,9 @@ export const DEFAULT_TEMPERAMENT: Temperament = "calibrated";
  * Bounds for the fix→verify round cap set in `/persona-audit-settings`. Round 1
  * is the original implement + verify pass; the rest are automatic gate-repair
  * rounds. `MIN_VERIFY_ROUNDS` of 1 means round 1 only — auto-repair off. The
- * ceiling is generous because the repair loop's stagnation guard already stops
- * a run that stops converging, so the cap only bites on genuinely slow progress.
+ * ceiling is generous because the repair loop's stagnation guard escalates a
+ * recurring failure set to one root-cause repair and stops only if it recurs
+ * again, so the cap only bites on genuinely slow progress.
  */
 export const MIN_VERIFY_ROUNDS = 1;
 export const MAX_VERIFY_ROUNDS = 10;

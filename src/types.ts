@@ -223,6 +223,17 @@ export interface RegressionResult {
   detail?: string;
 }
 
+/** A repair agent's evidence-backed dispute of a verifier verdict (surface-only). */
+export interface ContestedVerdict {
+  file: string;
+  line: number;
+  category: FindingCategory;
+  /** The repair agent's evidence for why the verifier's verdict is wrong. */
+  reason: string;
+  /** Repair round that raised the dispute. */
+  round: number;
+}
+
 /** Verification verdict for one accepted finding. */
 export interface FixVerification {
   file: string;
@@ -249,6 +260,8 @@ export interface VerificationRound {
   notes: string[];
   /** Set on round 1 skip and every repair round: what the repair agent claimed to have done. */
   repairOutcome?: string;
+  /** True when this round's repairOutcome came from an escalated root-cause repair. */
+  repairEscalated?: boolean;
 }
 
 /** Everything the verify phase produced. */
@@ -261,6 +274,8 @@ export interface VerificationOutcome {
   notes: string[];
   /** Every fix→verify round run, in order. Empty when verification was skipped entirely. */
   rounds: VerificationRound[];
+  /** Verifier verdicts the repair agent disputed with evidence — still counted as failures. */
+  contested: ContestedVerdict[];
 }
 
 // ── Audit orchestration types ───────────────────────────────────────────────
