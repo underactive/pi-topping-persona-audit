@@ -416,7 +416,11 @@ function regressionEvidence(regressions: RegressionResult[]): string[] {
 }
 
 function roundsSection(rounds: VerificationRound[]): string[] {
-  if (rounds.length <= 1) return [];
+  // A repair round that failed to even run (agent error/timeout/abort) sets
+  // repairOutcome on the round it was attempting to repair without pushing a
+  // new round — rounds.length stays 1, but a repair was attempted and its
+  // failure belongs in the report just as much as a successful repair does.
+  if (rounds.length <= 1 && !rounds.some((r) => r.repairOutcome !== undefined)) return [];
   const lines = ["#### Fix + Verify Rounds", ""];
   lines.push("| Round | Status | Fix verdicts | Scripts | Repair outcome |", "| --- | --- | --- | --- | --- |");
   for (const round of rounds) {

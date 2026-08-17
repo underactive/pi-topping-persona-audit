@@ -398,6 +398,28 @@ test("rounds table marks a repair round that ran escalated", () => {
   assert.ok(!report.includes("(escalated) first repair"));
 });
 
+test("a single round still renders the rounds table when its repair attempt itself failed to run", () => {
+  // The repair loop sets repairOutcome on the round it tried to repair without
+  // pushing a new round when the repair agent session itself fails — rounds
+  // stays length 1, but the failed repair attempt must still be visible.
+  const report = fullReportWith(
+    verificationOutcome({
+      status: "failed",
+      fixes: [fixVerification({ verdict: "fixed" })],
+      scripts: [{ script: "test", command: "npm run test", status: "fail", exitCode: 1, relevantOutput: "1 failing" }],
+      rounds: [
+        verificationRound({
+          fixVerdicts: [fixVerification({ verdict: "fixed" })],
+          scripts: [{ script: "test", command: "npm run test", status: "fail", exitCode: 1, relevantOutput: "1 failing" }],
+          repairOutcome: "gate repair round 2 failed — idle timeout",
+        }),
+      ],
+    }),
+  );
+  assert.ok(report.includes("#### Fix + Verify Rounds"));
+  assert.ok(report.includes("gate repair round 2 failed — idle timeout"));
+});
+
 test("contested verdicts render with the adjudication caveat, and only when present", () => {
   const contestedReport = fullReportWith(
     verificationOutcome({

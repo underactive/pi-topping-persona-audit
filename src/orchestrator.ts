@@ -2004,6 +2004,9 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
           const detail = repairRun.errorMessage || repairRun.stopReason || "aborted";
           round.repairOutcome = `gate repair round ${nextRound} failed — ${detail}`;
           round.repairEscalated = escalated || undefined;
+          verification.notes.push(
+            `gate repair round ${nextRound} failed to run (${detail}) — round ${round.round}'s verification failures were left unrepaired`,
+          );
           progress?.settleRow(repairRow, "error", "repair failed");
           break;
         }
