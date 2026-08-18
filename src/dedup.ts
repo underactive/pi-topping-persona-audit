@@ -12,10 +12,10 @@ function priorityIndex<T extends readonly string[]>(values: T, value: string): n
   return index === -1 ? values.length : index;
 }
 
-function highestSeverity(a: string, b: string): FindingSeverity {
+function highestSeverity(a: FindingSeverity, b: FindingSeverity): FindingSeverity {
   return priorityIndex(SEVERITY_ORDER, b) < priorityIndex(SEVERITY_ORDER, a)
-    ? b as FindingSeverity
-    : a as FindingSeverity;
+    ? b
+    : a;
 }
 
 function clearerText(current: string, candidate: string, maxLength?: number): string {

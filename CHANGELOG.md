@@ -6,10 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
-### Changed
+### Fixed
 
 - **Fixed: a repair round that failed to even run was invisible in the report** — when the gate-repair agent session itself failed (provider error, idle timeout, abort) rather than the verification it was repairing, the failure was recorded on the round object but never rendered, because the rounds table only appeared once a second round existed; that failure now always shows in the report and the chat-summary notes
 - **Adjudicator degradation is now loud and retried** — a reconcile session that succeeds but produces unusable output gets one retry before the all-defer fallback, and any annotation degradation (unparsable output, failed reconcile, partial coverage) is shown as a warning banner in the Findings Review header instead of only appearing in the report
+
+### Added
+
 - **Repair loop no longer gives up on the first stall** — every gate-repair round now receives the full attempt history (per-finding verdict history, prior repair reports, and pre-fix snapshot paths for diffing); a recurring failure set triggers one escalated root-cause repair round instead of an immediate stop, and only a set that survives the escalated repair ends the loop (still capped by the configurable round budget)
 - **Contested verdicts** — an escalated repair agent that can prove a verifier verdict wrong may dispute it with evidence; disputes are surface-only (rendered in a "Contested Verdicts" report section and noted in the chat summary for human adjudication) and never change verification status
 
@@ -28,7 +31,7 @@ Initial release of `/persona-audit` — multi-persona code reviews with interact
 - **Live progress table** — phased `aboveEditor` widget showing per-row context usage, an output-activity meter, in-flight tool calls, turn count, and elapsed time, with a phase/model band and a frozen transcript copy on completion
 - **Findings review** — accept/reject/defer triage TUI, with deferred-findings handoff export (`H`) and two-step cancellation
 - **Auto-fix** — accepted findings partitioned by file and applied in parallel (up to 3 concurrent) by edit-capable adjudicator agent sessions
-- **Conflict resolution** — a fixed precedence chain (category → severity → blast radius → root cause) reconciles findings that touch the same region, capped at 40 applied fixes per run
+- **Conflict resolution** — a fixed precedence chain (category → severity → file → line) ranks findings that touch the same region, capped at 40 applied fixes per run
 - **Three-layer fix verification** — byte-level fix-landed hashing, a verifier agent session's evidence-based verdict per finding, and harness-adjudicated red/green regression tests run in a throwaway git worktree
 - **Automatic gate-repair rounds** — a round that doesn't pass triggers a bounded repair-and-reverify loop (configurable cap, default 3), with stagnation detection to stop unproductive repeats
 - **Incremental cache** — reviewer passes cached by manifest+selection hash; unchanged re-runs skip agent-session spawns

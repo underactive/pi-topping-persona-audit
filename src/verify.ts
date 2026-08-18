@@ -1,5 +1,5 @@
 /**
- * Post-fix verification gate (former orchestration Step 5, now extension code).
+ * Post-fix verification gate — runs discovered package.json scripts after fixes land.
  *
  * Discovers existing verification scripts in package.json (check → lint →
  * test, in that order) and runs one at a time via `npm run <script>` from the
@@ -14,6 +14,7 @@
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
+import { tail } from "./subprocess.ts";
 import type { FixVerification, VerificationStatus, VerifyResult } from "./types.ts";
 
 const execFileAsync = promisify(execFile);
@@ -23,11 +24,6 @@ const SCRIPT_ORDER = ["check", "lint", "test"] as const;
 
 const SCRIPT_TIMEOUT_MS = 5 * 60_000;
 const OUTPUT_TAIL_CHARS = 4_000;
-
-function tail(text: string): string {
-  const trimmed = text.trim();
-  return trimmed.length > OUTPUT_TAIL_CHARS ? `…${trimmed.slice(-OUTPUT_TAIL_CHARS)}` : trimmed;
-}
 
 /** Discover which of check/lint/test exist in package.json#scripts. */
 export async function discoverVerifyScripts(cwd: string): Promise<string[]> {
@@ -65,7 +61,7 @@ export async function runVerifyScript(cwd: string, script: string, signal?: Abor
       command,
       status: "pass",
       exitCode: 0,
-      relevantOutput: tail(`${stdout}\n${stderr}`),
+      relevantOutput: tail(`${stdout}\n${stderr}`, OUTPUT_TAIL_CHARS),
     };
   } catch (error) {
     const err = error as { code?: number; stdout?: string; stderr?: string; message?: string };
@@ -74,7 +70,7 @@ export async function runVerifyScript(cwd: string, script: string, signal?: Abor
       command,
       status: "fail",
       exitCode: typeof err.code === "number" ? err.code : 1,
-      relevantOutput: tail(`${err.stdout ?? ""}\n${err.stderr ?? ""}`) || (err.message ?? "unknown error"),
+      relevantOutput: tail(`${err.stdout ?? ""}\n${err.stderr ?? ""}`, OUTPUT_TAIL_CHARS) || (err.message ?? "unknown error"),
     };
   }
 }

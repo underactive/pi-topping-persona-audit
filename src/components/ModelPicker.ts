@@ -102,6 +102,7 @@ class ConsistentSelectList extends SelectList {
 
 function parseRef(value: string): ModelRef {
   const idx = value.indexOf("/");
+  if (idx === -1) throw new Error(`model ref missing '/': ${value}`);
   return { provider: value.slice(0, idx), id: value.slice(idx + 1) };
 }
 

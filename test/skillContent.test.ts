@@ -9,6 +9,7 @@ import {
   REGRESSION_TEST_DIRECTIVE,
   REVIEWER_OUTPUT_CONTRACT,
   REVOICE_DIRECTIVE,
+  VERIFIER_DIRECTIVE,
   VERIFY_REPAIR_DIRECTIVE,
   getPersonality,
   registerEnforcement,
@@ -46,6 +47,12 @@ test("code-producing directives interpolate the fix hygiene contract", () => {
   ]) {
     assert.ok(directive.includes(heading));
   }
+});
+
+test("verifier directive demands verbatim join keys even when they look stale", () => {
+  assert.match(VERIFIER_DIRECTIVE, /join keys, not location claims/);
+  assert.match(VERIFIER_DIRECTIVE, /never absolutized/);
+  assert.match(VERIFIER_DIRECTIVE, /echo "line" verbatim/);
 });
 
 test("gate-repair directive forbids weakening gates and covers every failure type", () => {

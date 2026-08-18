@@ -8,17 +8,14 @@ import type {
   ReviewerOutput,
 } from "./types.ts";
 
-function tryParseJson(value: string): unknown {
-  try {
-    return JSON.parse(value);
-  } catch {
-    return value;
-  }
-}
-
 function stringifyOutput(output: string): string {
-  const parsed = tryParseJson(output);
-  return typeof parsed === "string" ? parsed : JSON.stringify(parsed);
+  if (!output.trimStart().startsWith('"')) return output;
+  try {
+    const parsed = JSON.parse(output);
+    return typeof parsed === "string" ? parsed : output;
+  } catch {
+    return output;
+  }
 }
 
 function candidateJsonLines(text: string): string[] {

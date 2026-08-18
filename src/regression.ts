@@ -7,11 +7,9 @@
  * pre-fix content. Only a green-then-red pair proves the test discriminates.
  *
  * Both runs happen inside a detached git worktree in a temp directory. The
- * harness itself only ever writes inside that worktree, so an interrupted run
- * cannot corrupt its own bookkeeping. That guarantee does not extend to the
- * worktree's contents: node_modules is a live symlink into the real tree, and
- * the authored test runs unsandboxed with the user's own privileges, so it can
- * still touch anything the user's tree can. The green run doubles as a
+ * harness only writes inside that worktree. However, the authored test runs unsandboxed:
+ * node_modules is a live symlink into the real tree, and the test runs with the
+ * user's own privileges, so it can still touch anything the user's tree can. The green run doubles as a
  * baseline sanity check: if it fails, the worktree does not faithfully
  * reproduce the real tree and the result is reported inconclusive rather than
  * guessed at.
@@ -22,8 +20,8 @@ import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, unlink, writeFil
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
-import { assertWriteContained } from "./report.ts";
-import { mapWithConcurrencyLimit } from "./subprocess.ts";
+import { assertWriteContained, message } from "./report.ts";
+import { mapWithConcurrencyLimit, tail } from "./subprocess.ts";
 import { resolveTargetPath, verificationKey, type FileSnapshot } from "./snapshot.ts";
 import {
   CATEGORY_PRIORITY,
@@ -81,15 +79,6 @@ export interface RegressionHarnessOptions {
   signal?: AbortSignal;
   onStart?(plan: RegressionPlan): void;
   onDone?(result: RegressionResult): void;
-}
-
-function tail(text: string): string {
-  const trimmed = text.trim();
-  return trimmed.length > OUTPUT_TAIL_CHARS ? `…${trimmed.slice(-OUTPUT_TAIL_CHARS)}` : trimmed;
-}
-
-function message(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 /**
@@ -169,10 +158,10 @@ async function runCommand(
       shell: false,
       signal,
     });
-    return { ok: true, output: tail(`${stdout}\n${stderr}`) };
+    return { ok: true, output: tail(`${stdout}\n${stderr}`, OUTPUT_TAIL_CHARS) };
   } catch (error) {
     const err = error as { stdout?: string; stderr?: string; message?: string };
-    return { ok: false, output: tail(`${err.stdout ?? ""}\n${err.stderr ?? ""}`) || (err.message ?? "unknown error") };
+    return { ok: false, output: tail(`${err.stdout ?? ""}\n${err.stderr ?? ""}`, OUTPUT_TAIL_CHARS) || (err.message ?? "unknown error") };
   }
 }
 
@@ -204,8 +193,12 @@ async function dirtyPaths(cwd: string): Promise<string[]> {
     if (!entry || entry.length < 4) continue;
     const status = entry.slice(0, 2);
     const target = entry.slice(3);
-    // Renames and copies carry their source path in the following NUL chunk.
-    if (status.startsWith("R") || status.startsWith("C")) i++;
+    // Renames and copies carry their source path in the following NUL chunk;
+    // push it too so copyInto clears the stale HEAD copy the rename left behind.
+    if (status.startsWith("R") || status.startsWith("C")) {
+      const source = entries[++i];
+      if (source && !source.startsWith(".pi/") && !source.startsWith("node_modules/")) paths.push(source);
+    }
     if (status.includes("D")) continue;
     // .pi holds our own artifacts; node_modules is symlinked, not copied.
     if (target.startsWith(".pi/") || target.startsWith("node_modules/")) continue;
@@ -340,7 +333,11 @@ export async function runRegressionHarness(
     // The worktree must reproduce the real tree, not bare HEAD: the implement
     // agent edits files that are not finding targets, and the user may have had
     // uncommitted work before the audit started.
-    const overlay = new Set<string>([...snapshots.keys(), ...(await dirtyPaths(cwd)), ...plans.map((p) => p.testFile)]);
+    const overlay = new Set<string>([
+      ...snapshots.keys(),
+      ...(await dirtyPaths(cwd)),
+      ...plans.map((p) => p.testFile).filter((testFile) => resolveTargetPath(cwd, testFile) !== undefined),
+    ]);
     const worktreeDir = worktree;
     await mapWithConcurrencyLimit([...overlay], 8, (relPath) => copyInto(cwd, worktreeDir, worktreeReal, relPath));
 
@@ -391,7 +388,7 @@ export async function runRegressionHarness(
           greenAfterFix: true,
           redWhenReverted: !red.ok,
           proven: !red.ok,
-          detail: red.ok ? undefined : tail(red.output),
+          detail: red.ok ? undefined : tail(red.output, OUTPUT_TAIL_CHARS),
         };
       } catch (error) {
         result = harnessError(plan, message(error));

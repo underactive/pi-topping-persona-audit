@@ -57,10 +57,10 @@ const GENERATED_OR_MINIFIED_FILE_RE = /\.(min\.[^.]+|map|generated\.[^.]+)$/i;
 const FULL_TREE_FILE_RE = /\.(ts|tsx|js|jsx|mjs|cjs|mts|cts|py|pyi|go|rs|java|kt|kts|rb|php|c|h|cc|cpp|cxx|hpp|hh|cs|swift|m|mm|scala|sh|sql|lua|yaml|yml|toml|json|md|html|css|scss|less|vue|svelte)$/i;
 const LOCKFILE_RE = /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|npm-shrinkwrap\.json|Cargo\.lock|poetry\.lock|Pipfile\.lock|Gemfile\.lock|go\.sum|composer\.lock)$/i;
 // Secret/.env/lockfile exclusions only trim the audit manifest — they are not
-// a security boundary. Reviewer/adjudicator/verifier sessions run with
-// read-only tools (READ_ONLY_TOOLS in orchestrator.ts: read/grep/find/ls) over
-// the whole cwd, so excluded files can still be read by the model. Scrub or
-// relocate secrets before auditing a repo that contains them.
+// a security boundary. Agent sessions can read any file in cwd regardless of
+// manifest membership, and some phases (implement, verify-regression, repair)
+// also receive edit/write tools. Scrub or relocate secrets before auditing a
+// repo that contains them.
 const SECRET_FILE_RE = /(^|\/)(secrets?|credentials?)\/|(^|\/)[^/]*(secrets?|credentials?|serviceaccount)[^/]*\.(json|ya?ml|toml)$|\.tfvars(\.json)?$/i;
 const DIFF_SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build", ".next", "coverage", "__pycache__", ".venv", "vendor", ".cache"]);
 const FULL_TREE_SKIP_DIRS = new Set([

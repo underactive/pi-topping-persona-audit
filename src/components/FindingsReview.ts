@@ -3,7 +3,7 @@ import { Key, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/
 import type { ExtensionCommandContext, Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { handoffRelPath, renderDeferredHandoff, writeReportFile } from "../report.ts";
 import type { Finding, FindingsReviewResult, FindingStatus } from "../types.ts";
-import { FALLBACK_TERMINAL_ROWS, OVERLAY_HEIGHT_PERCENT, OVERLAY_MAX_HEIGHT, renderFramedBottom, renderFramedRow, renderFramedTop } from "./menuChrome.ts";
+import { FALLBACK_TERMINAL_ROWS, OVERLAY_HEIGHT_PERCENT, OVERLAY_MAX_HEIGHT, renderFramedBottom, renderFramedRow, renderFramedTop, SELECTOR } from "./menuChrome.ts";
 
 interface ReviewItem {
   finding: Finding;
@@ -33,8 +33,8 @@ export interface ReviewTheme {
 
 const STATUS_CYCLE: FindingStatus[] = ["apply", "reject", "defer"];
 
-/** Sort order for adjudicator recommendations — Apply first, Defer second, Reject last. */
-const REC_ORDER: Record<FindingStatus, number> = { apply: 0, defer: 1, reject: 2 };
+/** Render order for recommendation groups — Apply first, Defer second, Reject last. */
+const RENDER_ORDER: FindingStatus[] = ["apply", "defer", "reject"];
 
 /** Human-readable labels for recommendation sections. */
 const REC_LABELS: Record<FindingStatus, string> = {
@@ -42,9 +42,6 @@ const REC_LABELS: Record<FindingStatus, string> = {
   defer: "Recommended: Defer",
   reject: "Recommended: Reject",
 };
-
-const MARKER = "❯ ";
-const MARKER_GAP = "  ";
 
 const STATUS_LABELS: Record<FindingStatus, string> = {
   apply: "[APPLY]",
@@ -97,14 +94,7 @@ export class FindingsReview implements Component {
     degradationNote?: string,
   ) {
     this.degradationNote = degradationNote;
-    // Sort findings by recommendation (apply → defer → reject), then by file
-    const sorted = [...findings].sort((a, b) => {
-      const recA = REC_ORDER[a.recommendation ?? "apply"];
-      const recB = REC_ORDER[b.recommendation ?? "apply"];
-      if (recA !== recB) return recA - recB;
-      return a.file.localeCompare(b.file);
-    });
-    this.items = sorted.map((f) => ({ finding: f, status: f.recommendation ?? "apply" }));
+    this.items = findings.map((f) => ({ finding: f, status: f.recommendation ?? "apply" }));
     this.theme = theme;
     this.done = done;
     this.tui = tui;
@@ -138,7 +128,7 @@ export class FindingsReview implements Component {
     }
 
     this.flatGroups.length = 0;
-    for (const rec of STATUS_CYCLE) {
+    for (const rec of RENDER_ORDER) {
       const fileMap = recMap.get(rec);
       if (!fileMap) continue;
       for (const [file, items] of fileMap.entries()) {
@@ -363,8 +353,8 @@ export class FindingsReview implements Component {
     const severe = item.finding.severity === "critical" || item.finding.severity === "high";
     const severityText = severe ? item.finding.severity.toUpperCase() : item.finding.severity;
     const severity = t.fg(severe ? "error" : "muted", severityText.padEnd(SEVERITY_WIDTH));
-    const marker = selected ? t.bold(t.fg("accent", MARKER)) : MARKER_GAP;
-    const row = `  ${marker}${status} ${severity} ${item.finding.reviewer}`;
+    const marker = selected ? t.bold(t.fg("accent", SELECTOR)) : " ";
+    const row = `  ${marker} ${status} ${severity} ${item.finding.reviewer}`;
     if (!selected) return row;
     // Pad the bar to the full overlay width so the highlight reads as one row.
     const clipped = truncateToWidth(row, width, "…");

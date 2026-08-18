@@ -9,11 +9,11 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import * as path from "node:path";
-import { resolveSafeWritePath } from "./report.ts";
+import { errorCode, message, resolveSafeWritePath } from "./report.ts";
 import { mapWithConcurrencyLimit } from "./subprocess.ts";
 import { CATEGORY_PRIORITY, type FileChangeEvidence, type Finding, type FindingCategory, type SelfReport } from "./types.ts";
 
-export const SNAPSHOTS_DIR = ".pi/persona-audit/snapshots";
+const SNAPSHOTS_DIR = ".pi/persona-audit/snapshots";
 
 /** Concurrency cap for the per-file read/hash/write work in snapshotFiles and compareToSnapshots. */
 const SNAPSHOT_CONCURRENCY = 8;
@@ -28,6 +28,7 @@ export interface FileSnapshot {
   error?: string;
 }
 
+/** Callers must pass the return value through resolveSafeWritePath before writing. */
 export function snapshotRelPath(slug: string, file: string): string {
   return `${SNAPSHOTS_DIR}/${slug}/pre/${file}`;
 }
@@ -51,16 +52,6 @@ function sha256(content: Buffer): string {
   return createHash("sha256").update(content).digest("hex");
 }
 
-function errorCode(error: unknown): string | undefined {
-  return typeof error === "object" && error !== null && "code" in error
-    ? String((error as { code?: unknown }).code)
-    : undefined;
-}
-
-function message(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 /** Capture pre-fix content and hash for each file. Never throws. */
 export async function snapshotFiles(cwd: string, slug: string, files: string[]): Promise<Map<string, FileSnapshot>> {
   const cwdReal = await realpath(path.resolve(cwd));
@@ -69,9 +60,9 @@ export async function snapshotFiles(cwd: string, slug: string, files: string[]):
     if (!abs) {
       return [file, { file, existed: false, error: `path escapes the project root: ${file}` }];
     }
-    let content: Buffer;
+    let realAbs: string;
     try {
-      content = await readFile(abs);
+      realAbs = await realpath(abs);
     } catch (error) {
       // A finding on a not-yet-created file is legitimate, not an error.
       return [
@@ -81,10 +72,20 @@ export async function snapshotFiles(cwd: string, slug: string, files: string[]):
           : { file, existed: false, error: message(error) },
       ];
     }
-    const realAbs = await realpath(abs);
     const relToCwd = path.relative(cwdReal, realAbs);
     if (relToCwd.startsWith("..") || path.isAbsolute(relToCwd)) {
       return [file, { file, existed: false, error: `path escapes the project root: ${file}` }];
+    }
+    let content: Buffer;
+    try {
+      content = await readFile(realAbs);
+    } catch (error) {
+      return [
+        file,
+        errorCode(error) === "ENOENT"
+          ? { file, existed: false }
+          : { file, existed: false, error: message(error) },
+      ];
     }
     const relPath = snapshotRelPath(slug, file);
     try {
@@ -104,6 +105,7 @@ export async function compareToSnapshots(
   cwd: string,
   snapshots: Map<string, FileSnapshot>,
 ): Promise<Map<string, FileChangeEvidence>> {
+  const cwdReal = await realpath(path.resolve(cwd));
   const entries = await mapWithConcurrencyLimit(
     [...snapshots],
     SNAPSHOT_CONCURRENCY,
@@ -118,6 +120,11 @@ export async function compareToSnapshots(
       }
       let content: Buffer | undefined;
       try {
+        const realAbs = await realpath(abs);
+        const rel = path.relative(cwdReal, realAbs);
+        if (rel.startsWith("..") || path.isAbsolute(rel)) {
+          return [file, { ...base, state: "unreadable", detail: `path escapes the project root: ${file}` }];
+        }
         content = await readFile(abs);
       } catch (error) {
         if (errorCode(error) !== "ENOENT") {

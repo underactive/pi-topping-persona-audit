@@ -1,20 +1,9 @@
 /**
- * In-process agent-session task runner — replaces the headless
- * `pi --mode json -p --no-session --no-extensions` subprocess with pi's
- * public createAgentSession() SDK.
+ * In-process agent-session task runner.
  *
- * createAgentSession() takes a ModelRuntime, not the ModelRegistry facade
- * extensions receive as ctx.modelRegistry, so a bridge/extension-registered
- * provider (mutated as data onto the *interactive* session's own runtime)
- * is invisible to the fresh ModelRuntime createAgentSession would otherwise
- * build. buildRuntimeWithExtensionProviders() replays each registration onto
- * a fresh runtime instead: registerProvider()'s config carries live closures
- * (e.g. a bridge's streamSimple dispatcher) by reference, so behavior is
- * preserved even though the runtime object itself is a new instance.
- *
- * noExtensions: true is a self-recursion guard, not just isolation:
- * pi-topping-persona-audit is itself an extension, and a child session that loaded it
- * could re-register /persona-audit.
+ * Spawns isolated agent sessions via pi's createAgentSession() SDK, replaying
+ * extension-registered model providers onto a fresh ModelRuntime so bridge and
+ * custom models resolve identically. noExtensions prevents self-recursion.
  */
 
 import { join } from "node:path";
@@ -64,7 +53,7 @@ export function getAllAssistantText(messages: readonly SessionMessage[]): string
   return parts.join("\n");
 }
 
-// ── Model resolution (ported from @tintinweb/pi-subagents' model-resolver.ts) ──
+// ── Model resolution ──
 
 /** Exact "provider/id" match, then fuzzy fallback (frontmatter `model:` may hold a fuzzy string like "sonnet"); throws with the available-model list when nothing matches. */
 export function resolveModelRef(input: string | undefined, registry: ModelRegistry): Model<Api> | undefined {
@@ -247,7 +236,6 @@ export async function runAgentSession(opts: HeadlessOptions): Promise<HeadlessRe
       const elapsed = Date.now() - lastEventAt;
       if (elapsed >= idleTimeoutMs) {
         idleTimedOut = true;
-        aborted = true;
         session.abort();
         return;
       }

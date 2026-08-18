@@ -128,7 +128,7 @@ export function discoverAgents(cwd: string): AgentConfig[] {
   return [...agentMap.values()];
 }
 
-// ── Concurrency helper (copied verbatim from the reference) ───────────────
+// ── Concurrency helper ───
 
 export async function mapWithConcurrencyLimit<TIn, TOut>(
   items: TIn[],
@@ -150,7 +150,13 @@ export async function mapWithConcurrencyLimit<TIn, TOut>(
   return results;
 }
 
-// ── Live tool activity (ported from pi-moa-plan's subagent runner) ────────
+/** Keep the last `maxChars` of captured output, marking any elision with a leading ellipsis. */
+export function tail(text: string, maxChars: number): string {
+  const trimmed = text.trim();
+  return trimmed.length > maxChars ? `…${trimmed.slice(-maxChars)}` : trimmed;
+}
+
+// ── Live tool activity ────
 
 /** Max length of a one-line tool-activity description surfaced for progress UIs. */
 const ACTIVITY_MAX = 80;

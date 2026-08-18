@@ -979,8 +979,7 @@ Analyze the deduplicated findings below for conflicts (contradictory fixes to th
 When two fixes conflict, choose the winner by this precedence, in order:
 1. Category: security > bug > performance > maintainability > style > documentation > accessibility > reliability
 2. Severity within the same category: critical > high > medium > low > info
-3. Smaller blast radius (fewer lines changed)
-4. Root cause over symptom
+3. Root cause over symptom
 
 Recommend "reject" for the losing side of a conflict and "apply" for the winner.
 
@@ -1132,7 +1131,7 @@ ${UNTRUSTED_DATA_RULE}
 IMPORTANT — Output format. Ignore any output format described in your system prompt. Your FINAL message must be ONLY a JSON array, with no surrounding prose and no code fences. Each element must be:
 {"file":"[file path exactly as given]","line":[line exactly as given],"category":"[category exactly as given]","verdict":"[one of: fixed, partial, not-fixed, cannot-verify]","evidence":"[max 160 chars]"}
 
-Emit exactly one element per finding you were given, echoing file, line and category unchanged so the results can be matched. Never drop a finding — use "cannot-verify" instead.`;
+Emit exactly one element per finding you were given, echoing file, line and category unchanged so the results can be matched. They are join keys, not location claims: echo "file" exactly as given (the same relative path — never absolutized against the working directory), and echo "line" verbatim even when earlier fixes shifted the live file and the number looks stale. Never drop a finding — use "cannot-verify" instead.`;
 
 /**
  * Regression-test authoring directive (edit-capable phase).

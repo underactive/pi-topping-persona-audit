@@ -8,6 +8,7 @@ import {
   parseContestedVerdicts,
   parseFixVerdicts,
   parseRegressionPlans,
+  verifierOutputUnusable,
   partitionApplyBatches,
   recordFingerprint,
   scopeAcceptedFindings,
@@ -189,6 +190,84 @@ test("parseFixVerdicts carries the implement agent's self-report through as a cr
   // The agent claimed it applied this fix; the bytes say otherwise.
   assert.equal(verifications[0]?.selfReport, "applied");
   assert.equal(verifications[0]?.verdict, "not-fixed");
+});
+
+test("parseFixVerdicts prefers the candidate that matches the most findings over the first parse", () => {
+  const accepted = [finding(), finding({ file: "src/b.ts", line: 3, category: "bug" })];
+  const evidence = evidenceFor({ "src/a.ts": "changed", "src/b.ts": "changed" });
+  // The final message is prose with one salvageable NDJSON object; the full
+  // array only exists in the earlier transcript text.
+  const finalText = `All done judging.\n${JSON.stringify(verdict("src/a.ts", 12, "security", "fixed"))}\nThat was the last one.`;
+  const allText = JSON.stringify([
+    verdict("src/a.ts", 12, "security", "fixed"),
+    verdict("src/b.ts", 3, "bug", "partial"),
+  ]);
+
+  const { verifications, note, matched } = parseFixVerdicts(accepted, evidence, new Map(), [finalText, allText]);
+  assert.equal(note, undefined);
+  assert.equal(matched, 2);
+  assert.equal(verifications[0]?.verdict, "fixed");
+  assert.equal(verifications[1]?.verdict, "partial");
+});
+
+test("parseFixVerdicts still prefers the final message when both candidates fully match", () => {
+  const accepted = [finding()];
+  const evidence = evidenceFor({ "src/a.ts": "changed" });
+  const finalText = JSON.stringify([verdict("src/a.ts", 12, "security", "fixed", "final answer")]);
+  const allText = JSON.stringify([verdict("src/a.ts", 12, "security", "not-fixed", "early draft")]);
+
+  const { verifications } = parseFixVerdicts(accepted, evidence, new Map(), [finalText, allText]);
+  assert.equal(verifications[0]?.verdict, "fixed");
+  assert.equal(verifications[0]?.evidence, "final answer");
+});
+
+test("parseFixVerdicts normalizes absolute and dot-relative claim paths", () => {
+  const accepted = [finding(), finding({ file: "src/b.ts", line: 3, category: "bug" })];
+  const evidence = evidenceFor({ "src/a.ts": "changed", "src/b.ts": "changed" });
+  const output = JSON.stringify([
+    verdict("/repo/src/a.ts", 12, "security", "fixed"),
+    verdict("./src/b.ts", 3, "bug", "partial"),
+  ]);
+
+  const { verifications, note } = parseFixVerdicts(accepted, evidence, new Map(), [output], "/repo");
+  assert.equal(note, undefined);
+  assert.equal(verifications[0]?.verdict, "fixed");
+  assert.equal(verifications[1]?.verdict, "partial");
+});
+
+test("parseFixVerdicts matches a drifted line number when file+category is unique", () => {
+  const accepted = [finding()];
+  const evidence = evidenceFor({ "src/a.ts": "changed" });
+  // The verifier "corrected" the line to what the live (post-edit) file shows.
+  const output = JSON.stringify([verdict("src/a.ts", 19, "security", "fixed", "escapes argv")]);
+
+  const { verifications, note } = parseFixVerdicts(accepted, evidence, new Map(), [output]);
+  assert.equal(note, undefined);
+  assert.equal(verifications[0]?.verdict, "fixed");
+  assert.equal(verifications[0]?.evidence, "escapes argv");
+});
+
+test("parseFixVerdicts refuses the line-blind fallback when two findings share file+category", () => {
+  const accepted = [finding(), finding({ line: 80 })];
+  const evidence = evidenceFor({ "src/a.ts": "changed" });
+  const output = JSON.stringify([
+    verdict("src/a.ts", 19, "security", "fixed"),
+    verdict("src/a.ts", 91, "security", "not-fixed"),
+  ]);
+
+  const { verifications, note } = parseFixVerdicts(accepted, evidence, new Map(), [output]);
+  // Neither drifted claim can be attributed safely, so both stay unverified.
+  assert.equal(verifications[0]?.verdict, "cannot-verify");
+  assert.equal(verifications[1]?.verdict, "cannot-verify");
+  assert.ok(note?.includes("0/2"));
+});
+
+test("verifierOutputUnusable trips below half coverage and never on zero judgeable", () => {
+  assert.equal(verifierOutputUnusable(1, 15), true);
+  assert.equal(verifierOutputUnusable(7, 15), true);
+  assert.equal(verifierOutputUnusable(8, 15), false);
+  assert.equal(verifierOutputUnusable(0, 1), true);
+  assert.equal(verifierOutputUnusable(0, 0), false);
 });
 
 // ── parseRegressionPlans ──────────────────────────────────────────────

@@ -1,12 +1,6 @@
+/** Deterministic audit state machine — runs reviewer/adjudicator/verifier agent sessions and writes the report. */
+
 /**
- * Deterministic audit state machine (replaces the child-LLM orchestrator).
- *
- * Every step that was previously prose in ORCHESTRATION_INSTRUCTIONS is now a
- * TypeScript function call or an isolated in-process agent session
- * (src/agentRunner.ts). The LLM is
- * used only where judgment is required: reviewer passes, adjudicator
- * reconciliation, and adjudicator fix application.
- *
  * Cancellation note: `ctx.signal` (the extension command context's signal)
  * is undefined while a command handler runs, so the audit carries its own
  * `input.signal` — an AbortController owned by the command handler in
@@ -28,7 +22,7 @@ import { collectReviewerFindings } from "./findingsTransport.ts";
 import { isRecord, normalizeFindingText } from "./dedup.ts";
 import type { AuditProgressWidget } from "./components/AuditProgress.ts";
 import type { ReviewerFailurePrompt } from "./components/ReviewerRetry.ts";
-import type { VerifierFailurePrompt } from "./components/VerifierRetry.ts";
+import type { VerifierFailurePrompt, VerifierRetryDecision } from "./components/VerifierRetry.ts";
 import {
   ADJUDICATOR_APPLY_DIRECTIVE,
   ADJUDICATOR_RECONCILE_DIRECTIVE,
@@ -69,6 +63,7 @@ import {
   compareToSnapshots,
   lookupSelfReport,
   parseApplyReport,
+  resolveTargetPath,
   snapshotFiles,
   verificationKey,
   type FileSnapshot,
@@ -114,7 +109,6 @@ const REVIEWER_AGENT = "persona-audit-reviewer";
 const ADJUDICATOR_AGENT = "persona-audit-adjudicator";
 const VERIFIER_AGENT = "persona-audit-verifier";
 
-// Stable progress-row keys for the single-workload phases.
 const COLLECT_ROW = "triage:collect";
 const REVOICE_ROW = "triage:revoice";
 const RECONCILE_ROW = "triage:reconcile";
@@ -131,8 +125,10 @@ const findingLabel = (f: { file: string; line: number }): string =>
 
 const READ_ONLY_TOOLS = ["read", "grep", "find", "ls"];
 const EDIT_TOOLS = [...READ_ONLY_TOOLS, "bash", "edit", "write"];
-// 10 min of silence before an agent session is killed.
 const AGENT_IDLE_TIMEOUT_MS = 600_000;
+
+/** Cap on retries prompted by unusable (low-match) verifier output, per round. */
+const MAX_UNUSABLE_VERIFIER_RETRIES = 2;
 
 const skippedVerification = (): VerificationOutcome => ({
   status: "skipped",
@@ -200,6 +196,17 @@ function resolvePhaseModel(
  * bracket slice, then JSON-lines objects as a last resort.
  */
 export function extractJsonArray(text: string): unknown[] | null {
+  return extractJsonArrayCandidates(text)[0] ?? null;
+}
+
+/**
+ * Every successful parse from the same text, in salvage-precedence order:
+ * whole text, fenced blocks, bracket slice, then JSON-lines objects. A prose
+ * final message can salvage a single stray object while the complete array
+ * lives in another candidate, so callers that can score candidates should
+ * inspect all of them rather than trusting the first.
+ */
+function extractJsonArrayCandidates(text: string): unknown[][] {
   const trimmed = text.trim();
   const candidates: string[] = [trimmed];
   for (const match of trimmed.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)) {
@@ -209,11 +216,12 @@ export function extractJsonArray(text: string): unknown[] | null {
   const last = trimmed.lastIndexOf("]");
   if (first !== -1 && last > first) candidates.push(trimmed.slice(first, last + 1));
 
+  const results: unknown[][] = [];
   for (const candidate of candidates) {
     if (!candidate.startsWith("[")) continue;
     try {
       const parsed: unknown = JSON.parse(candidate);
-      if (Array.isArray(parsed)) return parsed;
+      if (Array.isArray(parsed)) results.push(parsed);
     } catch {
       /* try next candidate */
     }
@@ -230,13 +238,15 @@ export function extractJsonArray(text: string): unknown[] | null {
       }
     }
   }
-  return objects.length > 0 ? objects : null;
+  if (objects.length > 0) results.push(objects);
+  return results;
 }
 
 /**
  * Merge adjudicator recommendation annotations onto the deduped findings.
- * Findings the adjudicator failed to annotate fall back to the original
- * finding (triage defaults them to "apply"); degradation is reported.
+ * If the adjudicator output is unparsable, every finding defaults to "defer".
+ * Otherwise, findings the adjudicator failed to annotate keep the original
+ * finding (triage defaults them to "apply"). Degradation is reported.
  */
 export function annotateFindings(
   base: Finding[],
@@ -247,7 +257,7 @@ export function annotateFindings(
   if (!items || items.length === 0) {
     return {
       findings: base.map((f) => ({ ...f, recommendation: "defer" })),
-      note: "adjudicator output was unparsable — findings triaged without recommendations",
+      note: "adjudicator output was unparsable — all findings default to defer",
       matched: 0,
     };
   }
@@ -293,6 +303,28 @@ function firstJsonArray(texts: string[]): unknown[] | null {
     if (items && items.length > 0) return items;
   }
   return null;
+}
+
+/**
+ * Pick the parse candidate that scores highest across all texts. Ties go to
+ * the earliest candidate (final message first), preserving firstJsonArray's
+ * behavior when scoring cannot separate them.
+ */
+function bestJsonArray(texts: string[], score: (items: unknown[]) => number): unknown[] | null {
+  let best: unknown[] | null = null;
+  let bestScore = -1;
+  for (const text of texts) {
+    if (!text.trim()) continue;
+    for (const items of extractJsonArrayCandidates(text)) {
+      if (items.length === 0) continue;
+      const s = score(items);
+      if (s > bestScore) {
+        best = items;
+        bestScore = s;
+      }
+    }
+  }
+  return best;
 }
 
 // ── Register re-voice (voice-only rewrite of hot-register findings) ──────
@@ -380,22 +412,65 @@ export function parseFixVerdicts(
   evidence: Map<string, FileChangeEvidence>,
   selfReports: Map<string, SelfReport>,
   texts: string[],
-): { verifications: FixVerification[]; note?: string } {
-  const items = firstJsonArray(texts);
-  const claims = new Map<string, { verdict: FixVerdict; evidence: string }>();
-  for (const raw of items ?? []) {
-    if (!isRecord(raw)) continue;
-    const verdict = normalizeFindingText(raw.verdict).toLowerCase();
-    if (!VERDICTS.has(verdict)) continue;
-    const file = normalizeFindingText(raw.file);
-    const category = normalizeFindingText(raw.category).toLowerCase();
-    if (!file || !category) continue;
-    const lineNum = Number(raw.line);
-    claims.set(verificationKey(file, Number.isFinite(lineNum) ? lineNum : -1, category), {
-      verdict: verdict as FixVerdict,
-      evidence: normalizeFindingText(raw.evidence, 160),
-    });
+  cwd?: string,
+): { verifications: FixVerification[]; note?: string; matched: number; judgeable: number } {
+  // Verifiers are told to echo file/line/category verbatim, but models still
+  // absolutize paths and "correct" line numbers to what the live (post-edit)
+  // file shows. Claims are normalized and joined with a fallback so that
+  // drift does not read as "no verdict".
+  const cwdPrefix = cwd ? (cwd.endsWith("/") ? cwd : `${cwd}/`) : undefined;
+  const normalizeFile = (file: string): string => {
+    let f = file;
+    if (cwdPrefix && f.startsWith(cwdPrefix)) f = f.slice(cwdPrefix.length);
+    while (f.startsWith("./")) f = f.slice(2);
+    return f;
+  };
+
+  const pairKey = (file: string, category: string): string => `${file}\u0000${category.toLowerCase()}`;
+  const pairCounts = new Map<string, number>();
+  for (const f of accepted) {
+    const k = pairKey(f.file, f.category);
+    pairCounts.set(k, (pairCounts.get(k) ?? 0) + 1);
   }
+
+  type Claim = { verdict: FixVerdict; evidence: string };
+  const parseClaims = (items: unknown[]): { exact: Map<string, Claim>; byPair: Map<string, Claim> } => {
+    const exact = new Map<string, Claim>();
+    const byPair = new Map<string, Claim>();
+    for (const raw of items) {
+      if (!isRecord(raw)) continue;
+      const verdict = normalizeFindingText(raw.verdict).toLowerCase();
+      if (!VERDICTS.has(verdict)) continue;
+      const file = normalizeFile(normalizeFindingText(raw.file));
+      const category = normalizeFindingText(raw.category).toLowerCase();
+      if (!file || !category) continue;
+      const lineNum = Number(raw.line);
+      const claim: Claim = {
+        verdict: verdict as FixVerdict,
+        evidence: normalizeFindingText(raw.evidence, 160),
+      };
+      exact.set(verificationKey(file, Number.isFinite(lineNum) ? lineNum : -1, category), claim);
+      const pk = pairKey(file, category);
+      if (!byPair.has(pk)) byPair.set(pk, claim);
+    }
+    return { exact, byPair };
+  };
+
+  const scoreItems = (items: unknown[]): number => {
+    const { exact, byPair } = parseClaims(items);
+    let score = 0;
+    for (const f of accepted) {
+      if (exact.has(verificationKey(f.file, f.line, f.category))) {
+        score++;
+      } else if (pairCounts.get(pairKey(f.file, f.category)) === 1 && byPair.has(pairKey(f.file, f.category))) {
+        score++;
+      }
+    }
+    return score;
+  };
+
+  const items = bestJsonArray(texts, scoreItems);
+  const { exact: claims, byPair: fallbackClaims } = parseClaims(items ?? []);
 
   let matched = 0;
   const verifications = accepted.map((finding) => {
@@ -422,7 +497,17 @@ export function parseFixVerdicts(
         evidence: "target file is byte-identical to the pre-fix snapshot",
       };
     }
-    const claim = claims.get(verificationKey(finding.file, finding.line, finding.category));
+    let claim = claims.get(verificationKey(finding.file, finding.line, finding.category));
+    if (!claim) {
+      // Line-blind fallback: only when this file+category pair maps to exactly
+      // one accepted finding, so a drifted line number cannot cross-match two
+      // findings in the same file. Consumed on use so it cannot double-serve.
+      const pk = pairKey(finding.file, finding.category);
+      if (pairCounts.get(pk) === 1) {
+        claim = fallbackClaims.get(pk);
+        if (claim) fallbackClaims.delete(pk);
+      }
+    }
     if (!claim) {
       return {
         ...base,
@@ -441,7 +526,16 @@ export function parseFixVerdicts(
   } else if (matched < judgeable) {
     note = `verifier judged ${matched}/${judgeable} changed findings — the rest are cannot-verify`;
   }
-  return { verifications, note };
+  return { verifications, note, matched, judgeable };
+}
+
+/**
+ * A completed verifier run whose claims join to fewer than half the judgeable
+ * findings is treated like a failed run: the output exists but cannot be
+ * trusted to represent a per-finding judgment.
+ */
+export function verifierOutputUnusable(matched: number, judgeable: number): boolean {
+  return judgeable > 0 && matched < Math.ceil(judgeable / 2);
 }
 
 /**
@@ -454,6 +548,7 @@ export function parseFixVerdicts(
 export function parseRegressionPlans(
   candidates: Finding[],
   texts: string[],
+  cwd?: string,
 ): { plans: RegressionPlan[]; note?: string } {
   const items = firstJsonArray(texts);
   if (!items) {
@@ -474,6 +569,10 @@ export function parseRegressionPlans(
     const testFile = normalizeFindingText(raw.testFile);
     const testCommand = normalizeFindingText(raw.testCommand, 300);
     if (!testFile || !testCommand) continue;
+    if (cwd !== undefined && resolveTargetPath(cwd, testFile) === undefined) {
+      rejected.push(`${candidate.file}:${candidate.line} (test file escapes the project root)`);
+      continue;
+    }
     if (targets.has(path.posix.normalize(testFile))) {
       rejected.push(`${candidate.file}:${candidate.line} (would be reverted with its own target file)`);
       continue;
@@ -678,8 +777,6 @@ function buildApplyTask(batch: ApplyBatch): string {
   ].join("\n");
 }
 
-const blastRadius = (f: Finding): number => f.suggestedChange.split("\n").length;
-
 /**
  * Split triage's accepted findings by whether this run actually audited the file.
  *
@@ -707,7 +804,7 @@ export function scopeAcceptedFindings(
  *
  * The cap the adjudicator used to self-enforce is applied here instead: once
  * findings are split across agents no single agent can see the global count, so
- * the ranking (category → severity → blast radius, the reconciliation order)
+ * the ranking (category → severity, the reconciliation order)
  * has to happen before distribution. Whatever falls past the cap comes back as
  * `overflow` so the report can account for it rather than dropping it silently.
  */
@@ -719,7 +816,6 @@ export function partitionApplyBatches(
     (a, b) =>
       CATEGORY_PRIORITY.indexOf(a.category) - CATEGORY_PRIORITY.indexOf(b.category) ||
       SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity) ||
-      blastRadius(a) - blastRadius(b) ||
       a.file.localeCompare(b.file) ||
       a.line - b.line,
   );
@@ -1687,7 +1783,7 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
       const result = await runAgentSession({
         agentName: `adjudicator implement ${batch.index + 1}/${applyBatches.length}`,
         systemPrompt: adjudicatorAgent.systemPrompt,
-        tools: adjudicatorAgent.tools ?? EDIT_TOOLS,
+        tools: (adjudicatorAgent.tools ?? EDIT_TOOLS).filter((t) => t !== "bash"),
         model: implementModel.model,
         thinking: implementModel.thinking,
         task: buildApplyTask(batch),
@@ -1786,9 +1882,18 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
           outcome.notes.push("run aborted during verification — fixes were not judged");
         } else {
           progress?.addRow("Verify", verifierRow, `verifier${suffix}`, { state: "working", statusText: "judging fixes…" });
+          const applyRetryModel = (decision: VerifierRetryDecision): void => {
+            if (!decision.model) return;
+            verifyChoice = decision.model;
+            const label = modelRefLabel(decision.model.ref);
+            verifyModel = { model: label, thinking: decision.model.thinking, label: phaseModelChoiceLabel(decision.model) };
+            reportCtx.phaseModels = { ...reportCtx.phaseModels, Verify: verifyModel.label };
+            if (progress) progress.setPhaseModels({ ...progress.phaseModels(), Verify: verifyModel.model });
+          };
           // A verifier failure is usually provider-level (credits, rate limit),
           // and skipping it leaves every accepted finding at "cannot-verify", so
           // the user gets a chance to re-run it on a different model.
+          let unusableRetries = 0;
           for (;;) {
             const verifyRun = await runAgentSession({
               agentName: `verifier${suffix}`,
@@ -1805,7 +1910,29 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
             });
             if (!isFailedRun(verifyRun)) {
               verifierTexts = [verifyRun.finalText, verifyRun.allText];
-              break;
+              // A run can complete yet produce claims that join to almost no
+              // findings (wrong format, truncated array). That is as useless as
+              // a crash, so it goes through the same retry checkpoint — but the
+              // partial verdicts are kept if the user declines.
+              const parsed = parseFixVerdicts(review.accepted, changeEvidence, selfReports, verifierTexts, ctx.cwd);
+              if (!verifierOutputUnusable(parsed.matched, parsed.judgeable)) break;
+              if (unusableRetries >= MAX_UNUSABLE_VERIFIER_RETRIES) {
+                outcome.notes.push(
+                  `verifier output still matched only ${parsed.matched}/${parsed.judgeable} findings after ${unusableRetries} retries — keeping the partial verdicts`,
+                );
+                break;
+              }
+              const outputDetail = `verifier run completed but its verdicts matched only ${parsed.matched}/${parsed.judgeable} findings`;
+              const outputDecision =
+                input.onVerifierFailure && !input.signal?.aborted
+                  ? await input.onVerifierFailure(outputDetail, verifyChoice)
+                  : { retry: false };
+              if (!outputDecision.retry || input.signal?.aborted) break;
+              unusableRetries++;
+              applyRetryModel(outputDecision);
+              outcome.notes.push(`${outputDetail} — retried on ${verifyModel.label}`);
+              progress?.startRow(verifierRow, "output unusable — retrying…");
+              continue;
             }
 
             const detail = verifyRun.errorMessage || verifyRun.stopReason || "aborted";
@@ -1821,19 +1948,13 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
               break;
             }
 
-            if (decision.model) {
-              verifyChoice = decision.model;
-              const label = modelRefLabel(decision.model.ref);
-              verifyModel = { model: label, thinking: decision.model.thinking, label: phaseModelChoiceLabel(decision.model) };
-              reportCtx.phaseModels = { ...reportCtx.phaseModels, Verify: verifyModel.label };
-              if (progress) progress.setPhaseModels({ ...progress.phaseModels(), Verify: verifyModel.model });
-            }
+            applyRetryModel(decision);
             outcome.notes.push(`verifier run failed (${detail}) — retried on ${verifyModel.label}`);
             progress?.startRow(verifierRow, "retrying…");
           }
         }
 
-        const verdicts = parseFixVerdicts(review.accepted, changeEvidence, selfReports, verifierTexts);
+        const verdicts = parseFixVerdicts(review.accepted, changeEvidence, selfReports, verifierTexts, ctx.cwd);
         outcome.fixVerdicts = verdicts.verifications;
         if (verdicts.note) outcome.notes.push(verdicts.note);
 
@@ -1887,7 +2008,7 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
             outcome.notes.push("regression test authoring failed — no red/green evidence was collected");
             progress?.settleRow(regressionAuthorRow, "error", "authoring failed");
           } else {
-            const parsed = parseRegressionPlans(candidates, [authored.finalText, authored.allText]);
+            const parsed = parseRegressionPlans(candidates, [authored.finalText, authored.allText], ctx.cwd);
             if (parsed.note) outcome.notes.push(parsed.note);
             progress?.settleRow(regressionAuthorRow, "done", `${parsed.plans.length}/${candidates.length} authored`);
             for (const plan of parsed.plans) {
@@ -1989,7 +2110,7 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
         const repairRun = await runAgentSession({
           agentName: `adjudicator repair round ${nextRound}${escalatedSuffix}`,
           systemPrompt: adjudicatorAgent.systemPrompt,
-          tools: adjudicatorAgent.tools ?? EDIT_TOOLS,
+          tools: (adjudicatorAgent.tools ?? EDIT_TOOLS).filter((t) => t !== "bash"),
           model: implementModel.model,
           thinking: implementModel.thinking,
           task: repair.task,

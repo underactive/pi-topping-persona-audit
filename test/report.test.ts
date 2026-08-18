@@ -127,7 +127,6 @@ const handoffCtx = {
   isoDate: "2026-07-01T10:00:00Z",
   scope: ".",
   reviewers: ["Security Engineer", "Kent Beck"],
-  auditReportHint: ".pi/persona-audit/audits/2026-07-01_10-00-00_persona-audit.md",
 };
 
 test("deferred handoff includes frontmatter and complete finding details", () => {
@@ -144,7 +143,6 @@ test("deferred handoff includes frontmatter and complete finding details", () =>
   assert.ok(handoff.includes("Fix: escape the argument before interpolation"));
   assert.ok(handoff.includes("Reviewers: Security Engineer"));
   assert.ok(handoff.includes("Adjudicator: needs design review"));
-  assert.ok(handoff.includes(handoffCtx.auditReportHint));
 });
 
 test("deferred handoff groups findings and action items by file", () => {

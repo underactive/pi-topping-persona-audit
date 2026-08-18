@@ -3,14 +3,11 @@ import { Key, matchesKey } from "@earendil-works/pi-tui";
 import type { Theme, ThemeColor, WidgetPlacement } from "@earendil-works/pi-coding-agent";
 import type { ReviewerSelection, ReviewerInfo } from "../types.ts";
 import { TIERS } from "./ReviewerData.ts";
-import { renderMenuContentRow, renderMenuSectionDivider, renderMenuTopBorder, showWidgetPrompt, wrapText } from "./menuChrome.ts";
+import { renderMenuContentRow, renderMenuSectionDivider, renderMenuTopBorder, SELECTOR, showWidgetPrompt, wrapText } from "./menuChrome.ts";
 
 /** Every reviewer in tier order, so the flat list still reads Holistic → Specialist → Persona. */
 const ALL_REVIEWERS: ReviewerInfo[] = TIERS.flatMap((tier) => tier.reviewers.map((reviewer) => ({ ...reviewer, tier: tier.tier })));
 const TIER_LABELS = new Map(TIERS.map((tier) => [tier.tier, tier.label]));
-
-const MARKER = "❯ ";
-const MARKER_GAP = "  ";
 
 const COST_CONFIRM_RUN_THRESHOLD = 6;
 const REVIEWER_LIST_CHROME_ROWS = 9;
@@ -296,13 +293,13 @@ export class ExpertPicker implements Component {
         const isSelected = this.selected.has(reviewer.name);
 
         const checkbox = isSelected ? t.fg("success", "✓") : t.fg("dim", "○");
-        const pointer = isCurrent ? t.bold(t.fg("accent", MARKER)) : MARKER_GAP;
+        const pointer = isCurrent ? t.bold(t.fg("accent", SELECTOR)) : " ";
         const nameText = isSelected
           ? t.fg("success", t.bold(reviewer.name))
           : isCurrent
             ? t.bold(t.fg("accent", reviewer.name))
             : t.bold(reviewer.name);
-        lines.push(renderMenuContentRow(t, width, `  ${pointer}${checkbox} ${nameText}`, isCurrent));
+        lines.push(renderMenuContentRow(t, width, `  ${pointer} ${checkbox} ${nameText}`, isCurrent));
 
         const descWrapped = wrapText(reviewer.description, width - 8);
         for (const dl of descWrapped) {

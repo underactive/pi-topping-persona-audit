@@ -1,21 +1,7 @@
 /**
- * Audit progress surface.
- *
- * The whole run reports into ONE sticky widget above the editor: a compact
- * table carrying, per tracked workload, live context usage, a generated-output
- * activity meter, the tool call in flight, turn count and elapsed time. Rows
- * are grouped into the four phases the user sees — Review, Triage, Implement,
- * Verify — with the phase name rendered once per group on the row that also
- * carries the phase's tree connector (├ / └), status icons leading each
- * label, and branch continuations (│) on the rows beneath.
- *
- * Ported from pi-moa-plan's `src/moaProgressWidget.ts`; the meter cadence,
- * column-shedding order and half-screen row budget are load-bearing for visual
- * parity, so port changes upstream rather than tuning them here.
- *
- * Widgets never take keyboard focus; this one handles no input at all.
- * The picker widgets read the terminal directly, and FindingsReview/ReportViewer
- * are focus-taking overlays.
+ * Audit progress surface: a sticky per-row table above the editor showing
+ * context usage, output activity, in-flight tool calls, turn count, and
+ * elapsed time, grouped by phase.
  */
 
 import type { ThemeColor, WidgetPlacement } from "@earendil-works/pi-coding-agent";

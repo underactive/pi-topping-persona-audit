@@ -1,5 +1,5 @@
 /**
- * Audit report builders (former orchestration Step 6, now extension code).
+ * Audit report builders.
  *
  * Pure template functions over structured inputs — no LLM involvement.
  * Filename slug convention matches existing artifacts
@@ -21,8 +21,8 @@ import type {
   VerificationRound,
 } from "./types.ts";
 
-export const AUDITS_DIR = ".pi/persona-audit/audits";
-export const HANDOFFS_DIR = ".pi/persona-audit/handoffs";
+const AUDITS_DIR = ".pi/persona-audit/audits";
+const HANDOFFS_DIR = ".pi/persona-audit/handoffs";
 
 /** Static context shared by every report flavor for one audit run. */
 export interface ReportContext {
@@ -64,7 +64,6 @@ export interface DeferredHandoffContext {
   isoDate: string;
   scope: string;
   reviewers: string[];
-  auditReportHint?: string;
 }
 
 export function makeSlug(date: Date = new Date()): { slug: string; iso: string } {
@@ -94,10 +93,14 @@ function isWithinDirectory(parent: string, child: string): boolean {
   return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
 }
 
-function errorCode(error: unknown): string | undefined {
+export function errorCode(error: unknown): string | undefined {
   return typeof error === "object" && error !== null && "code" in error && typeof (error as { code?: unknown }).code === "string"
     ? (error as { code: string }).code
     : undefined;
+}
+
+export function message(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /**
@@ -173,6 +176,9 @@ export async function resolveSafeWritePath(cwd: string, relPath: string): Promis
 export async function writeReportFile(cwd: string, relPath: string, content: string): Promise<string> {
   const absPath = await resolveSafeWritePath(cwd, relPath);
   await mkdir(path.dirname(absPath), { recursive: true });
+  const cwdPath = path.resolve(cwd);
+  const cwdReal = await realpath(cwdPath);
+  await assertWriteContained(cwdPath, cwdReal, absPath);
   await writeFile(absPath, content, "utf-8");
   return relPath;
 }
@@ -308,7 +314,6 @@ export function renderDeferredHandoff(ctx: DeferredHandoffContext, deferred: Fin
     "",
     `- Scope: \`${ctx.scope}\``,
     `- Reviewers: ${reviewers}`,
-    ...(ctx.auditReportHint ? [`- Audit report: ${ctx.auditReportHint}`] : []),
     "",
   ].join("\n");
 }
