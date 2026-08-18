@@ -1,8 +1,11 @@
 {
   "name": "@underactive/pi-topping-persona-audit",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Pi extension implementing /persona-audit — multi-persona code reviews with TUI expert selection and findings review",
-  "keywords": ["pi-package", "pi-extension"],
+  "keywords": [
+    "pi-package",
+    "pi-extension"
+  ],
   "license": "MIT",
   "author": "Eric Sison",
   "repository": {
@@ -20,7 +23,14 @@
   "publishConfig": {
     "access": "public"
   },
-  "files": ["index.ts", "src/**/*.ts", "agents/**/*.md", "docs/**/*.md", "README.md", "LICENSE"],
+  "files": [
+    "index.ts",
+    "src/**/*.ts",
+    "agents/**/*.md",
+    "docs/**/*.md",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "test": "node --test test/*.test.ts",
     "typecheck": "tsc --noEmit"
@@ -36,7 +46,9 @@
     "typescript": "^5.9.3"
   },
   "pi": {
-    "extensions": ["./index.ts"],
+    "extensions": [
+      "./index.ts"
+    ],
     "image": "https://raw.githubusercontent.com/underactive/pi-topping-persona-audit/main/media/persona_audit_demo.png"
   }
 }
