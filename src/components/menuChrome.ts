@@ -10,7 +10,7 @@
  */
 
 import type { Theme, ThemeColor, WidgetPlacement } from "@earendil-works/pi-coding-agent";
-import { type Component, Key, matchesKey, truncateToWidth, type TUI, visibleWidth } from "@earendil-works/pi-tui";
+import { type Component, isKeyRelease, Key, matchesKey, truncateToWidth, type TUI, visibleWidth } from "@earendil-works/pi-tui";
 
 /** A boolean setting that can be changed with Space. */
 export interface ToggleMenuItem {
@@ -507,6 +507,12 @@ export function showWidgetPrompt<T, Host = TUI>(
 
     const unsubscribe = ctx.ui.onTerminalInput((data) => {
       if (!component || data === "\u0003") return undefined;
+      // Under the Kitty keyboard protocol (flag 2) one physical keypress arrives
+      // as separate press, repeat, and release sequences, and matchesKey matches
+      // all three. Forwarding the release too would advance navigation twice per
+      // keypress. Swallow releases but keep press and repeat so holding a key
+      // still moves.
+      if (isKeyRelease(data)) return { consume: true };
       component.handleInput?.(data);
       return { consume: true };
     });

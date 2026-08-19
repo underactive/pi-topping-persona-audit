@@ -24,6 +24,8 @@ const tui = { requestRender: () => {} } as unknown as TUI;
 const LEFT = "\x1b[D";
 const RIGHT = "\x1b[C";
 const DOWN = "\x1b[B";
+// Kitty keyboard protocol (flag 2) release event for the down arrow.
+const DOWN_RELEASE = "\x1b[1;1:3B";
 const TAB = "\t";
 const ENTER = "\r";
 const ESCAPE = "\x1b";
@@ -124,6 +126,21 @@ test("the max-rounds row renders the saved count and cycles to a new one on Save
 
   menu.send(TAB, ENTER);
   assert.deepEqual(await menu.result, config(DEFAULT_METER_SETTINGS, DEFAULT_TEMPERAMENT, 6));
+});
+
+test("a Kitty key-release event does not advance the cursor a second time", () => {
+  const menu = mount();
+  assert.match(menu.render(), /❯ Token activity monitor color/);
+
+  // A lone release must not move the cursor at all.
+  menu.send(DOWN_RELEASE);
+  assert.match(menu.render(), /❯ Token activity monitor color/);
+
+  // One physical keypress arrives as press then release; it must move by one row.
+  menu.send(DOWN, DOWN_RELEASE);
+  assert.match(menu.render(), /❯ Token activity monitor direction/);
+
+  menu.send(ESCAPE);
 });
 
 test("Cancel and Esc both discard the edits", async () => {
