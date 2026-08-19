@@ -447,7 +447,7 @@ const PHASE_SLOT_DESCRIPTORS: readonly PhaseSlotDescriptor[] = [
   {
     slot: "implement",
     menuLabel: "Implement",
-    summary: "One edit-capable pass — the only phase that writes changes to your files.",
+    summary: "One edit-capable pass that applies your accepted fixes — later gate repairs and regression tests also write to your tree.",
     title: "Implement — adjudicator applies accepted fixes",
     description: "Edits the repository to apply the findings you accept in the findings-review overlay.",
   },
