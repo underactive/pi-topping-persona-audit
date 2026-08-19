@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.1.2] - 2026-08-18
+
+### Fixed
+
+- **Reviewer picker no longer skips a row per keypress** — on terminals that negotiate the Kitty keyboard protocol, one physical arrow press arrives as separate press, repeat, and release sequences; the shared widget input handler forwarded all of them, so every Down/Up moved the cursor twice and skipped a reviewer. Key-release events are now dropped in the handshake (press and repeat are kept, so held keys still move), fixing navigation across every persona-audit picker
+- **Corrected the Implement-phase model-picker summary** — it claimed Implement was the only phase that writes to your files, but gate repairs and regression tests in the Verify phase also write; the summary now says so
+
 ## [0.1.1] - 2026-08-17
 
 ### Fixed
