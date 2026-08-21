@@ -23,6 +23,7 @@ import {
   visibleWidth,
   type Component,
   type SelectItem,
+  type SelectListLayoutOptions,
   type SelectListTheme,
   type TUI,
 } from "@earendil-works/pi-tui";
@@ -75,7 +76,7 @@ const SELECTED_ROW_SENTINEL = "\u0000";
 class ConsistentSelectList extends SelectList {
   private readonly pickerTheme: Theme;
 
-  constructor(items: SelectItem[], maxVisible: number, theme: Theme) {
+  constructor(items: SelectItem[], maxVisible: number, theme: Theme, layout?: SelectListLayoutOptions) {
     // SelectList exposes the selected line only through selectedText; the
     // sentinel carries that fact out to render() without changing navigation.
     const selectListTheme: SelectListTheme = {
@@ -85,7 +86,7 @@ class ConsistentSelectList extends SelectList {
       scrollInfo: (text) => theme.fg("muted", text),
       noMatch: (text) => theme.fg("muted", text),
     };
-    super(items, maxVisible, selectListTheme);
+    super(items, maxVisible, selectListTheme, layout);
     this.pickerTheme = theme;
   }
 
@@ -99,6 +100,65 @@ class ConsistentSelectList extends SelectList {
     });
   }
 }
+
+/**
+ * Truncates a slash-namespaced model ref (`provider/accounts/.../model-name`)
+ * so the parts that matter to identify the model survive first. Priority:
+ * the model name (last segment) is mandatory, then the first segment (the
+ * namespace root), then the segment right before the model name, then
+ * whatever else still fits. Skipped runs collapse to a single ellipsis.
+ */
+export function smartTruncateModelLabel(text: string, maxWidth: number): string {
+  const ELLIPSIS = "…";
+  if (visibleWidth(text) <= maxWidth) return text;
+  const segments = text.split("/");
+  const n = segments.length;
+  if (n === 1) return truncateToWidth(text, maxWidth, ELLIPSIS);
+
+  const lastIndex = n - 1;
+  const kept = new Set<number>([lastIndex]);
+  const priority: number[] = [];
+  if (lastIndex !== 0) priority.push(0);
+  if (n - 2 > 0) priority.push(n - 2);
+  for (let i = 1; i <= n - 3; i++) priority.push(i);
+
+  const render = () => {
+    const parts: string[] = [];
+    let i = 0;
+    while (i < n) {
+      if (kept.has(i)) {
+        parts.push(segments[i]!);
+        i++;
+      } else {
+        while (i < n && !kept.has(i)) i++;
+        parts.push(ELLIPSIS);
+      }
+    }
+    return parts.join("/");
+  };
+
+  let current = render();
+  if (visibleWidth(current) > maxWidth) {
+    const skeleton = `${ELLIPSIS}/`;
+    const budget = Math.max(0, maxWidth - visibleWidth(skeleton));
+    return skeleton + truncateToWidth(segments[lastIndex]!, budget, ELLIPSIS);
+  }
+
+  for (const index of priority) {
+    kept.add(index);
+    const candidate = render();
+    if (visibleWidth(candidate) > maxWidth) {
+      kept.delete(index);
+      continue;
+    }
+    current = candidate;
+  }
+  return current;
+}
+
+const MODEL_LIST_LAYOUT: SelectListLayoutOptions = {
+  truncatePrimary: ({ text, maxWidth }) => smartTruncateModelLabel(text, maxWidth),
+};
 
 function parseRef(value: string): ModelRef {
   const idx = value.indexOf("/");
@@ -179,7 +239,12 @@ export class TwoPaneModelThinking {
     const items = this.filter.trim()
       ? fuzzyFilter(this.modelItems, this.filter, (item) => item.label)
       : this.modelItems;
-    this.modelList = new ConsistentSelectList(items, Math.min(Math.max(items.length, 1), MAX_VISIBLE_ROWS), this.theme);
+    this.modelList = new ConsistentSelectList(
+      items,
+      Math.min(Math.max(items.length, 1), MAX_VISIBLE_ROWS),
+      this.theme,
+      MODEL_LIST_LAYOUT,
+    );
     this.modelList.onSelectionChange = () => {
       this.rebuildThinkingList();
       this.tui.requestRender();
