@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
 import { visibleWidth, type TUI } from "@earendil-works/pi-tui";
-import { showPhaseModelPicker, thinkingOffWarning, TwoPaneModelThinking, type PhaseModelPickerResult } from "../src/components/ModelPicker.ts";
+import { showPhaseModelPicker, smartTruncateModelLabel, thinkingOffWarning, TwoPaneModelThinking, type PhaseModelPickerResult } from "../src/components/ModelPicker.ts";
 import { twoPaneWidths } from "../src/components/menuChrome.ts";
 import { PHASE_SLOTS, type ThinkingLevel } from "../src/modelConfig.ts";
 
@@ -104,4 +104,28 @@ test("the model picker renders a warning when the selected thinking level is off
   );
   const lines = picker.render(50);
   assert.ok(lines.some((line) => line.includes("⚠")), "expected a thinking-off warning in the render");
+});
+
+test("smartTruncateModelLabel keeps last segment, first segment, and collapses skipped runs", () => {
+  const result = smartTruncateModelLabel("openai/accounts/org-1/models/gpt-4o-mini", 20);
+  // Last segment survives.
+  assert.ok(result.endsWith("gpt-4o-mini"), `last segment should survive, got: ${result}`);
+  // First segment kept.
+  assert.ok(result.startsWith("openai/"), `first segment should be kept, got: ${result}`);
+  // Skipped runs collapse to a single ellipsis.
+  const ellipsisCount = (result.match(/…/g) ?? []).length;
+  assert.equal(ellipsisCount, 1, `expected exactly 1 ellipsis, got ${ellipsisCount}: ${result}`);
+  // Fits within maxWidth.
+  assert.ok(visibleWidth(result) <= 20, `expected width <= 20, got ${visibleWidth(result)}: ${result}`);
+});
+
+test("smartTruncateModelLabel falls back to skeleton when even minimal segments don't fit", () => {
+  const result = smartTruncateModelLabel("openai/accounts/org-1/models/gpt-4o-mini", 10);
+  // Starts with the skeleton prefix.
+  assert.ok(result.startsWith("…/"), `expected skeleton prefix, got: ${result}`);
+  // The model name is truncated — shorter than the original.
+  const suffix = result.slice("…/".length);
+  assert.ok(suffix.length < "gpt-4o-mini".length, `expected model name truncated, got suffix: ${suffix}`);
+  // Fits within maxWidth.
+  assert.ok(visibleWidth(result) <= 10, `expected width <= 10, got ${visibleWidth(result)}: ${result}`);
 });

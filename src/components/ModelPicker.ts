@@ -110,15 +110,16 @@ class ConsistentSelectList extends SelectList {
  */
 export function smartTruncateModelLabel(text: string, maxWidth: number): string {
   const ELLIPSIS = "…";
+  const ANSI_RE = /\x1b\[[0-9;]*m/g;
   if (visibleWidth(text) <= maxWidth) return text;
   const segments = text.split("/");
   const n = segments.length;
-  if (n === 1) return truncateToWidth(text, maxWidth, ELLIPSIS);
+  if (n === 1) return truncateToWidth(text, maxWidth, ELLIPSIS).replace(ANSI_RE, "");
 
   const lastIndex = n - 1;
   const kept = new Set<number>([lastIndex]);
   const priority: number[] = [];
-  if (lastIndex !== 0) priority.push(0);
+  priority.push(0);
   if (n - 2 > 0) priority.push(n - 2);
   for (let i = 1; i <= n - 3; i++) priority.push(i);
 
@@ -141,7 +142,7 @@ export function smartTruncateModelLabel(text: string, maxWidth: number): string 
   if (visibleWidth(current) > maxWidth) {
     const skeleton = `${ELLIPSIS}/`;
     const budget = Math.max(0, maxWidth - visibleWidth(skeleton));
-    return skeleton + truncateToWidth(segments[lastIndex]!, budget, ELLIPSIS);
+    return (skeleton + truncateToWidth(segments[lastIndex]!, budget, ELLIPSIS)).replace(ANSI_RE, "");
   }
 
   for (const index of priority) {
@@ -167,7 +168,7 @@ function parseRef(value: string): ModelRef {
 }
 
 function toModelItems(refs: ModelRef[]): SelectItem[] {
-  return refs.map((r) => ({ value: modelRefLabel(r), label: modelRefLabel(r) }));
+  return refs.map((r) => { const label = modelRefLabel(r); return { value: label, label }; });
 }
 
 /**
@@ -307,7 +308,7 @@ export class TwoPaneModelThinking {
       }
       return undefined;
     }
-    if (data.length === 1 && data >= " " && data !== "\x7f") {
+    if (data.length === 1 && data >= " ") {
       this.activePane = "model";
       this.filter += data;
       this.rebuildModelList();
@@ -387,6 +388,31 @@ export class TwoPaneModelThinking {
   }
 }
 
+const PICKER_HINT = "type filters models • ↑↓ navigate pane • tab panes/buttons • ←→ switch/select • enter select • esc back";
+
+function renderFramedPicker(
+  th: Theme,
+  innerWidth: number,
+  bodyWidth: number,
+  title: string,
+  description: string,
+  twoPane: TwoPaneModelThinking,
+): string[] {
+  const pickerLines = twoPane.render(bodyWidth);
+  const { actionRow, hintRow } = twoPane.renderFooter(bodyWidth, PICKER_HINT);
+  return [
+    renderMenuTopBorder(th, innerWidth, title),
+    ...wrapText(description, bodyWidth).map((line) => renderMenuContentRow(th, innerWidth, th.fg("muted", ` ${line}`))),
+    renderMenuSeparator(th, innerWidth),
+    ...pickerLines.map((line) => renderMenuContentRow(th, innerWidth, ` ${line}`)),
+    renderMenuSeparator(th, innerWidth),
+    renderMenuContentRow(th, innerWidth, actionRow),
+    renderMenuSeparator(th, innerWidth),
+    renderMenuContentRow(th, innerWidth, hintRow),
+    renderMenuBottomBorder(th, innerWidth),
+  ];
+}
+
 /**
  * The retry-model sub-screen shared by ReviewerRetryComponent and
  * VerifierRetryComponent: a TwoPaneModelThinking wrapped in its own framed
@@ -462,22 +488,9 @@ export class RetryModelSubView {
   }
 
   render(width: number): string[] {
-    const th = this.theme;
     const innerWidth = Math.max(20, width);
     const bodyWidth = Math.max(10, innerWidth - 2);
-    const hint = "type filters models • ↑↓ navigate pane • tab panes/buttons • ←→ switch/select • enter select • esc back";
-    const { actionRow, hintRow } = this.twoPane.renderFooter(bodyWidth, hint);
-    return [
-      renderMenuTopBorder(th, innerWidth, this.borderTitle),
-      ...wrapText(this.description, bodyWidth).map((line) => renderMenuContentRow(th, innerWidth, th.fg("muted", ` ${line}`))),
-      renderMenuSeparator(th, innerWidth),
-      ...this.twoPane.render(bodyWidth).map((line) => renderMenuContentRow(th, innerWidth, ` ${line}`)),
-      renderMenuSeparator(th, innerWidth),
-      renderMenuContentRow(th, innerWidth, actionRow),
-      renderMenuSeparator(th, innerWidth),
-      renderMenuContentRow(th, innerWidth, hintRow),
-      renderMenuBottomBorder(th, innerWidth),
-    ];
+    return renderFramedPicker(this.theme, innerWidth, bodyWidth, this.borderTitle, this.description, this.twoPane);
   }
 
   invalidate(): void {
@@ -625,24 +638,10 @@ class PhaseModelPickerComponent implements Component {
   render(width: number): string[] {
     if (this.view === "overview") return this.menu.render(width);
 
-    const th = this.theme;
     const innerWidth = Math.max(20, width);
     const bodyWidth = Math.max(10, innerWidth - 2);
     const descriptor = PHASE_SLOT_DESCRIPTORS.find((d) => d.slot === this.selectedSlot)!;
-    const pickerLines = this.twoPane.render(bodyWidth);
-    const hint = "type filters models • ↑↓ navigate pane • tab panes/buttons • ←→ switch/select • enter select • esc back";
-    const { actionRow, hintRow } = this.twoPane.renderFooter(bodyWidth, hint);
-    return [
-      renderMenuTopBorder(th, innerWidth, descriptor.title),
-      ...wrapText(descriptor.description, bodyWidth).map((line) => renderMenuContentRow(th, innerWidth, th.fg("muted", ` ${line}`))),
-      renderMenuSeparator(th, innerWidth),
-      ...pickerLines.map((line) => renderMenuContentRow(th, innerWidth, ` ${line}`)),
-      renderMenuSeparator(th, innerWidth),
-      renderMenuContentRow(th, innerWidth, actionRow),
-      renderMenuSeparator(th, innerWidth),
-      renderMenuContentRow(th, innerWidth, hintRow),
-      renderMenuBottomBorder(th, innerWidth),
-    ];
+    return renderFramedPicker(this.theme, innerWidth, bodyWidth, descriptor.title, descriptor.description, this.twoPane);
   }
 
   invalidate(): void {
