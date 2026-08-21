@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.1.3] - 2026-08-21
+
+### Fixed
+
+- **Model picker labels now truncate cleanly** — long slash-namespaced model refs keep the important path segments visible (model name, namespace root, then nearest parent) instead of overflowing the picker; skipped runs collapse to a single ellipsis
+- **Truncated model labels no longer leak ANSI escape codes** — the fallback truncation path for very narrow pickers now strips stray escape sequences from the rendered label
+
 ## [0.1.2] - 2026-08-18
 
 ### Fixed
