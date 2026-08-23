@@ -11,7 +11,7 @@ A [Pi coding agent](https://github.com/earendil-works/pi) extension that impleme
 - **Multi-persona reviews** — Runs parallel reviewer agents with distinct personalities (security, correctness, style, performance, etc.)
 - **Deterministic orchestration** — The entire audit is driven by TypeScript, not by an LLM following instructions; LLMs run only where judgment is required (reviewer passes, adjudication, fix application), each in an isolated in-process agent session
 - **TUI expert picker** — Interactive terminal UI to select which reviewer personas to include: one multi-select list of all 40 reviewers, grouped under tier headers with type-to-filter, so a run can mix tiers freely — `Space` toggles a reviewer, `←`/`→` set the pass count (1-5), `Enter` confirms
-- **Live progress table** — One compact table above the editor tracks every reviewer pass, adjudicator run, and verification script with live context usage, an output-activity meter, the tool call in flight, turn count, and elapsed time; a phase/model band shows which model is assigned to each phase and highlights the one in progress, and a frozen copy is left in the transcript on completion, visible but excluded from the model's context on later turns
+- **Live progress table** — One compact table above the editor tracks every reviewer pass, adjudicator run, and verification script with live context usage, an output-activity meter (e.g., "1.2K tokens"), the tool call in flight, turn count, and elapsed time; a phase/model band shows which model is assigned to each phase and highlights the one in progress, and a frozen copy is left in the transcript on completion, visible but excluded from the model's context on later turns
 - **Findings review** — Accept, reject, or defer individual findings before applying fixes (press Esc twice to cancel — the first press arms the confirmation, any other key resumes; press `H` during review to write deferred findings to a handoff file under `.pi/persona-audit/handoffs/`; `Space` cycles a finding apply → reject → defer, `O` promotes a deferred finding straight to apply, `Enter` confirms)
 - **Auto-fix** — Accepted findings are partitioned by file and applied by parallel edit-capable adjudicator agent sessions, then verified against the project's own `check`/`lint`/`test` scripts
 - **Fix verification** — Every accepted fix gets its own verdict: the file is hashed before and after the implement phase, a verifier agent session diffs each change against its finding, and high-severity bug/security fixes get a regression test the harness proves fails without the fix
@@ -381,7 +381,7 @@ for the whole run and is torn down on completion, cancellation, `/reload`, and
    claude-opus-4   claude-opus-4       gpt-5      claude-haiku-4-5
 ───────────────────────────────────────────────────────────
     PHASE                                CTX  MONITOR   ACTIVITY
-  ├ Review   ✓ Security Engineer  21.2%/200.0K  ⣿⣶⣤⣀⣀⢀⢀⢀  812 chars
+  ├ Review   ✓ Security Engineer  21.2%/200.0K  ⣿⣶⣤⣀⣀⢀⢀⢀  1.2K tokens
   │          ◐ Slop Auditor        8.4%/200.0K  ⣴⣤⣤⣀⢀⢀⢀⢀  reviewing…
                ↳ grep  "handleRequest"
   │          ○ Perf Engineer                 —  ⢀⢀⢀⢀⢀⢀⢀⢀  queued

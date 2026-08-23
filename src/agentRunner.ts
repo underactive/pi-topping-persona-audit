@@ -125,7 +125,7 @@ export function resolveModelRef(input: string | undefined, registry: ModelRegist
 const RUNTIMES = new WeakMap<ModelRegistry, Promise<ModelRuntime>>();
 
 function emptyUsage(): HeadlessUsage {
-  return { turns: 0, contextTokens: 0 };
+  return { turns: 0, contextTokens: 0, outputTokens: 0 };
 }
 
 function failedResult(errorMessage: string): HeadlessResult {
@@ -314,6 +314,7 @@ export async function runAgentSession(opts: HeadlessOptions): Promise<HeadlessRe
 
   const finalText = getFinalAssistantText(session.messages);
   const allText = getAllAssistantText(session.messages);
+  usage.outputTokens = tracker.snapshot().tokens;
   session.dispose();
 
   return {

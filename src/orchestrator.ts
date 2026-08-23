@@ -20,7 +20,7 @@ import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir, withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { collectReviewerFindings } from "./findingsTransport.ts";
 import { isRecord, normalizeFindingText } from "./dedup.ts";
-import type { AuditProgressWidget } from "./components/AuditProgress.ts";
+import { type AuditProgressWidget, formatTokens } from "./components/AuditProgress.ts";
 import type { ReviewerFailurePrompt } from "./components/ReviewerRetry.ts";
 import type { VerifierFailurePrompt, VerifierRetryDecision } from "./components/VerifierRetry.ts";
 import {
@@ -1443,7 +1443,7 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
             record.detail = isRetry ? `succeeded on retry (${model.model ?? "session default"})` : undefined;
           }
           freshOutputs.push({ reviewer: task.reviewer, pass: task.pass, output: result.allText });
-          progress?.settleRow(rowKey, "done", `${result.allText.length} chars${isRetry ? " · retried" : ""}`);
+          progress?.settleRow(rowKey, "done", `${formatTokens(result.usage.outputTokens)} tokens${isRetry ? " · retried" : ""}`);
         }
         // A retry re-runs a pass already counted as attempted, so it must not
         // advance the attempted/total tally in the footer.

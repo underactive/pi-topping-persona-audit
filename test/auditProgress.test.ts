@@ -125,10 +125,10 @@ test("rows move queued → working → done and carry streamed telemetry", () =>
   assert.equal(working?.contextWindow, CONTEXT_WINDOW);
   assert.equal(working?.activity, 'grep  "handleRequest"');
 
-  widget.settleRow("review:sec:1", "done", "812 chars");
+  widget.settleRow("review:sec:1", "done", "812 tokens");
   const done = widget.progressRows()[0];
   assert.equal(done?.state, "done");
-  assert.equal(done?.statusText, "812 chars");
+  assert.equal(done?.statusText, "812 tokens");
   assert.equal(done?.activity, undefined, "a settled row drops its in-flight tool call");
 });
 
@@ -316,7 +316,7 @@ function overBudgetReviewWidget(ctx: AuditProgressContext): AuditProgressWidget 
   for (let i = 0; i < 100; i++) {
     widget.addRow("Review", `done:${i}`, `done reviewer ${i}`);
     widget.startRow(`done:${i}`, "reviewing…");
-    widget.settleRow(`done:${i}`, "done", "812 chars");
+    widget.settleRow(`done:${i}`, "done", "812 tokens");
   }
   for (let i = 0; i < 98; i++) widget.addRow("Review", `queued:${i}`, `queued reviewer ${i}`);
   widget.addRow("Review", "live", "live reviewer");
@@ -349,7 +349,7 @@ test("a review phase inside the budget renders every row untouched", () => {
   const widget = new AuditProgressWidget(ctx);
   widget.addRow("Review", "a", "settled reviewer");
   widget.startRow("a", "reviewing…");
-  widget.settleRow("a", "done", "812 chars");
+  widget.settleRow("a", "done", "812 tokens");
   widget.addRow("Review", "b", "waiting reviewer");
   widget.addRow("Review", "c", "live reviewer");
   widget.startRow("c", "reviewing…");
@@ -603,7 +603,7 @@ test("the meter renders in the configured colour, defaulting to accent", () => {
       phase: "Review",
       label: "Security Engineer",
       state: "done",
-      statusText: "812 chars",
+      statusText: "812 tokens",
       elapsedMs: 1_000,
       turns: 3,
       outputTokens: 500,

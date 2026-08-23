@@ -104,6 +104,8 @@ export interface HeadlessUsage {
   turns: number;
   /** Latest reported context size (usage.totalTokens of the most recent turn). */
   contextTokens: number;
+  /** Cumulative generated-output tokens across assistant turns (exact usage when the provider reports it, word-count estimate otherwise). */
+  outputTokens: number;
 }
 
 /**
