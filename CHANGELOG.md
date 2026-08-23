@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Diff base hash in the progress table header** — in `--diff` mode the title bar now shows the short hash of the commit the audit diffed from (e.g. `src/components · @a1b2c3d`), reporting the merge-base when `--base` names a ref rather than that ref's own tip; the hash also persists into the frozen transcript snapshot
+
 ### Changed
 
 - **Headless progress table displays generated token counts** — instead of character counts, uses abbreviated formatting (e.g., "1.2K tokens") for easier reading in the MONITOR column.

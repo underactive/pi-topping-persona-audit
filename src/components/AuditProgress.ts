@@ -28,7 +28,7 @@ export type AuditPhase = (typeof AUDIT_PHASES)[number];
 export type RowState = "queued" | "working" | "done" | "error" | "cancelled";
 
 const TABLE_TITLE = "Persona-audit";
-/** Shortest rule run allowed between the title and the scope before the scope is dropped. */
+/** Shortest rule run allowed between the title and the right-side run metadata before that side is dropped. */
 const MIN_TITLE_SCOPE_GAP = 2;
 /** Shortest gap allowed between the footer summary and the total before the total moves to its own line. */
 const MIN_FOOTER_TOTAL_GAP = 2;
@@ -146,6 +146,8 @@ export interface AuditProgressView {
   totalMs(): number;
   /** Audit scope, shown right-aligned in the title bar. */
   readonly scope: string | undefined;
+  /** Short hash of the diff's base commit, shown right-aligned in the title bar after the scope. Undefined outside --diff mode. */
+  readonly baseHash: string | undefined;
   /** Model assigned to each phase, for the band above the table header. */
   phaseModels(): Partial<Record<AuditPhase, string>>;
   /** The phase currently highlighted in the band; undefined highlights none (e.g. a frozen, finished run). */
@@ -158,6 +160,8 @@ export const AUDIT_PROGRESS_ENTRY_TYPE = "persona-audit-table";
 /** JSON-serializable capture of a finished run, rendered read-only in the transcript without re-entering LLM context. */
 export interface AuditProgressSnapshot {
   scope?: string;
+  /** Absent on entries persisted before the title bar carried the diff base. */
+  baseHash?: string;
   summary: string;
   /** Absent on entries persisted before the total-time footer existed. */
   totalMs?: number;
@@ -212,6 +216,7 @@ interface RowRecord {
 
 export class AuditProgressWidget implements AuditProgressView {
   readonly scope: string | undefined;
+  readonly baseHash: string | undefined;
 
   private readonly ctx: AuditProgressContext;
   private readonly resolveContextWindow: ContextWindowResolver;
@@ -230,11 +235,13 @@ export class AuditProgressWidget implements AuditProgressView {
   constructor(
     ctx: AuditProgressContext,
     scope?: string,
+    baseHash?: string,
     resolveContextWindow: ContextWindowResolver = () => undefined,
     meter: MeterSettings = DEFAULT_METER_SETTINGS,
   ) {
     this.ctx = ctx;
     this.scope = scope;
+    this.baseHash = baseHash;
     this.resolveContextWindow = resolveContextWindow;
     this.meter = meter;
   }
@@ -368,6 +375,7 @@ export class AuditProgressWidget implements AuditProgressView {
   snapshot(): AuditProgressSnapshot {
     return {
       scope: this.scope,
+      baseHash: this.baseHash,
       summary: this.summary,
       totalMs: this.totalMs(),
       phaseModels: this.models,
@@ -790,12 +798,15 @@ export class AuditProgressTable implements Component {
   private topBorder(innerWidth: number, border: (s: string) => string): string {
     const title = ` ${TABLE_TITLE} `;
     const head = `${border("══")}${this.theme.fg("accent", title)}`;
-    const scope = this.view.scope ? ` ${this.view.scope} ` : "";
-    const scopeFill = innerWidth - 4 - visibleWidth(title) - visibleWidth(scope);
-    // A narrow terminal drops the scope rather than truncating it: a cut-off
-    // path reads as a different scope, and the full path is in the report.
-    if (scope && scopeFill >= MIN_TITLE_SCOPE_GAP) {
-      return `${head}${border("═".repeat(scopeFill))}${this.theme.fg("dim", scope)}${border("══")}`;
+    const hash = this.view.baseHash ? `@${this.view.baseHash}` : undefined;
+    const rhs = [this.view.scope, hash].filter(Boolean).join(" · ");
+    const right = rhs ? ` ${rhs} ` : "";
+    const rightFill = innerWidth - 4 - visibleWidth(title) - visibleWidth(right);
+    // A narrow terminal drops the right side rather than truncating it: a
+    // cut-off path reads as a different scope, and both path and base hash are
+    // in the report.
+    if (right && rightFill >= MIN_TITLE_SCOPE_GAP) {
+      return `${head}${border("═".repeat(rightFill))}${this.theme.fg("dim", right)}${border("══")}`;
     }
     const fill = innerWidth - 2 - visibleWidth(title);
     if (fill < 0) return border("═".repeat(innerWidth));
@@ -828,6 +839,7 @@ export function renderAuditSnapshot(
     footerSummary: () => snapshot.summary,
     totalMs: () => snapshot.totalMs ?? 0,
     scope: snapshot.scope,
+    baseHash: snapshot.baseHash,
     phaseModels: () => snapshot.phaseModels,
     activePhase: () => undefined,
   };

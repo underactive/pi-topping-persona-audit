@@ -184,6 +184,28 @@ async function getMergeBase(cwd: string): Promise<string> {
 }
 
 /**
+ * Resolve the commit a --diff audit actually starts from, plus its short hash
+ * for the progress header. `git diff <ref>...HEAD` compares from the
+ * merge-base of the two tips, so for an explicit --base ref the merge-base is
+ * reported, not the ref's own tip.
+ */
+async function resolveDiffBase(cwd: string, baseCommit?: string): Promise<{ base: string; hash: string }> {
+  const base = baseCommit ?? (await getMergeBase(cwd));
+  const { stdout: left } = await execFileAsync("git", ["merge-base", base, "HEAD"], {
+    cwd,
+    encoding: "utf-8",
+    timeout: 5_000,
+  });
+  const effective = left.trim() || base;
+  const { stdout: short } = await execFileAsync("git", ["rev-parse", "--short", effective], {
+    cwd,
+    encoding: "utf-8",
+    timeout: 5_000,
+  });
+  return { base, hash: short.trim() || effective.slice(0, 7) };
+}
+
+/**
  * Get files changed in git diff against a base commit.
  * If no base commit is specified, uses merge-base with main branch.
  */
@@ -527,10 +549,13 @@ export default function (pi: ExtensionAPI): void {
       let importers: string[] = [];
       let truncated = false;
       let totalFilesFound: number | undefined;
+      let diffBaseHash: string | undefined;
 
       if (mode === "diff") {
         try {
-          changedFiles = await getChangedFiles(ctx.cwd, scope, baseCommit);
+          const { base, hash } = await resolveDiffBase(ctx.cwd, baseCommit);
+          diffBaseHash = hash;
+          changedFiles = await getChangedFiles(ctx.cwd, scope, base);
 
           if (changedFiles.length === 0) {
             ctx.ui.notify(`No changed files found in scope "${scope}"`, "error");
@@ -637,6 +662,7 @@ export default function (pi: ExtensionAPI): void {
       const progress = new AuditProgressWidget(
         ctx,
         scope === "." ? undefined : scope,
+        diffBaseHash,
         (provider, model) => resolveContextWindow(ctx, provider, model),
         settings.meter,
       );

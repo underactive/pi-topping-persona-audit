@@ -107,7 +107,7 @@ test("disposing the table stops its render ticker", async () => {
 
 test("rows move queued → working → done and carry streamed telemetry", () => {
   const { ctx } = fakeCtx();
-  const widget = new AuditProgressWidget(ctx, undefined, () => CONTEXT_WINDOW);
+  const widget = new AuditProgressWidget(ctx, undefined, undefined, () => CONTEXT_WINDOW);
   widget.addRow("Review", "review:sec:1", "Security Engineer");
 
   const queued = widget.progressRows()[0];
@@ -241,6 +241,25 @@ test("table renders the header columns, scope and live footer summary", () => {
   assert.match(rendered[1] ?? "", /PHASE.*CTX.*MONITOR.*ACTIVITY.*TURNS.*TIME/);
   assert.match(rendered.at(-2) ?? "", /3\/6 reviewer passes · 12 findings/);
   widget.stop();
+});
+
+test("title bar carries the diff base hash after the scope, or alone when the scope is omitted", () => {
+  const scoped = fakeCtx();
+  const scopedWidget = new AuditProgressWidget(scoped.ctx, "src/components", "a1b2c3d");
+  scopedWidget.addRow("Review", "a", "Security Engineer", { state: "done" });
+  scopedWidget.mount();
+  assert.match(
+    lines(scoped.state.table)[0] ?? "",
+    /^══ Persona-audit ═+ src\/components · @a1b2c3d ══$/,
+  );
+  scopedWidget.stop();
+
+  const unscoped = fakeCtx();
+  const unscopedWidget = new AuditProgressWidget(unscoped.ctx, undefined, "a1b2c3d");
+  unscopedWidget.addRow("Review", "a", "Security Engineer", { state: "done" });
+  unscopedWidget.mount();
+  assert.match(lines(unscoped.state.table)[0] ?? "", /^══ Persona-audit ═+ @a1b2c3d ══$/);
+  unscopedWidget.stop();
 });
 
 // ── responsive layout ──────────────────────────────────────────────────────
@@ -568,7 +587,7 @@ test("rendered lines never exceed the requested width with the band present", ()
 
 test("snapshot survives a JSON round-trip and renderAuditSnapshot redraws the settled table", async () => {
   const { ctx, state } = fakeCtx();
-  const widget = new AuditProgressWidget(ctx, "src/components");
+  const widget = new AuditProgressWidget(ctx, "src/components", "a1b2c3d");
   widget.addRow("Review", "a", "Security Engineer");
   widget.startRow("a", "reviewing…");
   widget.applyProgress("a", progressSnapshot({ outputTokens: 500 }));
@@ -589,7 +608,7 @@ test("snapshot survives a JSON round-trip and renderAuditSnapshot redraws the se
 
   assert.ok(frozenLines.some((l) => l.includes("Security Engineer")), "settled row survives the round trip");
   assert.ok(frozenLines.some((l) => l.includes("1/1 reviewer passes")), "footer summary survives the round trip");
-  assert.ok(frozenLines.some((l) => l.includes("src/components")), "scope survives the round trip");
+  assert.ok(frozenLines.some((l) => l.includes("src/components · @a1b2c3d")), "scope and base hash survive the round trip");
   assert.ok(frozenLines.some((l) => l.includes("claude-opus-4")), "band survives the round trip");
 });
 
