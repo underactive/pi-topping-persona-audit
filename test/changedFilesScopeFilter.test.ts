@@ -1,37 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { getChangedFiles } from "../src/index.ts";
-
-function hasGit(): boolean {
-  try {
-    execFileSync("git", ["--version"], { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-const GIT_ENV = {
-  ...process.env,
-  GIT_AUTHOR_NAME: "t",
-  GIT_AUTHOR_EMAIL: "t@example.com",
-  GIT_COMMITTER_NAME: "t",
-  GIT_COMMITTER_EMAIL: "t@example.com",
-};
-
-function git(cwd: string, ...args: string[]): void {
-  execFileSync("git", args, { cwd, stdio: "ignore", env: GIT_ENV });
-}
-
-async function writeFileAt(dir: string, rel: string, content: string): Promise<void> {
-  const abs = path.join(dir, rel);
-  await mkdir(path.dirname(abs), { recursive: true });
-  await writeFile(abs, content, "utf-8");
-}
+import { GIT_ENV, git, hasGit, writeFileAt } from "./helpers/gitTest.ts";
 
 test(
   "getChangedFiles excludes secrets and lockfiles even when they fall inside a subdirectory scope",
