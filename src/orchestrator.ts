@@ -810,7 +810,6 @@ export function scopeAcceptedFindings(
  */
 export function partitionApplyBatches(
   accepted: Finding[],
-  maxBatches: number = APPLY_CONCURRENCY,
 ): { batches: ApplyBatch[]; overflow: Finding[] } {
   const ranked = [...accepted].sort(
     (a, b) =>
@@ -833,7 +832,7 @@ export function partitionApplyBatches(
     (a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]),
   );
   const batches: ApplyBatch[] = Array.from(
-    { length: Math.min(Math.max(1, maxBatches), groups.length) },
+    { length: Math.min(Math.max(1, APPLY_CONCURRENCY), groups.length) },
     (_, index) => ({ index, files: [], findings: [] }),
   );
   for (const [file, findings] of groups) {
@@ -1370,7 +1369,7 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
             reviewer,
             pass,
             status: "cached",
-            outputChars: String(cached.output ?? "").length,
+            outputChars: cached.output.length,
           });
           progress?.addRow("Review", reviewRowKey(reviewer, pass), rowLabel, {
             state: "done",
@@ -1396,6 +1395,10 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
     // model's key, so they reach the report but never the cache.
     const uncacheable = new Set<string>();
 
+    const runRecordByKey = new Map(
+      runRecords.map((record): [string, ReviewerRunRecord] => [`${record.reviewer}\u0000${record.pass}`, record]),
+    );
+
     const runReviewerBatch = async (
       tasks: { reviewer: string; pass: number }[],
       model: { model: string | undefined; thinking: ThinkingLevel | undefined },
@@ -1406,9 +1409,6 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
       );
       await writePartial("partial");
 
-      const runRecordByKey = new Map(
-        runRecords.map((record): [string, ReviewerRunRecord] => [`${record.reviewer}\u0000${record.pass}`, record]),
-      );
       await mapWithConcurrencyLimit(tasks, REVIEWER_CONCURRENCY, async (task) => {
         const record = runRecordByKey.get(`${task.reviewer}\u0000${task.pass}`);
         // The row leaves "queued" only once a concurrency slot frees up, so the
@@ -1467,9 +1467,6 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
     // ── Reviewer-failure checkpoint: retry, re-model, or skip ───────────
     // Prompting here rather than inside the batch keeps a human out of the
     // concurrency loop and folds simultaneous failures into one decision.
-    const runRecordByKey = new Map(
-      runRecords.map((record): [string, ReviewerRunRecord] => [`${record.reviewer}\u0000${record.pass}`, record]),
-    );
     while (input.onReviewFailures && !input.signal?.aborted) {
       const failed = runRecords.filter((run) => run.status === "failed");
       if (failed.length === 0) break;

@@ -328,7 +328,7 @@ test("partitionApplyBatches keeps every finding for one file in a single batch",
     finding({ file: "src/a.ts", line: 3 }),
     finding({ file: "src/c.ts", line: 4 }),
   ];
-  const { batches } = partitionApplyBatches(accepted, 3);
+  const { batches } = partitionApplyBatches(accepted);
 
   for (const batch of batches) {
     assert.deepEqual(batch.files, [...new Set(batch.files)]);
@@ -341,7 +341,7 @@ test("partitionApplyBatches keeps every finding for one file in a single batch",
 
 test("partitionApplyBatches never exceeds the batch ceiling and leaves none empty", () => {
   const accepted = Array.from({ length: 9 }, (_, i) => finding({ file: `src/f${i}.ts`, line: i }));
-  const { batches } = partitionApplyBatches(accepted, 3);
+  const { batches } = partitionApplyBatches(accepted);
 
   assert.equal(batches.length, 3);
   for (const batch of batches) assert.ok(batch.findings.length > 0);
@@ -353,7 +353,7 @@ test("partitionApplyBatches collapses to one batch when a single file owns every
     finding({ file: "src/a.ts", line: 1 }),
     finding({ file: "src/a.ts", line: 2 }),
   ];
-  const { batches, overflow } = partitionApplyBatches(accepted, 3);
+  const { batches, overflow } = partitionApplyBatches(accepted);
 
   assert.equal(batches.length, 1);
   assert.equal(batches[0]?.findings.length, 2);
@@ -364,7 +364,7 @@ test("partitionApplyBatches caps at 40 fixes and returns the rest as overflow", 
   const accepted = Array.from({ length: 45 }, (_, i) =>
     finding({ file: `src/f${i}.ts`, line: i, category: i < 40 ? "security" : "style" }),
   );
-  const { batches, overflow } = partitionApplyBatches(accepted, 3);
+  const { batches, overflow } = partitionApplyBatches(accepted);
 
   assert.equal(batches.flatMap((b) => b.findings).length, 40);
   assert.equal(overflow.length, 5);
@@ -382,7 +382,6 @@ test("partitionApplyBatches ranks by category, then severity, then blast radius"
   // ranked out regardless of its critical severity.
   const { overflow } = partitionApplyBatches(
     [...accepted, ...Array.from({ length: 37 }, (_, i) => finding({ file: `src/pad${i}.ts`, category: "bug" }))],
-    1,
   );
   assert.deepEqual(overflow.map((f) => f.file), ["src/style.ts"]);
 });
@@ -666,7 +665,7 @@ test("parseContestedVerdicts returns nothing when the heading is absent", () => 
 });
 
 test("partitionApplyBatches returns no batches when nothing was accepted", () => {
-  const { batches, overflow } = partitionApplyBatches([], 3);
+  const { batches, overflow } = partitionApplyBatches([]);
   assert.deepEqual(batches, []);
   assert.deepEqual(overflow, []);
 });
