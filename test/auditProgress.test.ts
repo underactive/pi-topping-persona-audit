@@ -92,6 +92,8 @@ test("widget mounts one aboveEditor table and disposes its ticker on stop", () =
 test("disposing the table stops its render ticker", async () => {
   const { ctx, state, renderCount } = fakeCtx();
   const widget = new AuditProgressWidget(ctx);
+  widget.addRow("Review", "a", "Security Engineer");
+  widget.startRow("a", "reviewing…");
   widget.mount();
   await new Promise((resolve) => setTimeout(resolve, 250));
   assert.ok(renderCount() > 0, "a mounted table repaints on its own ticker");

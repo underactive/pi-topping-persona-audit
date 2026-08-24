@@ -152,6 +152,8 @@ export interface AuditProgressView {
   phaseModels(): Partial<Record<AuditPhase, string>>;
   /** The phase currently highlighted in the band; undefined highlights none (e.g. a frozen, finished run). */
   activePhase(): AuditPhase | undefined;
+  /** Whether any row is still working — lets the ticker skip progressRows() while idle. */
+  hasActiveRows(): boolean;
 }
 
 /** Custom entry type for the frozen transcript copy left behind on completion (see `pi.appendEntry`). */
@@ -228,6 +230,7 @@ export class AuditProgressWidget implements AuditProgressView {
   private mounted = false;
   private models: Partial<Record<AuditPhase, string>> = {};
   private active: AuditPhase | undefined;
+  private activeRowCount = 0;
   private table: AuditProgressTable | undefined;
   private runStartedAt: number | undefined;
   private runEndedAt: number | undefined;
@@ -279,10 +282,13 @@ export class AuditProgressWidget implements AuditProgressView {
     const existing = this.rows.get(key);
     const state = init.state ?? "queued";
     if (existing) {
+      const wasWorking = existing.state === "working";
       existing.phase = phase;
       existing.label = label;
       existing.state = state;
       existing.statusText = init.statusText ? normalizeFindingText(init.statusText) : undefined;
+      if (wasWorking && state !== "working") this.activeRowCount--;
+      if (!wasWorking && state === "working") this.activeRowCount++;
       return;
     }
     this.rows.set(key, {
@@ -294,16 +300,19 @@ export class AuditProgressWidget implements AuditProgressView {
       startedAt: state === "working" ? Date.now() : undefined,
       endedAt: state === "done" || state === "error" || state === "cancelled" ? Date.now() : undefined,
     });
+    if (state === "working") this.activeRowCount++;
   }
 
   /** Move a row into `working`, starting its elapsed clock. */
   startRow(key: string, statusText?: string): void {
     const row = this.rows.get(key);
     if (!row) return;
+    const wasWorking = row.state === "working";
     row.state = "working";
     row.statusText = statusText;
     row.startedAt ??= Date.now();
     row.endedAt = undefined;
+    if (!wasWorking) this.activeRowCount++;
   }
 
   /** Fold one streamed telemetry snapshot into a row. */
@@ -323,10 +332,12 @@ export class AuditProgressWidget implements AuditProgressView {
   settleRow(key: string, state: Exclude<RowState, "queued" | "working">, statusText?: string): void {
     const row = this.rows.get(key);
     if (!row) return;
+    const wasWorking = row.state === "working";
     row.state = state;
     row.statusText = statusText ? normalizeFindingText(statusText) : undefined;
     row.activity = undefined;
     row.endedAt ??= Date.now();
+    if (wasWorking) this.activeRowCount--;
   }
 
   /**
@@ -369,6 +380,10 @@ export class AuditProgressWidget implements AuditProgressView {
 
   activePhase(): AuditPhase | undefined {
     return this.active;
+  }
+
+  hasActiveRows(): boolean {
+    return this.activeRowCount > 0;
   }
 
   /** Capture a JSON-serializable copy of the current view for transcript persistence. Must be called before `stop()`, which drops the table and its meter traces. */
@@ -561,9 +576,9 @@ export class AuditProgressTable implements Component {
       // One timer drives spinner animation, meter sampling and repaint, so the
       // meter's 100ms cadence matches the reference widget's.
       this.timer = setInterval(() => {
+        if (!this.view.hasActiveRows()) return;
         this.spinFrame = (this.spinFrame + 1) % TABLE_FRAMES.length;
         const rows = this.view.progressRows();
-        if (rows.length > 0 && !rows.some((row) => isActive(row.state))) return;
         this.sampleMeters(rows, Date.now());
         this.tui.requestRender();
       }, SPINNER_INTERVAL_MS);
@@ -842,6 +857,7 @@ export function renderAuditSnapshot(
     baseHash: snapshot.baseHash,
     phaseModels: () => snapshot.phaseModels,
     activePhase: () => undefined,
+    hasActiveRows: () => false,
   };
   return new AuditProgressTable(host, theme, view, snapshot.meterLevels, meter);
 }
