@@ -191,12 +191,13 @@ async function getMergeBase(cwd: string): Promise<string> {
  */
 async function resolveDiffBase(cwd: string, baseCommit?: string): Promise<{ base: string; hash: string }> {
   const base = baseCommit ?? (await getMergeBase(cwd));
-  const { stdout: left } = await execFileAsync("git", ["merge-base", base, "HEAD"], {
-    cwd,
-    encoding: "utf-8",
-    timeout: 5_000,
-  });
-  const effective = left.trim() || base;
+  const effective = baseCommit
+    ? ((await execFileAsync("git", ["merge-base", base, "HEAD"], {
+        cwd,
+        encoding: "utf-8",
+        timeout: 5_000,
+      })).stdout.trim() || base)
+    : base;
   const { stdout: short } = await execFileAsync("git", ["rev-parse", "--short", effective], {
     cwd,
     encoding: "utf-8",
@@ -212,13 +213,10 @@ async function resolveDiffBase(cwd: string, baseCommit?: string): Promise<{ base
 export async function getChangedFiles(
   cwd: string,
   scope: string,
-  baseCommit?: string,
+  baseCommit: string,
 ): Promise<string[]> {
   try {
-    let base = baseCommit;
-    if (!base) {
-      base = await getMergeBase(cwd);
-    }
+    const base = baseCommit;
 
     const { stdout } = await execFileAsync(
       "git",
@@ -347,11 +345,7 @@ async function getDirectImporters(
       }
     }
 
-    const importPatterns = [
-      /from\s+['"](\.[^'"]+)['"]/g,
-      /require\(\s*['"](\.[^'"]+)['"]\s*\)/g,
-      /import\(\s*['"](\.[^'"]+)['"]\s*\)/g,
-    ];
+    const importPattern = /(?:from\s+|require\(\s*|import\(\s*)['"](\.[^'"]+)['"]/g;
 
     const results = await mapWithConcurrencyLimit(sourceFiles, 8, async (sourceFile) => {
       if (changedPaths.has(sourceFile)) return undefined;
@@ -364,8 +358,7 @@ async function getDirectImporters(
         return undefined;
       }
 
-      for (const pattern of importPatterns) {
-        for (const match of content.matchAll(pattern)) {
+      for (const match of content.matchAll(importPattern)) {
           const importPath = match[1];
           if (!importPath) continue;
 
@@ -374,7 +367,6 @@ async function getDirectImporters(
             return sourceFile;
           }
         }
-      }
       return undefined;
     });
 
@@ -411,7 +403,7 @@ function resolveContextWindow(
 }
 
 /** Default cap for --full mode file manifests (deterministic, sorted, no silent sampling). */
-export const FULL_TREE_FILE_CAP = 500;
+const FULL_TREE_FILE_CAP = 500;
 
 /**
  * Deterministic sort + cap + truncation-detection over a file list.
