@@ -184,11 +184,11 @@ test("phase groups keep their data flags and render dim headings only for non-em
 
   const rows = widget.progressRows();
   assert.deepEqual(
-    rows.map((r) => [r.phase, r.firstOfPhase, r.lastOfPhase]),
+    rows.map((r) => [r.phase, r.firstOfPhase]),
     [
-      ["Review", true, false],
-      ["Review", false, true],
-      ["Triage", true, true],
+      ["Review", true],
+      ["Review", false],
+      ["Triage", true],
     ],
   );
 
@@ -685,7 +685,6 @@ test("the meter renders in the configured colour, defaulting to accent", () => {
       outputTokens: 500,
       outputRevision: 0,
       firstOfPhase: true,
-      lastOfPhase: true,
     }],
     // A non-idle cell is the only one that takes the configured colour; idle cells stay dim.
     meterLevels: { a: [0, 0, 0, 0, 0, 0, 0, 7] },
@@ -734,7 +733,7 @@ test("the footer pins total run time to the right edge alongside the summary", (
   );
   assert.equal(footer.length, 1, "a short summary shares one line with the total");
   assert.ok(footer[0]?.includes("3/3 reviewer passes"), "summary is kept");
-  assert.ok(footer[0]?.trimEnd().endsWith("total 11:37  ctrl+shift+c: cancel"), `total is right-aligned: ${JSON.stringify(footer[0])}`);
+  assert.ok(footer[0]?.trimEnd().endsWith("total 11:37"), `total is right-aligned: ${JSON.stringify(footer[0])}`);
 });
 
 test("the footer moves total run time to its own line rather than truncating a long summary", () => {
@@ -742,7 +741,7 @@ test("the footer moves total run time to its own line rather than truncating a l
   const footer = footerOf({ summary, totalMs: 3_600_000, phaseModels: {}, rows: [], meterLevels: {} }, 100);
   assert.equal(footer.length, 2, "a colliding summary pushes the total onto its own line");
   assert.ok(footer[0]?.includes("verify 3/3"), "the summary is not truncated to make room");
-  assert.ok(footer[1]?.trimEnd().endsWith("total 60:00  ctrl+shift+c: cancel"), "minutes keep counting rather than rolling into hours");
+  assert.ok(footer[1]?.trimEnd().endsWith("total 60:00"), "minutes keep counting rather than rolling into hours");
 });
 
 test("total run time keeps running while mounted and freezes once the widget stops", async () => {

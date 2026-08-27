@@ -137,8 +137,6 @@ export interface AuditProgressRow {
   outputRevision: number;
   /** First row of its phase group; used by the render-only phase heading. */
   firstOfPhase: boolean;
-  /** Last row of its phase group. */
-  lastOfPhase: boolean;
 }
 
 /** What the table component reads from. */
@@ -314,9 +312,23 @@ export class AuditProgressWidget implements AuditProgressView {
     const row = this.rows.get(key);
     if (!row) return;
     const wasWorking = row.state === "working";
+    const wasSettled = row.state === "done" || row.state === "error" || row.state === "cancelled";
     row.state = "working";
     row.statusText = statusText;
-    row.startedAt ??= Date.now();
+    if (wasSettled) {
+      row.startedAt = Date.now();
+      row.contextTokens = undefined;
+      row.provider = undefined;
+      row.model = undefined;
+      row.activity = undefined;
+      row.turns = undefined;
+      row.toolCalls = undefined;
+      row.costUsd = undefined;
+      row.outputTokens = undefined;
+      row.outputRevision = undefined;
+    } else {
+      row.startedAt ??= Date.now();
+    }
     row.endedAt = undefined;
     if (!wasWorking) this.activeRowCount++;
   }
@@ -436,7 +448,6 @@ export class AuditProgressWidget implements AuditProgressView {
       outputTokens: row.outputTokens ?? 0,
       outputRevision: row.outputRevision ?? 0,
       firstOfPhase: ordered[index - 1]?.phase !== row.phase,
-      lastOfPhase: ordered[index + 1]?.phase !== row.phase,
     }));
   }
 }
@@ -478,7 +489,6 @@ export function collapseReviewRows(rows: AuditProgressRow[], maxBaseRows: number
   return collapsed.map((row, index) => ({
     ...row,
     firstOfPhase: collapsed[index - 1]?.phase !== row.phase,
-    lastOfPhase: collapsed[index + 1]?.phase !== row.phase,
   }));
 }
 
@@ -496,7 +506,6 @@ function reviewSummaryRow(state: "done" | "queued", label: string): AuditProgres
     outputTokens: 0,
     outputRevision: 0,
     firstOfPhase: false,
-    lastOfPhase: false,
   };
 }
 
@@ -544,11 +553,17 @@ function cell(text: string, width: number, align: "left" | "right" | "center" = 
   return shown + " ".repeat(padding);
 }
 
+/** Strip C0/C1 bytes from untrusted labels so they cannot alter terminal state. */
+export function sanitizeTerminalText(text: string): string {
+  return text.replace(/[\x00-\x1f\x7f-\x9f]/g, "");
+}
+
 /** Shorten a `provider/id` model label (or a bare frontmatter id) to its id, for the space-constrained band. */
 function shortModelId(label: string | undefined): string {
   if (!label) return "default";
-  const idx = label.lastIndexOf("/");
-  return idx === -1 ? label : label.slice(idx + 1);
+  const sanitized = sanitizeTerminalText(label);
+  const idx = sanitized.lastIndexOf("/");
+  return idx === -1 ? sanitized : sanitized.slice(idx + 1);
 }
 
 interface RowMeter {
@@ -564,6 +579,7 @@ export class AuditProgressTable implements Component {
   private readonly timer: ReturnType<typeof setInterval> | undefined;
   private readonly meters = new Map<string, RowMeter>();
   private readonly meterSettings: MeterSettings;
+  private readonly frozen: boolean;
   private readonly createdAt = Date.now();
   private spinFrame = 0;
 
@@ -579,7 +595,8 @@ export class AuditProgressTable implements Component {
     this.theme = theme;
     this.view = view;
     this.meterSettings = meterSettings;
-    if (frozenMeters) {
+    this.frozen = frozenMeters !== undefined;
+    if (frozenMeters !== undefined) {
       for (const row of view.progressRows()) {
         const levels = frozenMeters[row.key];
         if (!levels) continue;
@@ -703,7 +720,7 @@ export class AuditProgressTable implements Component {
     const rows = collapseReviewRows(sourceRows, maxBaseRows);
     const cols = tableColumns(
       bodyWidth,
-      rows.map((r) => r.label),
+      rows.map((r) => sanitizeTerminalText(r.label)),
     );
     const spin = TABLE_FRAMES[this.spinFrame % TABLE_FRAMES.length] ?? "◐";
 
@@ -773,8 +790,10 @@ export class AuditProgressTable implements Component {
             : r.state === "queued"
               ? th.fg("dim", "○")
               : th.fg("accent", spin);
-      const label = active ? th.fg("text", r.label) : th.fg("dim", r.label);
-      const status = r.state === "error" ? th.fg("error", r.statusText) : th.fg("dim", r.statusText);
+      const rowLabel = sanitizeTerminalText(r.label);
+      const statusText = sanitizeTerminalText(r.statusText);
+      const label = active ? th.fg("text", rowLabel) : th.fg("dim", rowLabel);
+      const status = r.state === "error" ? th.fg("error", statusText) : th.fg("dim", statusText);
       if (r.firstOfPhase) lines.push(row(dim(r.phase)));
       lines.push(
         line({
@@ -792,7 +811,7 @@ export class AuditProgressTable implements Component {
 
       if (active && r.activity && subRowBudget > 0) {
         subRowBudget--;
-        lines.push(row(this.activitySubRow(r.activity, bodyWidth)));
+        lines.push(row(this.activitySubRow(sanitizeTerminalText(r.activity), bodyWidth)));
       } else if (active && reservedActivitySlots) {
         lines.push(row(""));
       }
@@ -811,10 +830,9 @@ export class AuditProgressTable implements Component {
    */
   private footerLines(bodyWidth: number): string[] {
     const dim = (s: string) => this.theme.fg("dim", s);
-    const summary = this.view.footerSummary();
+    const summary = sanitizeTerminalText(this.view.footerSummary());
     const total = `total ${formatElapsed(this.view.totalMs())}`;
-    const cancelHint = "ctrl+shift+c: cancel";
-    const rhs = `${dim(total)}  ${dim(cancelHint)}`;
+    const rhs = this.frozen ? dim(total) : `${dim(total)}  ${dim("ctrl+shift+c: cancel")}`;
     const gap = bodyWidth - visibleWidth(summary) - visibleWidth(rhs);
     if (gap >= MIN_FOOTER_TOTAL_GAP) return [dim(summary) + " ".repeat(gap) + rhs];
     return [dim(summary), cell(rhs, bodyWidth, "right")];
@@ -833,8 +851,9 @@ export class AuditProgressTable implements Component {
   private topBorder(innerWidth: number, border: (s: string) => string): string {
     const title = ` ${TABLE_TITLE} `;
     const head = `${border("══")}${this.theme.fg("accent", title)}`;
-    const hash = this.view.baseHash ? `@${this.view.baseHash}` : undefined;
-    const rhs = [this.view.scope, hash].filter(Boolean).join(" · ");
+    const hash = this.view.baseHash ? `@${sanitizeTerminalText(this.view.baseHash)}` : undefined;
+    const scope = this.view.scope ? sanitizeTerminalText(this.view.scope) : undefined;
+    const rhs = [scope, hash].filter(Boolean).join(" · ");
     const right = rhs ? ` ${rhs} ` : "";
     const rightFill = innerWidth - 4 - visibleWidth(title) - visibleWidth(right);
     // A narrow terminal drops the right side rather than truncating it: a

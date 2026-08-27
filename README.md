@@ -157,24 +157,10 @@ The extension includes 40 reviewer personalities. Tiers group them under headers
 - Linus Torvalds
 - Ponytail Dev
 
-## Diff Mode Workflow
+## Scan Modes
 
-1. **Changed file detection** — programmatically scans git diff for changed files (no LLM)
-2. **Importer scanning** — heuristic JS/TS relative-path matching for direct importers of changed modules
-3. **Reviewer selection** — a TUI picker opens for selecting expert personas and passes (no LLM thinking), followed by a per-phase model + thinking-level picker. Reviewers are listed together under tier headers, so any cross-tier combination is selectable
-4. **Parallel review** — the extension spawns each selected reviewer×pass as an isolated in-process agent session (max 5 concurrent), skipping passes already in the incremental cache
-5. **Collection & dedup** — reviewer JSON-lines outputs are parsed, validated, and deduplicated deterministically in TypeScript
-6. **Adjudicator reconciliation** — a read-only adjudicator agent session annotates each finding with an apply/reject/defer recommendation
-7. **Findings triage** — results are presented in a TUI for accept/reject/defer (press `H` to write current deferred findings to `.pi/persona-audit/handoffs/`; Esc twice cancels and a partial report is kept)
-8. **Fix, verify & report** — edit-capable adjudicator agent sessions apply accepted fixes in parallel, one per disjoint set of files, the extension verifies each fix individually (see [Verification](#verification)), runs the project's `check`/`lint`/`test` scripts, writes the report to `.pi/persona-audit/audits/`, posts a summary in chat, then opens the report viewer (except for cancelled audits)
-
-## Full-Tree Mode Workflow
-
-`--full` replaces steps 1–2 above with a single deterministic step and needs no git repository at all:
-
-1. **Directory scan** — programmatically scans the whole directory tree under `[path]` (no LLM), using a broad, language-agnostic extension allowlist (not just JS/TS) and excluding common vendor/build/cache directories (`node_modules`, `.git`, `dist`, `build`, `.venv`, `target`, `.idea`, lockfiles, etc.)
-2. **Deterministic cap** — the manifest is sorted, then capped at 500 files; if the scan finds more, the extra files are excluded (never sampled) and a warning is shown plus noted in the report so you can narrow the scope path
-3. Steps 3–8 are identical to diff mode (reviewer selection, parallel review, collection & dedup, adjudicator reconciliation, findings triage, fix/verify/report)
+- **Diff mode (`--diff`)** — scans changed files from a git diff, then heuristically includes direct importers of changed JS/TS modules.
+- **Full-tree mode (`--full [path]`)** — scans a sorted, language-agnostic directory manifest without requiring git, excludes common vendor/build/cache directories, and caps the scan at 500 files with a warning when extra files are excluded.
 
 ## Workflow
 
@@ -372,7 +358,7 @@ summary reflect only the last round.
 
 ### Progress table
 
-The eight steps above are the audit's internal state machine. On screen they are
+The nine steps above are the audit's internal state machine. On screen they are
 grouped into four phases in a single `aboveEditor` widget, which stays mounted
 for the whole run and is torn down on completion, cancellation, `/reload`, and
 `/new`:
@@ -412,8 +398,8 @@ for the whole run and is torn down on completion, cancellation, `/reload`, and
   `Verify` has fix-landed, verifier, regression-test, and script rows). A round
   that does not pass adds a `gate repair N` row under `Verify`, followed by a
   fresh set of verification rows (see [Fix + verify rounds](#fix--verify-rounds)).
-  Headings are render-only; the phase and `firstOfPhase`/`lastOfPhase` fields
-  remain in snapshots. Every agent row starts with its status icon followed by
+  Headings are render-only; the phase and `firstOfPhase` fields remain in
+  snapshots. Every agent row starts with its status icon followed by
   its label, with no phase column or tree connector.
 - **CTX** — the latest turn's context size as a percentage of the model's
   context window. When the window cannot be resolved from the provider/model the
@@ -584,7 +570,7 @@ pi-topping-persona-audit/
 
 ```bash
 # Type check only (no emit — erasableSyntaxOnly)
-npm run check
+npm run typecheck
 
 # Run tests
 npm test
