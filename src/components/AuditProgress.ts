@@ -60,17 +60,10 @@ const ELAPSED_COL_WIDTH = 6;
 const TURNS_COL_WIDTH = 5;
 const TOOLS_COL_WIDTH = 5;
 const COST_COL_WIDTH = 8;
-/** Width of the "├ " / "│ " / "└ " tree connector that leads each phase group. */
-const BRANCH_COL_WIDTH = 2;
 const LABEL_COL_MIN = 8;
 /** Label width below which reviewer names stop being distinguishable from their siblings. */
 const LABEL_COL_READABLE = 24;
 const ACTIVITY_COL_MIN = 10;
-
-/** Widest phase name plus a trailing space, so the branch column starts clear of it. */
-function phaseColumnWidth(): number {
-  return AUDIT_PHASES.reduce((max, phase) => Math.max(max, phase.length), 0) + 1;
-}
 
 /** Format a token count as `X.XM` / `X.XK`, or raw when small. */
 export function formatTokens(tokens: number): string {
@@ -142,7 +135,7 @@ export interface AuditProgressRow {
   costUsd?: number;
   outputTokens: number;
   outputRevision: number;
-  /** First row of its phase group — the only one that prints the phase name and its tree connector. */
+  /** First row of its phase group; used by the render-only phase heading. */
   firstOfPhase: boolean;
   /** Last row of its phase group. */
   lastOfPhase: boolean;
@@ -507,20 +500,17 @@ function reviewSummaryRow(state: "done" | "queued", label: string): AuditProgres
   };
 }
 
+/** Count the render-only heading rows needed for the phase groups in `rows`. */
+function phaseHeadingCount(rows: AuditProgressRow[]): number {
+  return rows.reduce((count, row, index) => count + (index === 0 || rows[index - 1]?.phase !== row.phase ? 1 : 0), 0);
+}
+
 /** Column widths for the table, shedding columns as the terminal narrows. */
 export function tableColumns(
   bodyWidth: number,
   labels: string[],
 ): { label: number; activity: number; stats: boolean } {
-  const fixed =
-    STATUS_COL_WIDTH +
-    phaseColumnWidth() +
-    BRANCH_COL_WIDTH +
-    COLUMN_GAP +
-    CTX_COL_WIDTH +
-    COLUMN_GAP +
-    ACTIVITY_METER_WIDTH +
-    COLUMN_GAP;
+  const fixed = STATUS_COL_WIDTH + COLUMN_GAP + CTX_COL_WIDTH + COLUMN_GAP + ACTIVITY_METER_WIDTH + COLUMN_GAP;
   const statsWidth =
     ELAPSED_COL_WIDTH +
     COLUMN_GAP +
@@ -701,25 +691,29 @@ export class AuditProgressTable implements Component {
     const row = (s: string) => `  ${truncateToWidth(s, bodyWidth, "…", true)}  `;
     const band = this.phaseModelBand(bodyWidth, Date.now());
     const footer = this.footerLines(bodyWidth);
+    const sourceRows = this.view.progressRows();
     const maxBaseRows = Math.max(
       1,
-      this.rowBudget() - TABLE_CHROME_ROWS - (footer.length - 1) - (band.length > 0 ? PHASE_BAND_ROWS : 0),
+      this.rowBudget() -
+        TABLE_CHROME_ROWS -
+        (footer.length - 1) -
+        (band.length > 0 ? PHASE_BAND_ROWS : 0) -
+        phaseHeadingCount(sourceRows),
     );
-    const rows = collapseReviewRows(this.view.progressRows(), maxBaseRows);
+    const rows = collapseReviewRows(sourceRows, maxBaseRows);
     const cols = tableColumns(
       bodyWidth,
       rows.map((r) => r.label),
     );
-    const phaseWidth = phaseColumnWidth();
     const spin = TABLE_FRAMES[this.spinFrame % TABLE_FRAMES.length] ?? "◐";
 
     const gap = " ".repeat(COLUMN_GAP);
     // Turns, tool calls, cost, and elapsed are pinned to the right edge so the
     // activity column, whose values are by far the longest, keeps every column the others don't need.
-    interface LineParams { branch: string; phase: string; icon: string; label: string; ctx: string; meter: string; activity: string; turns: string; toolCalls: string; cost: string; elapsed: string }
+    interface LineParams { icon: string; label: string; ctx: string; meter: string; activity: string; turns: string; toolCalls: string; cost: string; elapsed: string }
     const line = (p: LineParams) => {
       const parts = [
-        `${cell(p.branch, BRANCH_COL_WIDTH)}${cell(p.phase, phaseWidth)}${cell(p.icon, STATUS_COL_WIDTH)}${cell(p.label, cols.label)}`,
+        `${cell(p.icon, STATUS_COL_WIDTH)}${cell(p.label, cols.label)}`,
         cell(p.ctx, CTX_COL_WIDTH, "right"),
         p.meter,
       ];
@@ -741,10 +735,8 @@ export class AuditProgressTable implements Component {
     if (band.length > 0) lines.push(border("─".repeat(innerWidth)));
     lines.push(
       line({
-        branch: "",
-        phase: dim("PHASE"),
         icon: "",
-        label: "",
+        label: dim("AGENT"),
         ctx: dim("CTX"),
         meter: dim(cell("MONITOR", ACTIVITY_METER_WIDTH)),
         activity: dim("ACTIVITY"),
@@ -761,6 +753,7 @@ export class AuditProgressTable implements Component {
         TABLE_CHROME_ROWS -
         (footer.length - 1) -
         rows.length -
+        phaseHeadingCount(rows) -
         (band.length > 0 ? PHASE_BAND_ROWS : 0),
     );
     const activeRows = rows.filter((r) => isActive(r.state));
@@ -769,11 +762,6 @@ export class AuditProgressTable implements Component {
     // a tool call arrives, it replaces that line instead of growing the table.
     // On a short terminal, activity still outranks these cosmetic placeholders.
     const reservedActivitySlots = free >= activeRows.length;
-
-    // The phase tree: each phase's first row carries its connector (├ for
-    // every phase but the last, └ for the last); rows beneath continue the
-    // branch with │ until the final phase, whose own rows hang plain.
-    const lastPhase = rows[rows.length - 1]?.phase;
 
     for (const r of rows) {
       const active = isActive(r.state);
@@ -787,14 +775,9 @@ export class AuditProgressTable implements Component {
               : th.fg("accent", spin);
       const label = active ? th.fg("text", r.label) : th.fg("dim", r.label);
       const status = r.state === "error" ? th.fg("error", r.statusText) : th.fg("dim", r.statusText);
-      const endsPhaseTree = r.phase === lastPhase;
-      const branch = r.firstOfPhase
-        ? th.fg("border", endsPhaseTree ? "└" : "├")
-        : th.fg("border", endsPhaseTree ? " " : "│");
+      if (r.firstOfPhase) lines.push(row(dim(r.phase)));
       lines.push(
         line({
-          branch,
-          phase: r.firstOfPhase ? th.fg("text", r.phase) : "",
           icon,
           label,
           ctx: contextCell(r.contextTokens, r.contextWindow),
@@ -838,11 +821,11 @@ export class AuditProgressTable implements Component {
   }
 
   /**
-   * Merged-cell tool activity line, indented two columns past the status icon
-   * so it aligns with the row labels above.
+   * Merged-cell tool activity line, indented past the status icon so it aligns
+   * with the row labels above.
    */
   private activitySubRow(activity: string, bodyWidth: number): string {
-    const indent = STATUS_COL_WIDTH + phaseColumnWidth() + BRANCH_COL_WIDTH;
+    const indent = STATUS_COL_WIDTH;
     const room = Math.max(0, bodyWidth - indent);
     return `${" ".repeat(indent)}${this.theme.fg("dim", cell(`↳ ${activity}`, room))}`;
   }

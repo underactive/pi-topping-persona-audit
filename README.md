@@ -252,9 +252,11 @@ it never sees the other batches. The progress table shows one `Implement` row
 per batch:
 
 ```
-  ├ Implement  ✓ apply · src/auth.ts             fixes applied
-  │            ◐ apply · src/api/handler.ts +2   applying 5…
-  └ Verify     ○ fix landed                      queued
+  Implement
+  ✓ apply · src/auth.ts             fixes applied
+  ◐ apply · src/api/handler.ts +2   applying 5…
+  Verify
+  ○ fix landed                      queued
 ```
 
 The agents' reports are concatenated into the single document the verifier and
@@ -380,18 +382,20 @@ for the whole run and is torn down on completion, cancellation, `/reload`, and
        Review          Triage        Implement         Verify     
    claude-opus-4   claude-opus-4       gpt-5      claude-haiku-4-5
 ───────────────────────────────────────────────────────────
-    PHASE                                CTX  MONITOR   ACTIVITY                 TURNS  TOOLS      COST    TIME
-  ├ Review   ✓ Security Engineer  21.2%/200.0K  ⣿⣶⣤⣀⣀⢀⢀⢀  1.2K tokens                2      4    $0.018    0:42
-  │          ◐ Slop Auditor        8.4%/200.0K  ⣴⣤⣤⣀⢀⢀⢀⢀  reviewing…                 1      2    $0.006    0:19
-               ↳ grep  "handleRequest"
-  │          ○ Perf Engineer                 —  ⢀⢀⢀⢀⢀⢀⢀⢀  queued                     0      0         —    0:00
-  └ Triage   ✓ collection                    —  ⢀⢀⢀⢀⢀⢀⢀⢀  84 raw → 31 unique         0      0         —    0:01
-             ◐ adjudicator · reconcile  59.5%/200.0K  ⣶⣤⣀⢀⢀⢀⢀⢀  annotating…          1      3    $0.009    0:27
+  AGENT                                CTX  MONITOR   ACTIVITY                 TURNS  TOOLS      COST    TIME
+  Review
+  ✓ Security Engineer  21.2%/200.0K  ⣿⣶⣤⣀⣀⢀⢀⢀  1.2K tokens                2      4    $0.018    0:42
+  ◐ Slop Auditor        8.4%/200.0K  ⣴⣤⣤⣀⢀⢀⢀⢀  reviewing…                 1      2    $0.006    0:19
+    ↳ grep  "handleRequest"
+  ○ Perf Engineer                 —  ⢀⢀⢀⢀⢀⢀⢀⢀  queued                     0      0         —    0:00
+  Triage
+  ✓ collection                    —  ⢀⢀⢀⢀⢀⢀⢀⢀  84 raw → 31 unique         0      0         —    0:01
+  ◐ adjudicator · reconcile  59.5%/200.0K  ⣶⣤⣀⢀⢀⢀⢀⢀  annotating…          1      3    $0.009    0:27
 ───────────────────────────────────────────────────────────────────────
   2/3 reviewer passes · 31 findings · verify 1/2
 ```
 
-- **PHASE / model band** — two rows above the `PHASE` header show which model
+- **PHASE / model band** — two rows above the `AGENT` header show which model
   is assigned to each phase, centered under that phase's own column. Between
   adjacent columns stands a two-row powerline chevron — a `\` (U+E0B9) on the
   name row stacked over a `/` (U+E0BB) on the model row so the halves read as
@@ -402,19 +406,15 @@ for the whole run and is torn down on completion, cancellation, `/reload`, and
   after ExpertPicker; the band is omitted entirely when no phase has an
   assigned model, or when the terminal is too narrow to keep all four columns
   readable.
-- **PHASE** — `Review` (one row per reviewer×pass), `Triage` (deterministic
-  collection, then adjudicator reconciliation), `Implement` (adjudicator fix
-  application), `Verify` (the fix-landed check, the verifier, regression tests,
-  then one row per discovered script — individual findings get their own row only
-  when they come back `not-fixed` or `cannot-verify`). A round that does not
-  pass adds a `gate repair N` row under `Verify`, followed by a fresh set of
-  fix-landed/verifier/regression/script rows for the next round (see
-  [Fix + verify rounds](#fix--verify-rounds)) — repeated rounds stay visible
-  rather than overwriting the previous round's. The phase name prints
-  once per group, on the first row, which also carries the group's tree
-  connector — `├` for every phase but the last, `└` for the last. Rows beneath
-  keep the branch alive with `│` until the final phase, and each row's status
-  icon precedes its label.
+- **AGENT** — each non-empty phase group starts with a dim phase heading, then
+  its rows (`Review` has one row per reviewer×pass, `Triage` has deterministic
+  collection and adjudication, `Implement` has adjudicator fix application, and
+  `Verify` has fix-landed, verifier, regression-test, and script rows). A round
+  that does not pass adds a `gate repair N` row under `Verify`, followed by a
+  fresh set of verification rows (see [Fix + verify rounds](#fix--verify-rounds)).
+  Headings are render-only; the phase and `firstOfPhase`/`lastOfPhase` fields
+  remain in snapshots. Every agent row starts with its status icon followed by
+  its label, with no phase column or tree connector.
 - **CTX** — the latest turn's context size as a percentage of the model's
   context window. When the window cannot be resolved from the provider/model the
   agent session reported, the raw token count is shown instead of a guessed
@@ -428,11 +428,15 @@ for the whole run and is torn down on completion, cancellation, `/reload`, and
 - **TURNS / TOOLS / COST / TIME** — assistant turns completed, cumulative tool
   calls, cumulative model cost at `$0.000` precision (`—` when the model cannot be
   resolved), and elapsed time. All four freeze when the row settles and are
-  dropped together below roughly 112 columns.
+  dropped together when the table body is narrower than 96 columns (roughly a
+  100-column terminal).
 
-The table aims for roughly half the terminal height, but keeps a minimum chrome
-floor; on a short terminal the `↳` sub-rows and their reserved placeholders are
-dropped before any agent row is.
+The fixed row layout is status icon + gap + agent label + gap + CTX + gap +
+monitor + gap, followed by ACTIVITY and, when eligible, the four stats columns.
+The table aims for roughly half the terminal height, keeps the existing chrome
+floor, and subtracts one budget row for every rendered phase heading before
+allocating agent rows. On a short terminal, `↳` sub-rows and their reserved
+placeholders are dropped before any agent row is.
 
 On completion the sticky widget unmounts, and a frozen, read-only copy of the
 finished table — settled rows, final meter traces, the footer summary, and an

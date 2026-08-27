@@ -174,7 +174,7 @@ test("settleOpenRows only touches rows that never finished", () => {
 
 // ── phase grouping ─────────────────────────────────────────────────────────
 
-test("phase groups render their name once and keep every row identifiable", () => {
+test("phase groups keep their data flags and render dim headings only for non-empty groups", () => {
   const { ctx, state } = fakeCtx();
   const widget = new AuditProgressWidget(ctx);
   widget.addRow("Review", "a", "Security Engineer", { state: "done" });
@@ -192,15 +192,16 @@ test("phase groups render their name once and keep every row identifiable", () =
     ],
   );
 
-  const body = lines(state.table).join("\n");
-  assert.equal(body.match(/Review/g)?.length, 1, "the phase name is printed once per group");
-  assert.ok(body.includes("├ Review"), "a non-final phase opens its branch on its first row");
-  assert.ok(body.includes("│"), "continuation rows keep the branch connector alive");
-  assert.ok(body.includes("└ Triage"), "the last phase closes the branch on its first row");
+  const rendered = lines(state.table);
+  const body = rendered.join("\n");
+  assert.equal(body.match(/^  Review\s*$/gm)?.length, 1, "the Review heading is rendered once");
+  assert.equal(body.match(/^  Triage\s*$/gm)?.length, 1, "the Triage heading is rendered once");
+  assert.ok(!body.includes("PHASE"), "rendered rows use the compact agent layout");
+  assert.ok(!/[├│└]/.test(body), "rendered rows have no tree connectors");
   widget.stop();
 });
 
-test("branch connectors lead phases, icons lead labels, and tool calls indent beneath them", () => {
+test("agent rows start with status icons and tool calls align under the status column", () => {
   const { ctx, state } = fakeCtx();
   const widget = new AuditProgressWidget(ctx);
   widget.addRow("Review", "a", "Code Quality Engineer", { state: "done" });
@@ -212,13 +213,13 @@ test("branch connectors lead phases, icons lead labels, and tool calls indent be
   widget.mount();
 
   const body = lines(state.table).join("\n");
-  assert.match(body, /  ├ Review    ✓ Code Quality Engineer/);
-  assert.match(body, /  │           ✓ Security Engineer/);
-  assert.match(body, /  └ Triage    ✓ collection/);
-  assert.match(body, /             ◐ adjudicator · reconcile/);
-  // The tool call indents two columns past the status icon, aligning with the labels.
-  assert.match(body, /                ↳ read  src\/audit\.ts/);
-  assert.ok(!/^  [✓◐○✗]/.test(body), "status icons no longer lead the line");
+  assert.match(body, /  Review\s*\n  ✓ Code Quality Engineer/);
+  assert.match(body, /  ✓ Security Engineer/);
+  assert.match(body, /  Triage\s*\n  ✓ collection/);
+  assert.match(body, /  ◐ adjudicator · reconcile/);
+  // The tool call starts at the status-column width, matching the sibling agent table.
+  assert.match(body, /    ↳ read  src\/audit\.ts/);
+  assert.ok(!/^  [✓◐○✗]/.test(body), "the header is not an agent row");
   widget.stop();
 });
 
@@ -247,7 +248,7 @@ test("table renders the header columns, scope and live footer summary", () => {
 
   const rendered = lines(state.table);
   assert.match(rendered[0] ?? "", /^══ Persona-audit ═+ src\/ ══$/);
-  assert.match(rendered[1] ?? "", /PHASE.*CTX.*MONITOR.*ACTIVITY.*TURNS.*TOOLS.*COST.*TIME/);
+  assert.match(rendered[1] ?? "", /AGENT.*CTX.*MONITOR.*ACTIVITY.*TURNS.*TOOLS.*COST.*TIME/);
   assert.match(rendered.at(-2) ?? "", /3\/6 reviewer passes · 12 findings/);
   widget.stop();
 });
@@ -273,17 +274,17 @@ test("title bar carries the diff base hash after the scope, or alone when the sc
 
 // ── responsive layout ──────────────────────────────────────────────────────
 
-test("tableColumns sheds turns/time before squeezing the label, then activity", () => {
+test("tableColumns sheds the stats block before squeezing the label, then activity", () => {
   const wide = tableColumns(140, ["Security Engineer"]);
   assert.equal(wide.stats, true);
   assert.ok(wide.activity >= 10);
 
   const medium = tableColumns(70, ["Security Engineer"]);
   assert.equal(medium.stats, false, "ambient stats go first on a narrow terminal");
-  assert.equal(tableColumns(107, ["Security Engineer"]).stats, false);
-  assert.equal(tableColumns(108, ["Security Engineer"]).stats, true);
+  assert.equal(tableColumns(95, ["Security Engineer"]).stats, false);
+  assert.equal(tableColumns(96, ["Security Engineer"]).stats, true);
 
-  const tiny = tableColumns(40, ["Security Engineer"]);
+  const tiny = tableColumns(35, ["Security Engineer"]);
   assert.equal(tiny.activity, 0, "activity is dropped once the label cannot fit beside it");
 });
 
@@ -338,6 +339,27 @@ test("a short terminal drops activity sub-rows and placeholders before base rows
 
   tallWidget.stop();
   shortWidget.stop();
+});
+
+test("phase headings consume height budget before activity sub-rows", () => {
+  const { ctx, state } = fakeCtx(40);
+  const widget = new AuditProgressWidget(ctx);
+  for (const phase of ["Review", "Triage", "Implement", "Verify"] as const) {
+    const count = phase === "Review" ? 5 : 1;
+    for (let i = 0; i < count; i++) {
+      const key = `${phase}:${i}`;
+      widget.addRow(phase, key, `${phase} agent ${i}`);
+      widget.startRow(key, "working…");
+      widget.applyProgress(key, progressSnapshot({ activity: `read  ${phase}/${i}.ts` }));
+    }
+  }
+  widget.mount();
+
+  const rendered = lines(state.table);
+  assert.equal(rendered.filter((line) => /^(  )(Review|Triage|Implement|Verify)\s*$/.test(line)).length, 4);
+  assert.equal(rendered.filter((line) => line.includes("↳")).length, 3, "headings leave only three activity slots");
+  assert.equal(rendered.length, 20, "phase headings fit inside the existing half-height budget");
+  widget.stop();
 });
 
 /** A review phase far past any terminal's budget: settled, queued, live and failed passes. */
@@ -463,7 +485,7 @@ test("band is suppressed entirely when no phase has an assigned model", () => {
 
   const rendered = lines(state.table);
   assert.match(rendered[0] ?? "", /^══ Persona-audit/, "top border is unaffected");
-  assert.match(rendered[1] ?? "", /PHASE.*CTX.*MONITOR/, "the header row follows the top border directly");
+  assert.match(rendered[1] ?? "", /AGENT.*CTX.*MONITOR/, "the header row follows the top border directly");
   widget.stop();
 });
 
@@ -480,7 +502,7 @@ test("phase/model band renders all four phases and their assigned models above t
   widget.mount();
 
   const rendered = lines(state.table);
-  const headerIndex = rendered.findIndex((l) => /PHASE.*CTX.*MONITOR/.test(l));
+  const headerIndex = rendered.findIndex((l) => /AGENT.*CTX.*MONITOR/.test(l));
   assert.equal(headerIndex, 4, "two band rows plus their separator push the header to row 4");
   const band = rendered.slice(1, 3).join("\n");
   for (const phase of ["Review", "Triage", "Implement", "Verify"]) {
@@ -584,10 +606,10 @@ test("a narrow terminal drops the band even when models are assigned", () => {
   widget.mount();
 
   const narrow = lines(state.table, 50); // bodyWidth 46 → 11/col, below the 12-column floor
-  assert.match(narrow[1] ?? "", /PHASE.*CTX.*MONITOR/, "band suppressed, header follows the top border directly");
+  assert.match(narrow[1] ?? "", /AGENT.*CTX.*MONITOR/, "band suppressed, header follows the top border directly");
 
   const wide = lines(state.table, 60); // bodyWidth 56 → 14/col, clears the floor
-  assert.doesNotMatch(wide[1] ?? "", /PHASE.*CTX.*MONITOR/, "band shown, so the header is pushed down");
+  assert.doesNotMatch(wide[1] ?? "", /AGENT.*CTX.*MONITOR/, "band shown, so the header is pushed down");
   widget.stop();
 });
 
