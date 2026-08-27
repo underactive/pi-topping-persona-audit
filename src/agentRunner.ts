@@ -7,7 +7,7 @@
  */
 
 import { join } from "node:path";
-import type { Api, Model } from "@earendil-works/pi-ai";
+import { calculateCost, type Api, type Model, type Usage } from "@earendil-works/pi-ai";
 import {
   createAgentSession,
   DefaultResourceLoader,
@@ -128,6 +128,28 @@ function emptyUsage(): HeadlessUsage {
   return { turns: 0, contextTokens: 0, outputTokens: 0 };
 }
 
+export type TurnTokenUsage = Pick<Usage, "input" | "output" | "cacheRead" | "cacheWrite" | "cacheWrite1h" | "totalTokens">;
+
+function nonnegativeFinite(value: number | undefined): number {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : 0;
+}
+
+/** Calculate one assistant turn's cost using the resolved model's registry rates. */
+export function calculateTurnCost(model: Model<Api> | undefined, usage: TurnTokenUsage): number | undefined {
+  if (!model) return undefined;
+  const cost = calculateCost(model, {
+    input: nonnegativeFinite(usage.input),
+    output: nonnegativeFinite(usage.output),
+    cacheRead: nonnegativeFinite(usage.cacheRead),
+    cacheWrite: nonnegativeFinite(usage.cacheWrite),
+    cacheWrite1h: nonnegativeFinite(usage.cacheWrite1h),
+    totalTokens: nonnegativeFinite(usage.totalTokens),
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  });
+  const total = cost.input + cost.output + cost.cacheRead + cost.cacheWrite;
+  return Number.isFinite(total) && total >= 0 ? total : undefined;
+}
+
 function failedResult(errorMessage: string): HeadlessResult {
   return {
     finalText: "",
@@ -190,8 +212,9 @@ async function buildRuntime(source: ModelRegistry, agentDir: string): Promise<Mo
 /** Never rejects; all failures land in the returned HeadlessResult. */
 export async function runAgentSession(opts: HeadlessOptions): Promise<HeadlessResult> {
   let session: AgentSession;
+  let resolvedModel: Model<Api> | undefined;
   try {
-    const resolvedModel = resolveModelRef(opts.model, opts.modelRegistry);
+    resolvedModel = resolveModelRef(opts.model, opts.modelRegistry);
     const agentDir = getAgentDir();
     const modelRuntime = await buildRuntimeWithExtensionProviders(opts.modelRegistry, agentDir);
     const loader = createIsolatedResourceLoader(opts.cwd, agentDir, opts.systemPrompt);
@@ -218,6 +241,9 @@ export async function runAgentSession(opts: HeadlessOptions): Promise<HeadlessRe
   const tracker = new OutputActivityTracker();
   const usage = emptyUsage();
   let activity: string | undefined;
+  let toolCalls = 0;
+  let costModel = resolvedModel;
+  let costUsd: number | undefined = costModel ? 0 : undefined;
   let lastProgressAt = 0;
   let provider: string | undefined;
   let modelId: string | undefined;
@@ -258,24 +284,33 @@ export async function runAgentSession(opts: HeadlessOptions): Promise<HeadlessRe
       const msg = event.message;
       tracker.messageEnd(msg);
       usage.turns++;
-      if (msg.usage) {
-        usage.contextTokens = msg.usage.totalTokens || 0;
-      }
+      if (msg.usage) usage.contextTokens = msg.usage.totalTokens || 0;
       if (!provider && msg.provider) provider = msg.provider;
       if (!modelId && msg.model) modelId = msg.model;
+      if (!costModel && provider && modelId) {
+        costModel = opts.modelRegistry.find(provider, modelId);
+        if (costModel) costUsd = 0;
+      }
+      if (msg.usage) {
+        const turnCost = calculateTurnCost(costModel, msg.usage);
+        if (turnCost !== undefined) costUsd = (costUsd ?? 0) + turnCost;
+      }
       if (msg.stopReason) stopReason = msg.stopReason;
       if (msg.errorMessage) errorMessage = msg.errorMessage;
     }
     if (event.type === "tool_execution_start") {
+      toolCalls++;
       activity = formatToolActivity(event.toolName, event.args);
     }
     const output = tracker.snapshot();
     const now = Date.now();
-    if (event.type === "message_end" || now - lastProgressAt >= 50) {
+    if (event.type === "message_end" || event.type === "tool_execution_start" || now - lastProgressAt >= 50) {
       lastProgressAt = now;
       opts.onProgress?.({
         contextTokens: usage.contextTokens,
         turns: usage.turns,
+        toolCalls,
+        costUsd,
         activity,
         outputTokens: output.tokens,
         outputRevision: output.revision,

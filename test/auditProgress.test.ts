@@ -7,6 +7,7 @@ import {
   AuditProgressTable,
   AuditProgressWidget,
   contextCell,
+  formatCost,
   formatElapsed,
   formatTokens,
   renderAuditSnapshot,
@@ -26,6 +27,7 @@ const CONTEXT_WINDOW = 200_000;
 const progressSnapshot = (overrides: Partial<HeadlessProgress> = {}): HeadlessProgress => ({
   contextTokens: 42_000,
   turns: 7,
+  toolCalls: 3,
   outputTokens: 1_200,
   outputRevision: 0,
   provider: "anthropic",
@@ -123,14 +125,19 @@ test("rows move queued → working → done and carry streamed telemetry", () =>
   assert.equal(working?.state, "working");
   assert.equal(working?.statusText, "reviewing…");
   assert.equal(working?.turns, 7);
+  assert.equal(working?.toolCalls, 3);
+  assert.equal(working?.costUsd, undefined);
   assert.equal(working?.contextTokens, 42_000);
   assert.equal(working?.contextWindow, CONTEXT_WINDOW);
   assert.equal(working?.activity, 'grep  "handleRequest"');
 
+  widget.applyProgress("review:sec:1", progressSnapshot({ toolCalls: 4, costUsd: 0.1234 }));
   widget.settleRow("review:sec:1", "done", "812 tokens");
   const done = widget.progressRows()[0];
   assert.equal(done?.state, "done");
   assert.equal(done?.statusText, "812 tokens");
+  assert.equal(done?.toolCalls, 4);
+  assert.equal(done?.costUsd, 0.1234);
   assert.equal(done?.activity, undefined, "a settled row drops its in-flight tool call");
 });
 
@@ -240,7 +247,7 @@ test("table renders the header columns, scope and live footer summary", () => {
 
   const rendered = lines(state.table);
   assert.match(rendered[0] ?? "", /^══ Persona-audit ═+ src\/ ══$/);
-  assert.match(rendered[1] ?? "", /PHASE.*CTX.*MONITOR.*ACTIVITY.*TURNS.*TIME/);
+  assert.match(rendered[1] ?? "", /PHASE.*CTX.*MONITOR.*ACTIVITY.*TURNS.*TOOLS.*COST.*TIME/);
   assert.match(rendered.at(-2) ?? "", /3\/6 reviewer passes · 12 findings/);
   widget.stop();
 });
@@ -273,6 +280,8 @@ test("tableColumns sheds turns/time before squeezing the label, then activity", 
 
   const medium = tableColumns(70, ["Security Engineer"]);
   assert.equal(medium.stats, false, "ambient stats go first on a narrow terminal");
+  assert.equal(tableColumns(107, ["Security Engineer"]).stats, false);
+  assert.equal(tableColumns(108, ["Security Engineer"]).stats, true);
 
   const tiny = tableColumns(40, ["Security Engineer"]);
   assert.equal(tiny.activity, 0, "activity is dropped once the label cannot fit beside it");
@@ -418,6 +427,30 @@ test("formatTokens and formatElapsed use compact, non-rolling units", () => {
   assert.equal(formatElapsed(0), "0:00");
   assert.equal(formatElapsed(65_000), "1:05");
   assert.equal(formatElapsed(3_725_000), "62:05", "minutes keep counting past an hour");
+});
+
+test("formatCost uses fixed precision, clamps negatives, and dashes invalid values", () => {
+  assert.equal(formatCost(undefined), "—");
+  assert.equal(formatCost(Number.NaN), "—");
+  assert.equal(formatCost(Number.POSITIVE_INFINITY), "—");
+  assert.equal(formatCost(Number.NEGATIVE_INFINITY), "—");
+  assert.equal(formatCost(0), "$0.000");
+  assert.equal(formatCost(0.1234), "$0.123");
+  assert.equal(formatCost(-1), "$0.000");
+});
+
+test("stats columns render right-aligned turns, tool calls, cost, and elapsed time", () => {
+  const { ctx, state } = fakeCtx();
+  const widget = new AuditProgressWidget(ctx);
+  widget.addRow("Review", "a", "Security Engineer", { state: "done" });
+  widget.applyProgress("a", progressSnapshot({ turns: 7, toolCalls: 3, costUsd: 0.1234 }));
+  widget.mount();
+
+  const rendered = lines(state.table, 120);
+  const dataLine = rendered.find((line) => line.includes("Security Engineer"));
+  assert.ok(dataLine, "expected a data row");
+  assert.ok(dataLine.trimEnd().endsWith("7      3    $0.123    0:00"), `stats should be right-aligned: ${JSON.stringify(dataLine)}`);
+  widget.stop();
 });
 
 // ── phase/model band ────────────────────────────────────────────────────────
@@ -641,6 +674,8 @@ test("the meter renders in the configured colour, defaulting to accent", () => {
 
   const fallback = renderAuditSnapshot(snapshot, tagged).render(120).join("\n");
   assert.match(fallback, /<accent>⣿/);
+  const legacy = renderAuditSnapshot(snapshot, { fg: (_color, text) => text }).render(120).join("\n");
+  assert.match(legacy, /Security Engineer.*0.*—.*0:01/, "legacy rows default missing telemetry to 0 and —");
 });
 
 test("a frozen snapshot render never starts a ticker", () => {

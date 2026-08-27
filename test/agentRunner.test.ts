@@ -7,6 +7,7 @@ import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import { DefaultResourceLoader, getAgentDir, ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import {
   buildRuntimeWithExtensionProviders,
+  calculateTurnCost,
   createIsolatedResourceLoader,
   getAllAssistantText,
   getFinalAssistantText,
@@ -32,7 +33,13 @@ async function testRegistry(): Promise<ModelRegistry> {
         api: "anthropic-messages",
         reasoning: true,
         input: ["text"],
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        cost: {
+          input: 10,
+          output: 20,
+          cacheRead: 3,
+          cacheWrite: 4,
+          tiers: [{ inputTokensAbove: 1000, input: 100, output: 200, cacheRead: 30, cacheWrite: 40 }],
+        },
         contextWindow: 200_000,
         maxTokens: 8000,
       },
@@ -91,6 +98,53 @@ test("resolveModelRef throws with the available-model list when nothing matches"
     () => resolveModelRef("zzz-rt-test-nonexistent-model-xyz", registry),
     /Model not found: "zzz-rt-test-nonexistent-model-xyz"[\s\S]*zzz-rt-test-provider\/zzz-rt-test-alpha-4-5[\s\S]*zzz-rt-test-provider\/zzz-rt-test-beta/,
   );
+});
+
+test("calculateTurnCost uses registry rates, including long-cache writes", async () => {
+  const registry = await testRegistry();
+  const model = registry.find("zzz-rt-test-provider", "zzz-rt-test-alpha-4-5");
+  assert.ok(model);
+  assert.equal(
+    calculateTurnCost(model, {
+      input: 100,
+      output: 200,
+      cacheRead: 300,
+      cacheWrite: 400,
+      cacheWrite1h: 100,
+      totalTokens: 1000,
+    }),
+    0.0091,
+  );
+  assert.equal(
+    calculateTurnCost(undefined, { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0, totalTokens: 0 }),
+    undefined,
+  );
+
+  const zeroCostModel = registry.find("zzz-rt-test-provider", "zzz-rt-test-beta");
+  assert.ok(zeroCostModel);
+  assert.equal(
+    calculateTurnCost(zeroCostModel, { input: 1, output: 1, cacheRead: 1, cacheWrite: 1, cacheWrite1h: 1, totalTokens: 5 }),
+    0,
+  );
+});
+
+test("calculateTurnCost applies each tier to its own assistant turn", async () => {
+  const registry = await testRegistry();
+  const model = registry.find("zzz-rt-test-provider", "zzz-rt-test-alpha-4-5");
+  assert.ok(model);
+  const turn = { input: 600, output: 100, cacheRead: 0, cacheWrite: 0, totalTokens: 700 };
+
+  const firstTurnCost = calculateTurnCost(model, turn);
+  const secondTurnCost = calculateTurnCost(model, turn);
+  assert.equal(firstTurnCost, 0.008);
+  assert.equal(secondTurnCost, 0.008);
+  assert.equal((firstTurnCost ?? 0) + (secondTurnCost ?? 0), 0.016);
+
+  // The same two turns as one request would cross the request-wide threshold
+  // and incorrectly use the higher rates for all tokens.
+  const aggregateCost = calculateTurnCost(model, { input: 1200, output: 200, cacheRead: 0, cacheWrite: 0, totalTokens: 1400 });
+  assert.equal(aggregateCost, 0.16);
+  assert.notEqual((firstTurnCost ?? 0) + (secondTurnCost ?? 0), aggregateCost);
 });
 
 // ── The actual regression: a fresh runtime must inherit registered-provider auth ──

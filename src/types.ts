@@ -120,6 +120,10 @@ export interface HeadlessProgress {
   contextTokens: number;
   /** Assistant turns completed so far. */
   turns: number;
+  /** Tool calls started so far. */
+  toolCalls: number;
+  /** Cumulative model cost in USD, when the model resolves in the registry. */
+  costUsd?: number;
   /** One-line description of the tool call currently executing. */
   activity?: string;
   /** Cumulative generated-output tokens, driving the activity meter. */

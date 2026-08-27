@@ -58,6 +58,8 @@ const STATUS_COL_WIDTH = 2;
 const CTX_COL_WIDTH = 14;
 const ELAPSED_COL_WIDTH = 6;
 const TURNS_COL_WIDTH = 5;
+const TOOLS_COL_WIDTH = 5;
+const COST_COL_WIDTH = 8;
 /** Width of the "├ " / "│ " / "└ " tree connector that leads each phase group. */
 const BRANCH_COL_WIDTH = 2;
 const LABEL_COL_MIN = 8;
@@ -89,6 +91,12 @@ export function contextCell(contextTokens: number | undefined, contextWindow: nu
   }
   const ratio = Math.max(0, Math.min(1, used / contextWindow));
   return `${(ratio * 100).toFixed(1)}%/${formatTokens(contextWindow)}`.padStart(CTX_COL_WIDTH);
+}
+
+/** Format cumulative model cost in USD, or a dash when the model is not in the registry. */
+export function formatCost(costUsd: number | undefined): string {
+  if (costUsd === undefined || !Number.isFinite(costUsd)) return "—";
+  return `$${Math.max(0, costUsd).toFixed(3)}`;
 }
 
 /** Elapsed time as `M:SS`. Minutes keep counting past 60 rather than rolling into an hours field. */
@@ -129,6 +137,9 @@ export interface AuditProgressRow {
   activity?: string;
   elapsedMs: number;
   turns: number;
+  /** Absent on entries persisted before tool-call telemetry was added. */
+  toolCalls?: number;
+  costUsd?: number;
   outputTokens: number;
   outputRevision: number;
   /** First row of its phase group — the only one that prints the phase name and its tree connector. */
@@ -210,6 +221,8 @@ interface RowRecord {
   model?: string;
   activity?: string;
   turns?: number;
+  toolCalls?: number;
+  costUsd?: number;
   outputTokens?: number;
   outputRevision?: number;
   startedAt?: number;
@@ -321,6 +334,8 @@ export class AuditProgressWidget implements AuditProgressView {
     if (!row) return;
     row.contextTokens = progress.contextTokens;
     row.turns = progress.turns;
+    row.toolCalls = progress.toolCalls;
+    row.costUsd = progress.costUsd;
     row.outputTokens = progress.outputTokens;
     row.outputRevision = progress.outputRevision;
     if (progress.activity) row.activity = normalizeFindingText(progress.activity);
@@ -423,6 +438,8 @@ export class AuditProgressWidget implements AuditProgressView {
       activity: row.activity,
       elapsedMs: row.startedAt === undefined ? 0 : (row.endedAt ?? now) - row.startedAt,
       turns: row.turns ?? 0,
+      toolCalls: row.toolCalls ?? 0,
+      costUsd: row.costUsd,
       outputTokens: row.outputTokens ?? 0,
       outputRevision: row.outputRevision ?? 0,
       firstOfPhase: ordered[index - 1]?.phase !== row.phase,
@@ -482,6 +499,7 @@ function reviewSummaryRow(state: "done" | "queued", label: string): AuditProgres
     statusText: defaultStatusText(state),
     elapsedMs: 0,
     turns: 0,
+    toolCalls: 0,
     outputTokens: 0,
     outputRevision: 0,
     firstOfPhase: false,
@@ -503,8 +521,16 @@ export function tableColumns(
     COLUMN_GAP +
     ACTIVITY_METER_WIDTH +
     COLUMN_GAP;
-  const statsWidth = ELAPSED_COL_WIDTH + COLUMN_GAP + TURNS_COL_WIDTH + COLUMN_GAP;
-  // Elapsed and turns go first on a narrow terminal: they are ambient readings,
+  const statsWidth =
+    ELAPSED_COL_WIDTH +
+    COLUMN_GAP +
+    COST_COL_WIDTH +
+    COLUMN_GAP +
+    TOOLS_COL_WIDTH +
+    COLUMN_GAP +
+    TURNS_COL_WIDTH +
+    COLUMN_GAP;
+  // Elapsed, turns, tool calls, and cost go first on a narrow terminal: they are ambient readings,
   // and are not worth truncating the row label down to an unreadable stub.
   const stats = bodyWidth - fixed - statsWidth >= LABEL_COL_READABLE + ACTIVITY_COL_MIN;
   const available = bodyWidth - fixed - (stats ? statsWidth : 0);
@@ -688,9 +714,9 @@ export class AuditProgressTable implements Component {
     const spin = TABLE_FRAMES[this.spinFrame % TABLE_FRAMES.length] ?? "◐";
 
     const gap = " ".repeat(COLUMN_GAP);
-    // Turns and elapsed are pinned to the right edge so the activity column, whose
-    // values are by far the longest, keeps every column the others don't need.
-    interface LineParams { branch: string; phase: string; icon: string; label: string; ctx: string; meter: string; activity: string; turns: string; elapsed: string }
+    // Turns, tool calls, cost, and elapsed are pinned to the right edge so the
+    // activity column, whose values are by far the longest, keeps every column the others don't need.
+    interface LineParams { branch: string; phase: string; icon: string; label: string; ctx: string; meter: string; activity: string; turns: string; toolCalls: string; cost: string; elapsed: string }
     const line = (p: LineParams) => {
       const parts = [
         `${cell(p.branch, BRANCH_COL_WIDTH)}${cell(p.phase, phaseWidth)}${cell(p.icon, STATUS_COL_WIDTH)}${cell(p.label, cols.label)}`,
@@ -698,7 +724,14 @@ export class AuditProgressTable implements Component {
         p.meter,
       ];
       if (cols.activity > 0) parts.push(cell(p.activity, cols.activity));
-      if (cols.stats) parts.push(cell(p.turns, TURNS_COL_WIDTH, "right"), cell(p.elapsed, ELAPSED_COL_WIDTH, "right"));
+      if (cols.stats) {
+        parts.push(
+          cell(p.turns, TURNS_COL_WIDTH, "right"),
+          cell(p.toolCalls, TOOLS_COL_WIDTH, "right"),
+          cell(p.cost, COST_COL_WIDTH, "right"),
+          cell(p.elapsed, ELAPSED_COL_WIDTH, "right"),
+        );
+      }
       return row(parts.join(gap));
     };
 
@@ -716,6 +749,8 @@ export class AuditProgressTable implements Component {
         meter: dim(cell("MONITOR", ACTIVITY_METER_WIDTH)),
         activity: dim("ACTIVITY"),
         turns: dim("TURNS"),
+        toolCalls: dim("TOOLS"),
+        cost: dim("COST"),
         elapsed: dim("TIME"),
       }),
     );
@@ -766,6 +801,8 @@ export class AuditProgressTable implements Component {
           meter: this.renderMeter(r.key, active),
           activity: status,
           turns: String(r.turns),
+          toolCalls: String(r.toolCalls ?? 0),
+          cost: formatCost(r.costUsd),
           elapsed: formatElapsed(r.elapsedMs),
         }),
       );

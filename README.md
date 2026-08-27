@@ -380,13 +380,13 @@ for the whole run and is torn down on completion, cancellation, `/reload`, and
        Review          Triage        Implement         Verify     
    claude-opus-4   claude-opus-4       gpt-5      claude-haiku-4-5
 ───────────────────────────────────────────────────────────
-    PHASE                                CTX  MONITOR   ACTIVITY
-  ├ Review   ✓ Security Engineer  21.2%/200.0K  ⣿⣶⣤⣀⣀⢀⢀⢀  1.2K tokens
-  │          ◐ Slop Auditor        8.4%/200.0K  ⣴⣤⣤⣀⢀⢀⢀⢀  reviewing…
+    PHASE                                CTX  MONITOR   ACTIVITY                 TURNS  TOOLS      COST    TIME
+  ├ Review   ✓ Security Engineer  21.2%/200.0K  ⣿⣶⣤⣀⣀⢀⢀⢀  1.2K tokens                2      4    $0.018    0:42
+  │          ◐ Slop Auditor        8.4%/200.0K  ⣴⣤⣤⣀⢀⢀⢀⢀  reviewing…                 1      2    $0.006    0:19
                ↳ grep  "handleRequest"
-  │          ○ Perf Engineer                 —  ⢀⢀⢀⢀⢀⢀⢀⢀  queued
-  └ Triage   ✓ collection                    —  ⢀⢀⢀⢀⢀⢀⢀⢀  84 raw → 31 unique
-             ◐ adjudicator · reconcile  59.5%/200.0K  ⣶⣤⣀⢀⢀⢀⢀⢀  annotating…
+  │          ○ Perf Engineer                 —  ⢀⢀⢀⢀⢀⢀⢀⢀  queued                     0      0         —    0:00
+  └ Triage   ✓ collection                    —  ⢀⢀⢀⢀⢀⢀⢀⢀  84 raw → 31 unique         0      0         —    0:01
+             ◐ adjudicator · reconcile  59.5%/200.0K  ⣶⣤⣀⢀⢀⢀⢀⢀  annotating…          1      3    $0.009    0:27
 ───────────────────────────────────────────────────────────────────────
   2/3 reviewer passes · 31 findings · verify 1/2
 ```
@@ -425,8 +425,10 @@ for the whole run and is torn down on completion, cancellation, `/reload`, and
   [`/persona-audit-settings`](#settings).
 - **ACTIVITY** — the row's status, with the tool call currently executing on an
   indented `↳` sub-row beneath it.
-- **TURNS / TIME** — assistant turns completed and elapsed time, frozen once the
-  row settles. Both are dropped first when the terminal is too narrow.
+- **TURNS / TOOLS / COST / TIME** — assistant turns completed, cumulative tool
+  calls, cumulative model cost at `$0.000` precision (`—` when the model cannot be
+  resolved), and elapsed time. All four freeze when the row settles and are
+  dropped together below roughly 112 columns.
 
 The table aims for roughly half the terminal height, but keeps a minimum chrome
 floor; on a short terminal the `↳` sub-rows and their reserved placeholders are
