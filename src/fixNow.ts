@@ -166,6 +166,12 @@ export async function runFixNow(
   const runSession = deps.runSession ?? runAgentSession;
   const notify = (message: string, type: "info" | "warning" | "error" = "info"): void =>
     ctx.ui.notify(`persona-audit: ${message}`, type);
+  // Session errors can embed multi-hundred-line payloads (e.g. resolveModelRef
+  // appends the full model catalog); a toast needs only the first line.
+  const briefError = (message: string | undefined): string => {
+    const firstLine = (message ?? "").split("\n", 1)[0]!.trim();
+    return firstLine.length > 200 ? `${firstLine.slice(0, 199)}…` : firstLine || "unknown error";
+  };
 
   // ── Dirty-target check ───────────────────────────────────────────────────
   let autoCommit = true;
@@ -246,7 +252,7 @@ export async function runFixNow(
       if (isFailedRun(fixRun)) {
         await computeTouched();
         await cleanup();
-        notify(`fix agent failed: ${fixRun.errorMessage || fixRun.stopReason || "unknown error"}`, "error");
+        notify(`fix agent failed: ${briefError(fixRun.errorMessage || fixRun.stopReason)}`, "error");
         return;
       }
 
@@ -284,7 +290,7 @@ export async function runFixNow(
           return;
         }
         if (isFailedRun(verifyRun)) {
-          warnings.push(`verifier failed (${verifyRun.errorMessage || verifyRun.stopReason || "unknown error"}) — judge the diff yourself`);
+          warnings.push(`verifier failed (${briefError(verifyRun.errorMessage || verifyRun.stopReason)}) — judge the diff yourself`);
         } else {
           verdict = parseFixVerdict(verifyRun.finalText || verifyRun.allText);
           if (!verdict) {
