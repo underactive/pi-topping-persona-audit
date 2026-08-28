@@ -15,7 +15,7 @@ import { FALLBACK_TERMINAL_ROWS, OVERLAY_HEIGHT_PERCENT, OVERLAY_MAX_HEIGHT, ren
 
 export type FixGateDecision = "accept" | "retry" | "discard";
 
-type FixPhase = "fixing" | "verifying" | "gate";
+type FixPhase = "fixing" | "verifying" | "gate" | "accepting" | "retrying" | "discarding";
 
 const TICK_MS = 100;
 const SPIN_FRAMES = ["◐", "◓", "◑", "◒"] as const;
@@ -132,10 +132,23 @@ export class FixProgress implements Component {
     const resolve = this.gateResolve;
     if (!resolve) return;
     this.gateResolve = undefined;
+    this.phase = decision === "accept" ? "accepting" : decision === "retry" ? "retrying" : "discarding";
+    this.statusText = decision === "accept"
+      ? this.gateInput?.commitPlanned ? "committing changes" : "saving accepted fix"
+      : decision === "retry"
+        ? "reverting changes before retry"
+        : "reverting changes";
+    this.phaseStartedAt = Date.now();
+    this.awaitingCancelConfirm = false;
+    this.invalidate();
+    this.tui.requestRender();
     resolve(decision);
   }
 
   handleInput(data: string): void {
+    // A decision has already been handed back to the flow. Keep the overlay
+    // visibly busy until its follow-up file operation has finished.
+    if (this.phase === "accepting" || this.phase === "retrying" || this.phase === "discarding") return;
     if (matchesKey(data, Key.escape)) {
       if (!this.awaitingCancelConfirm) {
         this.awaitingCancelConfirm = true;
@@ -250,8 +263,17 @@ export class FixProgress implements Component {
   private renderWorking(inner: number): string[] {
     const t = this.theme;
     const spin = SPIN_FRAMES[this.spinFrame % SPIN_FRAMES.length]!;
-    const phaseLabel = this.phase === "fixing" ? "implementing fix" : "verifying fix";
-    const p = this.progress;
+    const phaseLabel = this.phase === "fixing"
+      ? "implementing fix"
+      : this.phase === "verifying"
+        ? "verifying fix"
+        : this.phase === "accepting"
+          ? "accepting fix"
+          : this.phase === "retrying"
+            ? "preparing retry"
+            : "discarding fix";
+    const settling = this.phase === "accepting" || this.phase === "retrying" || this.phase === "discarding";
+    const p = settling ? undefined : this.progress;
 
     const stats = [
       contextCell(p?.contextTokens, undefined).trim() || "—",
@@ -265,13 +287,17 @@ export class FixProgress implements Component {
     const lines = [
       ` ${t.fg("accent", spin)} ${t.bold(phaseLabel)}${this.attempt > 1 ? t.fg("dim", ` (attempt ${this.attempt})`) : ""} ${t.fg("dim", "· " + this.statusText)}`,
       "",
-      " " + stats,
     ];
-    if (p?.activity) {
-      lines.push(" " + t.fg("dim", truncateToWidth(`↳ ${sanitizeTerminalText(p.activity)}`, Math.max(2, inner - 2), "…")));
+    if (!settling) {
+      lines.push(" " + stats);
+      if (p?.activity) {
+        lines.push(" " + t.fg("dim", truncateToWidth(`↳ ${sanitizeTerminalText(p.activity)}`, Math.max(2, inner - 2), "…")));
+      }
+      lines.push("");
     }
-    lines.push("");
-    if (this.awaitingCancelConfirm) {
+    if (settling) {
+      lines.push(" " + t.fg("dim", "Please wait…"));
+    } else if (this.awaitingCancelConfirm) {
       lines.push(" " + t.fg("warning", "Press Esc again to cancel this fix — clean edits will be reverted"));
     } else {
       lines.push(" " + t.fg("dim", "Esc Esc cancel fix"));

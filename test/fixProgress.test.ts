@@ -77,6 +77,15 @@ test("the gate shows verdict, warnings, diff, and decision keys, and resolves on
     commitPlanned: true,
     attempt: 1,
   });
+  ui.component.applyProgress({
+    contextTokens: 12_000,
+    turns: 3,
+    toolCalls: 7,
+    costUsd: 0.042,
+    activity: "verify src/a.ts",
+    outputTokens: 900,
+    outputRevision: 0,
+  });
 
   const lines = ui.lines();
   assert.ok(lines.some((l) => l.includes("✓ verifier: fixed")));
@@ -86,6 +95,27 @@ test("the gate shows verdict, warnings, diff, and decision keys, and resolves on
   assert.ok(lines.some((l) => l.includes("A accept & commit · R retry · D discard")));
 
   ui.press("a");
+  assert.ok(ui.lines().some((l) => l.includes("accepting fix") && l.includes("committing changes")));
+  assert.ok(ui.lines().some((l) => l.includes("Please wait…")));
+  assert.ok(!ui.lines().some((l) => l.includes("A accept")), "decision footer is gone while accepting");
+  assert.ok(!ui.lines().some((l) => l.includes("3 turns") || l.includes("↳ verify src/a.ts")), "stale verifier telemetry is hidden");
+  ui.press("a");
+  ui.press("r");
+  ui.press("d");
+  ui.press(ESCAPE);
+  ui.press(ESCAPE);
+  assert.equal(ui.cancelRequests(), 0, "input cannot cancel or change an accepted fix");
+  assert.equal(await decision, "accept");
+});
+
+test("accepting without a commit also shows a busy state", async (t) => {
+  const ui = harness();
+  t.after(() => ui.component.dispose());
+
+  const decision = ui.component.gate({ diff: "+x", commitPlanned: false, attempt: 1 });
+  ui.press("a");
+
+  assert.ok(ui.lines().some((l) => l.includes("accepting fix") && l.includes("saving accepted fix")));
   assert.equal(await decision, "accept");
 });
 
@@ -96,10 +126,13 @@ test("R and D resolve retry and discard; the accept key relabels when commit is 
   const first = ui.component.gate({ diff: "+x", commitPlanned: false, attempt: 1 });
   assert.ok(ui.lines().some((l) => l.includes("A accept (no commit)")));
   ui.press("r");
+  assert.ok(ui.lines().some((l) => l.includes("preparing retry") && l.includes("reverting changes before retry")));
+  assert.ok(ui.lines().some((l) => l.includes("Please wait…")));
   assert.equal(await first, "retry");
 
   const second = ui.component.gate({ diff: "+x", commitPlanned: false, attempt: 2 });
   ui.press("d");
+  assert.ok(ui.lines().some((l) => l.includes("discarding fix") && l.includes("reverting changes")));
   assert.equal(await second, "discard");
 });
 
