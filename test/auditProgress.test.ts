@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import type { WidgetPlacement } from "@earendil-works/pi-coding-agent";
 import {
@@ -35,6 +35,14 @@ const progressSnapshot = (overrides: Partial<HeadlessProgress> = {}): HeadlessPr
   ...overrides,
 });
 
+// A test that fails an assertion before its widget.stop() would leak the
+// table's render ticker and keep the process alive; dispose is idempotent, so
+// sweeping every table once at the end costs nothing when tests clean up.
+const createdTables: AuditProgressTable[] = [];
+after(() => {
+  for (const table of createdTables) table.dispose();
+});
+
 /** Fake extension context mirroring pi's setWidget replace/dispose semantics. */
 function fakeCtx(terminalRows = 40, theme: ProgressTheme = { fg: (_color, text) => text }) {
   const state: { table: AuditProgressTable | undefined; mounts: number; disposed: number } = {
@@ -60,6 +68,7 @@ function fakeCtx(terminalRows = 40, theme: ProgressTheme = { fg: (_color, text) 
         }
         if (!content) return;
         state.table = content(tui, theme);
+        createdTables.push(state.table);
         state.mounts++;
         placements.push(options?.placement);
       },
@@ -196,7 +205,7 @@ test("phase groups keep their data flags and render dim headings only for non-em
   const body = rendered.join("\n");
   assert.equal(body.match(/^  ── Review ─+  $/gm)?.length, 1, "the Review heading has a horizontal rule");
   assert.equal(body.match(/^  ── Triage ─+  $/gm)?.length, 1, "the Triage heading has a horizontal rule");
-  assert.match(body, /Security Engineer.*\n\s*\n  ── Triage/, "a blank line separates the phase groups");
+  assert.match(body, /Slop Auditor.*\n\s*\n  ── Triage/, "a blank line separates the phase groups");
   assert.ok(!body.includes("PHASE"), "rendered rows use the compact agent layout");
   assert.ok(!/[├│└]/.test(body), "rendered rows have no tree connectors");
   widget.stop();
