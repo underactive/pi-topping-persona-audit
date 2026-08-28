@@ -96,6 +96,26 @@ export function formatCost(costUsd: number | undefined): string {
   return `$${Math.max(0, costUsd).toFixed(3)}`;
 }
 
+/** Aggregate model-cost telemetry across every progress row. */
+export interface TotalCost {
+  costUsd: number;
+  incomplete: boolean;
+}
+
+/** Sum valid non-negative row costs, marking totals partial when telemetry is unavailable or invalid. */
+export function totalCost(rows: AuditProgressRow[]): TotalCost {
+  let costUsd = 0;
+  let incomplete = false;
+  for (const row of rows) {
+    if (row.costUsd === undefined || !Number.isFinite(row.costUsd) || row.costUsd < 0) {
+      incomplete = true;
+    } else {
+      costUsd += row.costUsd;
+    }
+  }
+  return { costUsd, incomplete };
+}
+
 /** Elapsed time as `M:SS`. Minutes keep counting past 60 rather than rolling into an hours field. */
 export function formatElapsed(ms: number): string {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
@@ -150,6 +170,8 @@ export interface AuditProgressView {
   footerSummary(): string;
   /** Wall-clock duration of the whole run, shown at the footer's right edge. */
   totalMs(): number;
+  /** Aggregate model cost across every row, including whether the total is partial. */
+  totalCost(): TotalCost;
   /** Audit scope, shown right-aligned in the title bar. */
   readonly scope: string | undefined;
   /** Short hash of the diff's base commit, shown right-aligned in the title bar after the scope. Undefined outside --diff mode. */
@@ -386,6 +408,10 @@ export class AuditProgressWidget implements AuditProgressView {
   totalMs(): number {
     if (this.runStartedAt === undefined) return 0;
     return (this.runEndedAt ?? Date.now()) - this.runStartedAt;
+  }
+
+  totalCost(): TotalCost {
+    return totalCost(this.progressRows());
   }
 
   /** Assign the model shown in the phase/model band for each phase. */
@@ -838,14 +864,16 @@ export class AuditProgressTable implements Component {
   }
 
   /**
-   * Run summary on the left, whole-run wall clock on the right. The total is
-   * the run's own elapsed time, not the sum of the row clocks, which overlap
-   * whenever passes run concurrently.
+   * Run summary on the left; whole-run cost and wall clock on the right. The
+   * elapsed time is the run's own duration, not the sum of row clocks, which
+   * overlap whenever passes run concurrently.
    */
   private footerLines(bodyWidth: number): string[] {
     const dim = (s: string) => this.theme.fg("dim", s);
     const summary = sanitizeTerminalText(this.view.footerSummary());
-    const total = `total ${formatElapsed(this.view.totalMs())}`;
+    const cost = this.view.totalCost();
+    // An asterisk means at least one row has unavailable or invalid cost telemetry.
+    const total = `total cost ${formatCost(cost.costUsd)}${cost.incomplete ? "*" : ""}  total ${formatElapsed(this.view.totalMs())}`;
     const rhs = this.frozen ? dim(total) : `${dim(total)}  ${dim("ctrl+shift+c: cancel")}`;
     const gap = bodyWidth - visibleWidth(summary) - visibleWidth(rhs);
     if (gap >= MIN_FOOTER_TOTAL_GAP) return [dim(summary) + " ".repeat(gap) + rhs];
@@ -906,6 +934,7 @@ export function renderAuditSnapshot(
     progressRows: () => snapshot.rows,
     footerSummary: () => snapshot.summary,
     totalMs: () => snapshot.totalMs ?? 0,
+    totalCost: () => totalCost(snapshot.rows),
     scope: snapshot.scope,
     baseHash: snapshot.baseHash,
     phaseModels: () => snapshot.phaseModels,

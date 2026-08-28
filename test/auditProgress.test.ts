@@ -12,6 +12,7 @@ import {
   formatTokens,
   renderAuditSnapshot,
   tableColumns,
+  totalCost,
   type AuditProgressContext,
   type AuditProgressSnapshot,
   type ProgressHost,
@@ -472,6 +473,18 @@ test("formatCost uses fixed precision, clamps negatives, and dashes invalid valu
   assert.equal(formatCost(-1), "$0.000");
 });
 
+test("totalCost sums valid telemetry and marks missing or invalid rows incomplete", () => {
+  const rows = [
+    { costUsd: 0.1234 },
+    { costUsd: 0.5 },
+    {},
+    { costUsd: Number.NaN },
+    { costUsd: -1 },
+  ] as Parameters<typeof totalCost>[0];
+  assert.deepEqual(totalCost(rows), { costUsd: 0.6234, incomplete: true });
+  assert.deepEqual(totalCost([{ costUsd: 0.25 }] as Parameters<typeof totalCost>[0]), { costUsd: 0.25, incomplete: false });
+});
+
 test("stats columns render right-aligned turns, tool calls, cost, and elapsed time", () => {
   const { ctx, state } = fakeCtx();
   const widget = new AuditProgressWidget(ctx);
@@ -744,7 +757,10 @@ test("the footer pins total run time to the right edge alongside the summary", (
   );
   assert.equal(footer.length, 1, "a short summary shares one line with the total");
   assert.ok(footer[0]?.includes("3/3 reviewer passes"), "summary is kept");
-  assert.ok(footer[0]?.trimEnd().endsWith("total 11:37"), `total is right-aligned: ${JSON.stringify(footer[0])}`);
+  assert.ok(
+    footer[0]?.trimEnd().endsWith("total cost $0.000  total 11:37"),
+    `cost and elapsed total are right-aligned: ${JSON.stringify(footer[0])}`,
+  );
 });
 
 test("the footer moves total run time to its own line rather than truncating a long summary", () => {
@@ -752,7 +768,44 @@ test("the footer moves total run time to its own line rather than truncating a l
   const footer = footerOf({ summary, totalMs: 3_600_000, phaseModels: {}, rows: [], meterLevels: {} }, 100);
   assert.equal(footer.length, 2, "a colliding summary pushes the total onto its own line");
   assert.ok(footer[0]?.includes("verify 3/3"), "the summary is not truncated to make room");
-  assert.ok(footer[1]?.trimEnd().endsWith("total 60:00"), "minutes keep counting rather than rolling into hours");
+  assert.ok(
+    footer[1]?.trimEnd().endsWith("total cost $0.000  total 60:00"),
+    "cost and elapsed time stay together, with minutes never rolling into hours",
+  );
+});
+
+test("the footer shows complete and partial aggregate costs for live and frozen rows", () => {
+  const { ctx } = fakeCtx();
+  const widget = new AuditProgressWidget(ctx);
+  widget.addRow("Review", "known", "known", { state: "done" });
+  widget.addRow("Triage", "missing", "missing", { state: "cancelled" });
+  widget.applyProgress("known", progressSnapshot({ costUsd: 0.1234 }));
+  assert.deepEqual(widget.totalCost(), { costUsd: 0.1234, incomplete: true });
+
+  const partial = footerOf({ ...widget.snapshot(), totalMs: 697_000 }, 160);
+  assert.ok(partial[0]?.includes("total cost $0.123*  total 11:37"));
+
+  const complete = footerOf(
+    {
+      summary: "done",
+      totalMs: 0,
+      phaseModels: {},
+      rows: [
+        { ...widget.progressRows()[0]!, costUsd: 0.25 },
+        { ...widget.progressRows()[1]!, costUsd: 0.5 },
+      ],
+      meterLevels: {},
+    },
+    160,
+  );
+  assert.ok(complete[0]?.includes("total cost $0.750  total 0:00"));
+  assert.ok(!complete[0]?.includes("$0.750*"));
+
+  const allMissing = footerOf(
+    { summary: "done", totalMs: 0, phaseModels: {}, rows: widget.progressRows().map(({ costUsd: _costUsd, ...row }) => row), meterLevels: {} },
+    160,
+  );
+  assert.ok(allMissing[0]?.includes("total cost $0.000*  total 0:00"));
 });
 
 test("total run time keeps running while mounted and freezes once the widget stops", async () => {
