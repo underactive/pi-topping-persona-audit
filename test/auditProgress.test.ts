@@ -194,8 +194,9 @@ test("phase groups keep their data flags and render dim headings only for non-em
 
   const rendered = lines(state.table);
   const body = rendered.join("\n");
-  assert.equal(body.match(/^  Review\s*$/gm)?.length, 1, "the Review heading is rendered once");
-  assert.equal(body.match(/^  Triage\s*$/gm)?.length, 1, "the Triage heading is rendered once");
+  assert.equal(body.match(/^  ── Review ─+  $/gm)?.length, 1, "the Review heading has a horizontal rule");
+  assert.equal(body.match(/^  ── Triage ─+  $/gm)?.length, 1, "the Triage heading has a horizontal rule");
+  assert.match(body, /Security Engineer.*\n\s*\n  ── Triage/, "a blank line separates the phase groups");
   assert.ok(!body.includes("PHASE"), "rendered rows use the compact agent layout");
   assert.ok(!/[├│└]/.test(body), "rendered rows have no tree connectors");
   widget.stop();
@@ -213,9 +214,9 @@ test("agent rows start with status icons and tool calls align under the status c
   widget.mount();
 
   const body = lines(state.table).join("\n");
-  assert.match(body, /  Review\s*\n  ✓ Code Quality Engineer/);
+  assert.match(body, /  ── Review ─+\s*\n  ✓ Code Quality Engineer/);
   assert.match(body, /  ✓ Security Engineer/);
-  assert.match(body, /  Triage\s*\n  ✓ collection/);
+  assert.match(body, /  ── Triage ─+\s*\n  ✓ collection/);
   assert.match(body, /  ◐ adjudicator · reconcile/);
   // The tool call starts at the status-column width, matching the sibling agent table.
   assert.match(body, /    ↳ read  src\/audit\.ts/);
@@ -356,9 +357,10 @@ test("phase headings consume height budget before activity sub-rows", () => {
   widget.mount();
 
   const rendered = lines(state.table);
-  assert.equal(rendered.filter((line) => /^(  )(Review|Triage|Implement|Verify)\s*$/.test(line)).length, 4);
-  assert.equal(rendered.filter((line) => line.includes("↳")).length, 3, "headings leave only three activity slots");
-  assert.equal(rendered.length, 20, "phase headings fit inside the existing half-height budget");
+  assert.equal(rendered.filter((line) => /^  ── (Review|Triage|Implement|Verify) ─+  $/.test(line)).length, 4);
+  assert.equal(rendered.filter((line) => line.trim() === "").length, 3, "blank lines separate the phase groups");
+  assert.equal(rendered.filter((line) => line.includes("↳")).length, 0, "phase separators leave no activity slots at the budget limit");
+  assert.equal(rendered.length, 20, "phase headings and separators fit inside the existing half-height budget");
   widget.stop();
 });
 

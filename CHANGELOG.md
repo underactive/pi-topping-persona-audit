@@ -14,6 +14,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- **Audit progress phase separators** — phase subheadings now use horizontal rules, with blank lines separating each phase group; the responsive height budget accounts for the added rows.
+
 - **Compact audit progress layout** — phase headings now separate agent groups, while agent rows use the sibling status-and-label geometry without phase or tree-connector columns; responsive width and height budgets account for the compact layout.
 
 - **Headless progress table displays generated token counts** — instead of character counts, uses abbreviated formatting (e.g., "1.2K tokens") for easier reading in the ACTIVITY column.

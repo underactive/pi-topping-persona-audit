@@ -41,6 +41,10 @@ const TABLE_HEIGHT_RATIO = 0.5;
 const TABLE_FRAMES = ["◐", "◓", "◑", "◒"] as const;
 /** Border, header, separator, footer and bottom border — the rows a table always costs. */
 const TABLE_CHROME_ROWS = 5;
+/** One horizontal-rule heading row per phase group. */
+const PHASE_HEADING_ROWS = 1;
+/** One blank row between each adjacent phase group. */
+const PHASE_SEPARATOR_ROWS = 1;
 /** Two band text lines plus their separator rule — the extra rows the phase/model band costs when shown. */
 const PHASE_BAND_ROWS = 3;
 /** Narrowest a band column may get before its centered label becomes unreadable; below this the band is dropped. */
@@ -509,9 +513,13 @@ function reviewSummaryRow(state: "done" | "queued", label: string): AuditProgres
   };
 }
 
-/** Count the render-only heading rows needed for the phase groups in `rows`. */
-function phaseHeadingCount(rows: AuditProgressRow[]): number {
-  return rows.reduce((count, row, index) => count + (index === 0 || rows[index - 1]?.phase !== row.phase ? 1 : 0), 0);
+/** Count the render-only heading and blank separator rows needed for the phase groups in `rows`. */
+function phaseSectionRows(rows: AuditProgressRow[]): number {
+  const headingCount = rows.reduce(
+    (count, row, index) => count + (index === 0 || rows[index - 1]?.phase !== row.phase ? 1 : 0),
+    0,
+  );
+  return headingCount * PHASE_HEADING_ROWS + Math.max(0, headingCount - 1) * PHASE_SEPARATOR_ROWS;
 }
 
 /** Column widths for the table, shedding columns as the terminal narrows. */
@@ -715,7 +723,7 @@ export class AuditProgressTable implements Component {
         TABLE_CHROME_ROWS -
         (footer.length - 1) -
         (band.length > 0 ? PHASE_BAND_ROWS : 0) -
-        phaseHeadingCount(sourceRows),
+        phaseSectionRows(sourceRows),
     );
     const rows = collapseReviewRows(sourceRows, maxBaseRows);
     const cols = tableColumns(
@@ -770,7 +778,7 @@ export class AuditProgressTable implements Component {
         TABLE_CHROME_ROWS -
         (footer.length - 1) -
         rows.length -
-        phaseHeadingCount(rows) -
+        phaseSectionRows(rows) -
         (band.length > 0 ? PHASE_BAND_ROWS : 0),
     );
     const activeRows = rows.filter((r) => isActive(r.state));
@@ -779,6 +787,7 @@ export class AuditProgressTable implements Component {
     // a tool call arrives, it replaces that line instead of growing the table.
     // On a short terminal, activity still outranks these cosmetic placeholders.
     const reservedActivitySlots = free >= activeRows.length;
+    let renderedPhase = false;
 
     for (const r of rows) {
       const active = isActive(r.state);
@@ -794,7 +803,12 @@ export class AuditProgressTable implements Component {
       const statusText = sanitizeTerminalText(r.statusText);
       const label = active ? th.fg("text", rowLabel) : th.fg("dim", rowLabel);
       const status = r.state === "error" ? th.fg("error", statusText) : th.fg("dim", statusText);
-      if (r.firstOfPhase) lines.push(row(dim(r.phase)));
+      if (r.firstOfPhase) {
+        if (renderedPhase) lines.push(row(""));
+        const heading = `── ${r.phase} `;
+        lines.push(row(dim(heading + "─".repeat(Math.max(0, bodyWidth - visibleWidth(heading))))));
+        renderedPhase = true;
+      }
       lines.push(
         line({
           icon,
