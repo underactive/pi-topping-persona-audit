@@ -8,7 +8,7 @@
  */
 
 import { CATEGORY_PRIORITY, SEVERITY_ORDER } from "./types.ts";
-import type { Finding, FindingCategory, FindingSeverity } from "./types.ts";
+import type { ChangeKind, Finding, FindingCategory, FindingSeverity } from "./types.ts";
 
 export const HANDOFF_SCHEMA_VERSION = 1;
 
@@ -33,7 +33,8 @@ export interface HandoffPayload {
  * `suggestedChange` can never close the fence.
  */
 export function renderHandoffResumeBlock(payload: HandoffPayload): string {
-  const json = JSON.stringify(payload);
+  const findings = payload.findings.map(({ blastRadius: _blastRadius, ...finding }) => finding);
+  const json = JSON.stringify({ ...payload, findings });
   const longestRun = json.match(/`+/g)?.reduce((max, run) => Math.max(max, run.length), 0) ?? 0;
   const fence = "`".repeat(Math.max(3, longestRun + 1));
   return [
@@ -55,6 +56,10 @@ function isFindingCategory(value: unknown): value is FindingCategory {
 
 function isFindingSeverity(value: unknown): value is FindingSeverity {
   return typeof value === "string" && (SEVERITY_ORDER as readonly string[]).includes(value);
+}
+
+function isChangeKind(value: unknown): value is ChangeKind {
+  return value === "signature" || value === "behavior" || value === "internal" || value === "cosmetic";
 }
 
 function validateFinding(raw: unknown, index: number): Finding {
@@ -82,6 +87,9 @@ function validateFinding(raw: unknown, index: number): Finding {
     rationale: f.rationale as string,
     suggestedChange: f.suggestedChange as string,
   };
+  if (isChangeKind(f.changeKind)) {
+    finding.changeKind = f.changeKind;
+  }
   if (f.recommendation === "apply" || f.recommendation === "reject" || f.recommendation === "defer") {
     finding.recommendation = f.recommendation;
   }

@@ -49,6 +49,12 @@ test("code-producing directives interpolate the fix hygiene contract", () => {
   }
 });
 
+test("reviewer contract defines the optional change-kind enum", () => {
+  assert.match(REVIEWER_OUTPUT_CONTRACT, /changeKind/);
+  assert.match(REVIEWER_OUTPUT_CONTRACT, /signature, behavior, internal, cosmetic/);
+  assert.match(REVIEWER_OUTPUT_CONTRACT, /Omit when unsure/);
+});
+
 test("verifier directive demands verbatim join keys even when they look stale", () => {
   assert.match(VERIFIER_DIRECTIVE, /join keys, not location claims/);
   assert.match(VERIFIER_DIRECTIVE, /never absolutized/);

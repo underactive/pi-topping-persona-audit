@@ -1,6 +1,7 @@
 import {
   CATEGORY_PRIORITY,
   SEVERITY_ORDER,
+  type ChangeKind,
   type DedupFindingsResult,
   type Finding,
   type FindingCategory,
@@ -12,10 +13,18 @@ function priorityIndex<T extends readonly string[]>(values: T, value: string): n
   return index === -1 ? values.length : index;
 }
 
+const CHANGE_KIND_ORDER = ["signature", "behavior", "internal", "cosmetic"] as const;
+
 function highestSeverity(a: FindingSeverity, b: FindingSeverity): FindingSeverity {
   return priorityIndex(SEVERITY_ORDER, b) < priorityIndex(SEVERITY_ORDER, a)
     ? b
     : a;
+}
+
+function highestChangeKind(a: ChangeKind | undefined, b: ChangeKind | undefined): ChangeKind | undefined {
+  if (!a) return b;
+  if (!b) return a;
+  return priorityIndex(CHANGE_KIND_ORDER, b) < priorityIndex(CHANGE_KIND_ORDER, a) ? b : a;
 }
 
 function clearerText(current: string, candidate: string): string {
@@ -56,6 +65,7 @@ export function coerceFinding(raw: unknown, assignedReviewer?: string): Finding 
   const severity = normalizeFindingText(raw.severity).toLowerCase();
   const rationale = normalizeFindingText(raw.rationale);
   const suggestedChange = normalizeFindingText(raw.suggestedChange, 2000);
+  const changeKind = normalizeFindingText(raw.changeKind).toLowerCase();
 
   if (!reviewer || !file || !rationale || !suggestedChange) {
     return null;
@@ -75,6 +85,9 @@ export function coerceFinding(raw: unknown, assignedReviewer?: string): Finding 
     severity: severity as FindingSeverity,
     rationale,
     suggestedChange,
+    ...(priorityIndex(CHANGE_KIND_ORDER, changeKind) < CHANGE_KIND_ORDER.length
+      ? { changeKind: changeKind as ChangeKind }
+      : {}),
   };
 }
 
@@ -109,6 +122,7 @@ export function dedupFindings(rawFindings: unknown[]): DedupFindingsResult {
     group.reviewerSet.add(finding.reviewer);
 
     group.finding.severity = highestSeverity(group.finding.severity, finding.severity);
+    group.finding.changeKind = highestChangeKind(group.finding.changeKind, finding.changeKind);
     group.finding.rationale = clearerText(group.finding.rationale, finding.rationale);
     group.finding.suggestedChange = clearerText(group.finding.suggestedChange, finding.suggestedChange);
   }

@@ -950,7 +950,7 @@ export const REVIEWER_OUTPUT_CONTRACT = `## Output Requirements
 
 For each issue you find, output this exact JSON structure on its own line:
 
-{"reviewer":"[YOUR FULL REVIEWER NAME]","file":"[file path]","line":[line number or -1 if file-level],"category":"[one of: security, bug, performance, maintainability, style, documentation, accessibility, reliability]","severity":"[one of: critical, high, medium, low, info]","rationale":"[complete issue summary]","suggestedChange":"[concrete actionable fix]"}
+{"reviewer":"[YOUR FULL REVIEWER NAME]","file":"[file path]","line":[line number or -1 if file-level],"category":"[one of: security, bug, performance, maintainability, style, documentation, accessibility, reliability]","severity":"[one of: critical, high, medium, low, info]","rationale":"[complete issue summary]","suggestedChange":"[concrete actionable fix]","changeKind":"[optional; one of: signature, behavior, internal, cosmetic]"}
 
 If you find no issues within your focus areas, output:
 {"reviewer":"[YOUR FULL REVIEWER NAME]","findings":0}
@@ -961,6 +961,7 @@ If you find no issues within your focus areas, output:
 - Do not report issues in test fixtures, mock data, or generated files
 - When a pattern appears across many files, report the most impactful instance and add "(N similar occurrences)" to the rationale
 - suggestedChange must be a concrete code change or specific action, not vague advice
+- Emit changeKind when clear: signature for exported signatures/types, return shapes, or cross-boundary control flow; behavior for observable behavior; internal for local implementation; cosmetic for renames/formatting. Omit when unsure
 - suggestedChange itself must satisfy the fix hygiene rules below
 
 ${FIX_HYGIENE_CONTRACT}`;

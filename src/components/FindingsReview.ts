@@ -3,7 +3,8 @@ import { Key, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/
 import type { ExtensionCommandContext, Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { handoffRelPath, renderDeferredHandoff, writeReportFile } from "../report.ts";
 import { gitHeadCommit } from "../git.ts";
-import type { Finding, FindingRecommendation, FindingsReviewOutcome, FindingsReviewResult, FindingStatus, FixedFinding, ReviewSessionState } from "../types.ts";
+import { SEVERITY_ORDER } from "../types.ts";
+import type { Finding, FindingRecommendation, FindingsReviewOutcome, FindingsReviewResult, FindingStatus, FixedFinding, ReviewSessionState, ReviewSortMode } from "../types.ts";
 import { FALLBACK_TERMINAL_ROWS, OVERLAY_HEIGHT_PERCENT, OVERLAY_MAX_HEIGHT, renderFramedBottom, renderFramedRow, renderFramedTop, SELECTOR } from "./menuChrome.ts";
 
 interface ReviewItem {
@@ -12,7 +13,7 @@ interface ReviewItem {
   originalIndex: number;
   status: FindingStatus;
   /** Wrapped rationale/suggestedChange/reason lines, cached per width — arrow-key navigation invalidates the render cache on every keystroke, so this avoids re-wrapping every finding just to redraw the visible window. */
-  wrapCache?: { width: number; rationale: string[]; suggestedChange: string[]; reason?: string[] };
+  wrapCache?: { width: number; headCols: number; rationale: string[]; suggestedChange: string[]; reason?: string[] };
 }
 
 /** Body-line range a single finding occupies, used to keep the selection on screen. */
@@ -35,6 +36,13 @@ export interface ReviewTheme {
 }
 
 const STATUS_CYCLE: FindingStatus[] = ["apply", "reject", "defer"];
+const SORT_CYCLE: ReviewSortMode[] = ["file", "priority", "reviewer", "blast"];
+const SORT_LABELS: Record<ReviewSortMode, string> = {
+  file: "file",
+  priority: "priority",
+  reviewer: "reviewer",
+  blast: "blast radius",
+};
 const PAGE_OVERLAP = 2;
 
 /** Render order for recommendation groups — Apply first, Defer second, Reject last. */
@@ -79,6 +87,7 @@ const SEVERITY_WIDTH = 8;
 export class FindingsReview implements Component {
   private items: ReviewItem[];
   private selectedIndex = 0;
+  private sortMode: ReviewSortMode;
   /** Offset into the body's rendered lines — not an index into the findings. */
   private scrollOffset = 0;
   private readonly theme: ReviewTheme;
@@ -111,6 +120,7 @@ export class FindingsReview implements Component {
       status: restore?.statuses[index] ?? f.recommendation ?? "apply",
     }));
     this.fixedByIndex = new Map(restore?.fixed ?? []);
+    this.sortMode = restore?.sortMode ?? "file";
     this.theme = theme;
     this.done = done;
     this.tui = tui;
@@ -127,6 +137,7 @@ export class FindingsReview implements Component {
     return {
       statuses: this.items.map((item) => item.status),
       selectedIndex: this.selectedIndex,
+      sortMode: this.sortMode,
       fixed: new Map(this.fixedByIndex),
       handoffPath: this.lastHandoffPath,
     };
@@ -135,36 +146,45 @@ export class FindingsReview implements Component {
   /** Adjudication degradation to surface in the header (recommendations are defaults, not judgments). */
   private readonly degradationNote?: string;
 
-  // ── Group findings by recommendation, then by file ─────────────────────
+  // ── Group findings by recommendation, then sort within each section ────
 
-  private readonly flatGroups: { groupRec: FindingRecommendation; groupFile: string; item: ReviewItem }[] = [];
+  private readonly flatGroups: { groupRec: FindingRecommendation; groupLabel: string; item: ReviewItem }[] = [];
   private readonly recCounts = new Map<FindingRecommendation, number>();
 
-  private populateGroups(): void {
-    const recMap = new Map<FindingStatus, Map<string, ReviewItem[]>>();
-    for (const item of this.items) {
-      const rec = item.finding.recommendation ?? "apply";
-      let fileMap = recMap.get(rec);
-      if (!fileMap) {
-        fileMap = new Map();
-        recMap.set(rec, fileMap);
+  private compareItems(left: ReviewItem, right: ReviewItem): number {
+    const severity = SEVERITY_ORDER.indexOf(left.finding.severity) - SEVERITY_ORDER.indexOf(right.finding.severity);
+    const file = left.finding.file.localeCompare(right.finding.file);
+    const line = left.finding.line - right.finding.line;
+    const original = left.originalIndex - right.originalIndex;
+
+    switch (this.sortMode) {
+      case "file":
+        return file || line || severity || original;
+      case "priority":
+        return severity || file || line || original;
+      case "reviewer": {
+        const reviewer = left.finding.reviewer.localeCompare(right.finding.reviewer, undefined, { sensitivity: "base" });
+        return reviewer || severity || file || line || original;
       }
-      const existing = fileMap.get(item.finding.file);
-      if (existing) {
-        existing.push(item);
-      } else {
-        fileMap.set(item.finding.file, [item]);
+      case "blast": {
+        const blast = (right.finding.blastRadius?.score ?? -1) - (left.finding.blastRadius?.score ?? -1);
+        return blast || severity || file || line || original;
       }
     }
+  }
 
+  private populateGroups(): void {
     this.flatGroups.length = 0;
     for (const rec of RENDER_ORDER) {
-      const fileMap = recMap.get(rec);
-      if (!fileMap) continue;
-      for (const [file, items] of fileMap.entries()) {
-        for (const item of items) {
-          this.flatGroups.push({ groupRec: rec, groupFile: file, item });
-        }
+      const items = this.items
+        .filter((item) => (item.finding.recommendation ?? "apply") === rec)
+        .sort((left, right) => this.compareItems(left, right));
+      for (const item of items) {
+        this.flatGroups.push({
+          groupRec: rec,
+          groupLabel: this.sortMode === "file" ? item.finding.file : "",
+          item,
+        });
       }
     }
 
@@ -172,6 +192,16 @@ export class FindingsReview implements Component {
     for (const entry of this.flatGroups) {
       this.recCounts.set(entry.groupRec, (this.recCounts.get(entry.groupRec) ?? 0) + 1);
     }
+  }
+
+  private cycleSortMode(): void {
+    const selected = this.flatGroups[this.selectedIndex]?.item;
+    const next = (SORT_CYCLE.indexOf(this.sortMode) + 1) % SORT_CYCLE.length;
+    this.sortMode = SORT_CYCLE[next]!;
+    this.populateGroups();
+    this.selectedIndex = selected ? Math.max(0, this.flatGroups.findIndex((entry) => entry.item === selected)) : 0;
+    this.scrollOffset = 0;
+    this.invalidate();
   }
 
   // ── Component interface ─────────────────────────────────────────────────
@@ -206,6 +236,11 @@ export class FindingsReview implements Component {
     if (this.awaitingCancelConfirm) {
       this.awaitingCancelConfirm = false;
       this.invalidate();
+    }
+
+    if (data === "s" || data === "S") {
+      this.cycleSortMode();
+      return;
     }
 
     if (data === "h" || data === "H") {
@@ -352,7 +387,7 @@ export class FindingsReview implements Component {
   }
 
   private wrapItem(item: ReviewItem, width: number, headCols: number): { rationale: string[]; suggestedChange: string[]; reason?: string[] } {
-    if (item.wrapCache && item.wrapCache.width === width) return item.wrapCache;
+    if (item.wrapCache && item.wrapCache.width === width && item.wrapCache.headCols === headCols) return item.wrapCache;
     // Continuation lines are indented 6; the first also pays for the head.
     const rationale = this.wordWrap(item.finding.rationale, Math.max(2, width - 6), Math.max(2, width - 4 - headCols));
     const suggestedChange = this.wordWrap(`→ ${item.finding.suggestedChange}`, Math.max(2, width - 6), Math.max(2, width - 4));
@@ -361,7 +396,7 @@ export class FindingsReview implements Component {
       const reasonLabel = item.finding.recommendation === "reject" ? "Why reject" : "Why defer";
       reason = this.wordWrap(`⚑ ${reasonLabel}: ${item.finding.recommendationReason}`, Math.max(2, width - 6), Math.max(2, width - 4));
     }
-    const cache = { width, rationale, suggestedChange, reason };
+    const cache = { width, headCols, rationale, suggestedChange, reason };
     item.wrapCache = cache;
     return cache;
   }
@@ -483,10 +518,10 @@ export class FindingsReview implements Component {
     const lines: string[] = [];
     const spans: LineSpan[] = [];
     let lastRec: FindingStatus | "" = "";
-    let lastFile = "";
+    let lastLabel = "";
 
     for (const [index, entry] of this.flatGroups.entries()) {
-      const { groupRec, groupFile, item } = entry;
+      const { groupRec, groupLabel, item } = entry;
       // Section and file headings open the span, so scrolling to the first
       // finding beneath them keeps its headings on screen.
       const start = lines.length;
@@ -497,19 +532,26 @@ export class FindingsReview implements Component {
         const rule = "─".repeat(Math.max(0, width - visibleWidth(heading) - 2));
         lines.push("  " + t.bold(t.fg(headingColor, heading)) + t.fg("dim", rule));
         lastRec = groupRec;
-        lastFile = "";
+        lastLabel = "";
       }
 
-      if (groupFile !== lastFile) {
-        lines.push("  " + t.bold(t.fg("accent", groupFile)));
-        lastFile = groupFile;
+      if (groupLabel && groupLabel !== lastLabel) {
+        lines.push("  " + t.bold(t.fg("accent", groupLabel)));
+        lastLabel = groupLabel;
       }
 
       lines.push(this.renderFindingRow(item, index === this.selectedIndex, width));
 
-      const lineInfo = item.finding.line > 0
-        ? `${item.finding.category}:${item.finding.line}`
-        : item.finding.category;
+      const location = item.finding.line > 0 ? `${item.finding.file}:${item.finding.line}` : item.finding.file;
+      const blast = this.sortMode === "blast" ? item.finding.blastRadius : undefined;
+      const blastInfo = blast
+        ? ` · blast ${blast.level[0]!.toUpperCase()}${blast.level.slice(1)}${blast.reasons.length > 0 ? `: ${blast.reasons.slice(0, 2).join(", ")}` : ""}`
+        : "";
+      const lineInfo = this.sortMode === "file"
+        ? item.finding.line > 0
+          ? `${item.finding.category}:${item.finding.line}`
+          : item.finding.category
+        : `${location} ${item.finding.category}${blastInfo}`;
       const wrapped = this.wrapItem(item, width, visibleWidth(lineInfo) + 3);
       const firstRationale = wrapped.rationale[0];
       if (firstRationale !== undefined) {
@@ -544,7 +586,7 @@ export class FindingsReview implements Component {
     const t = this.theme;
     // Side walls cost two columns, so all content is laid out one frame in.
     const inner = Math.max(0, width - 2);
-    const keybinds = "↑↓ navigate · PgUp/PgDn page · A apply · R reject · D defer · Space cycle (A→R→D→A) · F fix now · H handoff-deferred · Enter finish · Esc cancel";
+    const keybinds = `↑↓ navigate · PgUp/PgDn page · S sort: ${SORT_LABELS[this.sortMode]} · A apply · R reject · D defer · Space cycle · F fix now · H handoff · Enter finish · Esc cancel`;
     const header = [
       renderFramedTop(t, inner, `Findings Review (${this.items.length} total)`),
       ...this.wordWrap(keybinds, Math.max(2, inner - 1)).map((line) => " " + t.fg("dim", line)),

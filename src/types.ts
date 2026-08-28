@@ -23,6 +23,20 @@ export type FindingSeverity = (typeof SEVERITY_ORDER)[number];
 /** Action the adjudicator can recommend for a finding. */
 export type FindingRecommendation = "apply" | "reject" | "defer";
 
+/** Nature of the change a reviewer expects a finding to require. */
+export type ChangeKind = "signature" | "behavior" | "internal" | "cosmetic";
+
+/** Blast-radius risk levels, ordered from highest to lowest. */
+export const BLAST_ORDER = ["critical", "high", "medium", "low"] as const;
+export type BlastLevel = (typeof BLAST_ORDER)[number];
+
+/** Deterministic risk estimate attached after findings are collected. */
+export interface BlastRadius {
+  score: number;
+  level: BlastLevel;
+  reasons: string[];
+}
+
 /** Status assigned to a finding during the findings review overlay. */
 export type FindingStatus = FindingRecommendation | "fixed";
 
@@ -35,6 +49,8 @@ export interface Finding {
   severity: FindingSeverity;
   rationale: string; // complete issue summary, newlines flattened
   suggestedChange: string; // max 2000 chars, newlines flattened
+  changeKind?: ChangeKind; // reviewer-supplied nature of the proposed fix
+  blastRadius?: BlastRadius; // deterministic risk estimate computed before review
   recommendation?: FindingRecommendation; // adjudicator's recommended action
   recommendationReason?: string; // why the adjudicator recommends reject/defer
 }
@@ -91,6 +107,9 @@ export type AuditMode = "diff" | "full" | "handoff";
 
 // ── Findings review types ───────────────────────────────────────────────────
 
+/** Active ordering inside each recommendation section. */
+export type ReviewSortMode = "file" | "priority" | "reviewer" | "blast";
+
 /** A finding fixed interactively via the Fix Now flow. */
 export interface FixedFinding {
   finding: Finding;
@@ -116,6 +135,7 @@ export interface ReviewSessionState {
   /** Per-finding status, indexed by position in the original findings array. */
   statuses: FindingStatus[];
   selectedIndex: number;
+  sortMode?: ReviewSortMode;
   /** Completed interactive fixes, keyed by original finding index. */
   fixed: Map<number, FixedFinding>;
   handoffPath?: string;

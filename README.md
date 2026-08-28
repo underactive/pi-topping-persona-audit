@@ -12,7 +12,7 @@ A [Pi coding agent](https://github.com/earendil-works/pi) extension that impleme
 - **Deterministic orchestration** — The entire audit is driven by TypeScript, not by an LLM following instructions; LLMs run only where judgment is required (reviewer passes, adjudication, fix application), each in an isolated in-process agent session
 - **TUI expert picker** — Interactive terminal UI to select which reviewer personas to include: one multi-select list of all 40 reviewers, grouped under tier headers with type-to-filter, so a run can mix tiers freely — `Space` toggles a reviewer, `←`/`→` set the pass count (1-5), `Enter` confirms
 - **Live progress table** — One compact table above the editor tracks every reviewer pass, adjudicator run, and verification script with live context usage, an output-activity meter (e.g., "1.2K tokens"), the tool call in flight, turn count, and elapsed time; a phase/model band shows which model is assigned to each phase and highlights the one in progress, and a frozen copy is left in the transcript on completion, visible but excluded from the model's context on later turns
-- **Findings review** — Accept, reject, or defer individual findings before applying fixes (press Esc twice to cancel — the first press arms the confirmation, any other key resumes; press `H` during review to write deferred findings to a handoff file under `.pi/persona-audit/handoffs/`; `↑`/`↓` navigate, `PageUp`/`PageDown` move by a page, `A`, `R`, and `D` set a finding to apply, reject, or defer, `Space` cycles apply → reject → defer, `F` fixes the selected finding now, and `Enter` confirms)
+- **Findings review** — Accept, reject, or defer individual findings before applying fixes (press Esc twice to cancel — the first press arms the confirmation, any other key resumes; press `H` during review to write deferred findings to a handoff file under `.pi/persona-audit/handoffs/`; `↑`/`↓` navigate, `PageUp`/`PageDown` move by a page, `S` cycles file/priority/reviewer/blast-radius sorting, `A`, `R`, and `D` set a finding to apply, reject, or defer, `Space` cycles apply → reject → defer, `F` fixes the selected finding now, and `Enter` confirms). Blast radius is a deterministic 0–100 risk score from direct importer fan-in, sensitive code surfaces, test coverage, and the reviewer's change-kind classification; the overlay shows its Low/Medium/High/Critical bucket and leading reasons.
 - **Auto-fix** — Accepted findings are partitioned by file and applied by parallel edit-capable adjudicator agent sessions, then verified against the project's own `check`/`lint`/`test` scripts
 - **Fix verification** — Every accepted fix gets its own verdict: the file is hashed before and after the implement phase, a verifier agent session diffs each change against its finding, and high-severity bug/security fixes get a regression test the harness proves fails without the fix
 - **Incremental cache** — Reviewer passes are cached by manifest+selection hash; unchanged re-runs skip agent-session spawns
@@ -187,11 +187,11 @@ flowchart TD
 ```
 
 1. **File scan** — `--diff` detects changed files using git diff against a base commit; `--full` instead does a deterministic whole-tree directory scan (sorted, capped, no git required).
-2. **Importer scanning** — `--diff` only: heuristic JS/TS relative-path matching for direct importers of changed modules.
+2. **Importer scanning** — heuristic JS/TS relative-path matching finds direct importers of changed modules in `--diff` mode and computes per-module fan-in for blast-radius scoring.
 3. **Reviewer selection** — choose personas and passes in the TUI picker — one cross-tier list, `Space` toggles, typing filters by name, description, or focus area — then assign a model and thinking level per phase in the follow-up picker.
 4. **Parallel review** — spawn isolated in-process agent sessions per reviewer×pass (cache-aware, concurrency 5). If any reviewer pass fails, the ReviewerRetry checkpoint lets you retry failed passes (optionally on a different model) or skip them before triage begins.
 5. **Collection & adjudication** — parse/dedup findings deterministically, then a read-only adjudicator agent session adds recommendations.
-6. **Findings review** — accept, reject, or defer findings in the TUI; `↑`/`↓` navigate, `PageUp`/`PageDown` move by a page, `A`, `R`, and `D` set the selected status directly, `Space` cycles statuses, `F` fixes the selected finding now, and `H` writes current deferred findings to `.pi/persona-audit/handoffs/`.
+6. **Findings review** — accept, reject, or defer findings in the TUI; `↑`/`↓` navigate, `PageUp`/`PageDown` move by a page, `S` cycles sorting by file, severity priority, reviewer, and blast radius, `A`, `R`, and `D` set the selected status directly, `Space` cycles statuses, `F` fixes the selected finding now, and `H` writes current deferred findings to `.pi/persona-audit/handoffs/`. Blast-radius mode orders by the computed 0–100 risk score and shows its bucket plus the top reasons inline.
 7. **Fix & verify** — accepted fixes are partitioned by file and applied by up to 3 edit-capable adjudicator agent sessions running in parallel (see [Parallel fix application](#parallel-fix-application)); the extension then verifies each fix individually and runs the project's verification scripts. If the verifier run itself fails, the VerifierRetry checkpoint lets you re-run it on a different model or skip verification.
 8. **Gate repair (rounds 2+)** — a round that does not pass `passed` is handed to a repair agent, then every verification layer re-runs from scratch (see [Fix + verify rounds](#fix--verify-rounds)). This repeats automatically, no checkpoint required, until a round passes or the configured round cap (**Max fix + verify rounds**, default 3) is hit.
 9. **Report** — write the audit report to `.pi/persona-audit/audits/` and post a chat summary.
@@ -204,8 +204,7 @@ reconciles them using a fixed precedence chain:
 
 1. **Category** — `security > bug > performance > maintainability > style/documentation`
 2. **Severity** (tie-break within the same category) — `critical > high > medium > low > info`
-3. **Blast radius** — fewer lines changed wins
-4. **Root cause over symptom**
+3. **Root cause over symptom**
 
 For example, a HIGH security fix and a HIGH performance fix that both target the
 same region: the security fix wins on category priority alone (rule 1 decides it
@@ -521,6 +520,7 @@ pi-topping-persona-audit/
 │   ├── verify.ts             # Verification gate (check/lint/test) + status aggregation
 │   ├── snapshot.ts           # Pre-fix file snapshots, change detection, apply-report parsing
 │   ├── regression.ts         # Red/green regression harness (throwaway git worktree)
+│   ├── blastRadius.ts        # Deterministic fan-in/sensitivity/test/change-kind risk scoring
 │   ├── findingsTransport.ts  # Reviewer output parsing/collection (pure)
 │   ├── dedup.ts              # Deterministic finding dedup (pure)
 │   ├── skillContent.ts       # 40 personalities + agent-session prompt contracts

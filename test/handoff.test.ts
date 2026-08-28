@@ -36,7 +36,7 @@ const payload = (findings: Finding[], overrides: Partial<HandoffPayload> = {}): 
 
 test("resume block round-trips losslessly through the rendered handoff", () => {
   const findings = [
-    finding({ recommendation: "defer", recommendationReason: "needs design review" }),
+    finding({ changeKind: "signature", recommendation: "defer", recommendationReason: "needs design review" }),
     finding({ file: "src/b.ts", line: -1, category: "bug", severity: "medium" }),
   ];
   const handoff = renderDeferredHandoff(
@@ -56,6 +56,20 @@ test("resume block round-trips losslessly through the rendered handoff", () => {
   assert.deepEqual(parsed.reviewers, ["Security Engineer", "Kent Beck"]);
   assert.equal(parsed.headCommit, "a".repeat(40));
   assert.deepEqual(parsed.findings, findings);
+});
+
+test("derived blastRadius is omitted while reviewer changeKind survives", () => {
+  const block = renderHandoffResumeBlock(payload([
+    finding({
+      changeKind: "behavior",
+      blastRadius: { score: 75, level: "critical", reasons: ["imported by 20 modules"] },
+    }),
+  ]));
+  const parsed = parseHandoffPayload(block);
+
+  assert.equal(parsed.findings[0]?.changeKind, "behavior");
+  assert.equal(parsed.findings[0]?.blastRadius, undefined);
+  assert.doesNotMatch(block, /blastRadius/);
 });
 
 test("backtick runs inside suggestedChange survive the fence", () => {
@@ -121,10 +135,11 @@ test("a finding with an unknown category or severity fails validation", () => {
   assert.throws(() => parseHandoffPayload(bad({ ...finding(), line: "12" })), /non-numeric line/);
 });
 
-test("invalid recommendation values are dropped rather than failing", () => {
-  const raw = { ...finding(), recommendation: "maybe", recommendationReason: 42 };
+test("invalid recommendation and change-kind values are dropped rather than failing", () => {
+  const raw = { ...finding(), changeKind: "wide-ranging", recommendation: "maybe", recommendationReason: 42 };
   const json = JSON.stringify(payload([raw as unknown as Finding]));
   const parsed = parseHandoffPayload(`${HANDOFF_RESUME_MARKER}\n\`\`\`json\n${json}\n\`\`\`\n`);
+  assert.equal(parsed.findings[0]!.changeKind, undefined);
   assert.equal(parsed.findings[0]!.recommendation, undefined);
   assert.equal(parsed.findings[0]!.recommendationReason, undefined);
 });

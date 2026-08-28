@@ -78,6 +78,24 @@ test("skips no-findings sentinels and malformed findings", () => {
   assert.equal(result.outputCount, 1);
 });
 
+test("accepts valid changeKind values and drops invalid ones", () => {
+  const valid = dedupFindings([baseFinding({ changeKind: "behavior" })]);
+  const invalid = dedupFindings([baseFinding({ changeKind: "wide-ranging" })]);
+
+  assert.equal(valid.findings[0]?.changeKind, "behavior");
+  assert.equal(invalid.findings[0]?.changeKind, undefined);
+});
+
+test("dedup keeps the highest-risk change kind", () => {
+  const result = dedupFindings([
+    baseFinding({ reviewer: "One", changeKind: "cosmetic" }),
+    baseFinding({ reviewer: "Two", changeKind: "signature" }),
+    baseFinding({ reviewer: "Three", changeKind: "behavior" }),
+  ]);
+
+  assert.equal(result.findings[0]?.changeKind, "signature");
+});
+
 test("sorts output deterministically", () => {
   const result = dedupFindings([
     baseFinding({ file: "src/b.ts", line: 10, category: "style", severity: "low" }),

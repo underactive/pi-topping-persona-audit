@@ -350,12 +350,51 @@ test("the footer counts fixed findings separately", () => {
   assert.ok(lines.some((line) => /2 apply · 0 reject · 0 defer · 1 fixed/.test(line)));
 });
 
-test("the keybind help lists direct triage keys and fix now", () => {
+test("S cycles file, priority, reviewer, and blast-radius ordering", () => {
+  const findings = [
+    finding(1, { file: "src/z.ts", severity: "low", reviewer: "Beta", blastRadius: { score: 10, level: "low", reasons: [] } }),
+    finding(2, { file: "src/a.ts", severity: "critical", reviewer: "Gamma", blastRadius: { score: 40, level: "medium", reasons: ["no tests"] } }),
+    finding(3, { file: "src/m.ts", severity: "high", reviewer: "Alpha", blastRadius: { score: 80, level: "critical", reasons: ["imported by 20 modules"] } }),
+  ];
+  const ui = harness(findings, 60);
+
+  assert.match(strip(ui.selected() ?? ""), /Gamma/, "file mode sorts a.ts first");
+  ui.press("S");
+  assert.match(strip(ui.selected() ?? ""), /Gamma/, "priority mode keeps the selected finding highlighted");
+  ui.press(DOWN);
+  assert.match(strip(ui.selected() ?? ""), /Alpha/, "priority orders critical before high before low");
+  ui.press("S");
+  assert.match(strip(ui.selected() ?? ""), /Alpha/, "reviewer mode follows the selected finding");
+  ui.press(UP);
+  assert.match(strip(ui.selected() ?? ""), /Alpha/, "reviewer mode orders Alpha first");
+  ui.press("S");
+  assert.match(strip(ui.selected() ?? ""), /Alpha/, "blast mode orders the highest score first");
+  assert.ok(ui.visible().map(strip).some((line) => line.includes("blast Critical: imported by 20 modules")));
+});
+
+test("sort mode round-trips through Fix Now state", () => {
+  const findings = [finding(1), finding(2, { severity: "critical" })];
+  const ui = harness(findings, 40);
+  ui.press("S");
+  ui.press(UP);
+  ui.press("F");
+
+  const [outcome] = ui.settled();
+  assert.ok(outcome && outcome.kind === "fixNow");
+  assert.equal(outcome.state.sortMode, "priority");
+
+  const restored = harness(findings, 40, outcome.state);
+  assert.match(strip(restored.selected() ?? ""), /Reviewer 02/);
+  assert.ok(restored.visible().map(strip).some((line) => line.includes("S sort: priority")));
+});
+
+test("the keybind help lists direct triage keys, sorting, and fix now", () => {
   const help = harness(list(1), 40).visible().map(strip).join(" ").replace(/║/g, " ").replace(/\s+/g, " ");
   assert.match(help, /A apply/);
   assert.match(help, /R reject/);
   assert.match(help, /D defer/);
   assert.match(help, /PgUp\/PgDn page/);
+  assert.match(help, /S sort: file/);
   assert.match(help, /Space cycle/);
   assert.match(help, /F fix now/);
   assert.match(help, /Esc cancel/);

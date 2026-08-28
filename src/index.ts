@@ -315,73 +315,79 @@ async function buildReviewerCacheKey(
   return createHash("sha256").update(cacheInput).digest("hex").slice(0, 24);
 }
 
-/**
- * Find direct importers of a list of files.
- * Scans JS/TS source files for relative-path import/require statements
- * referencing the changed files.
- */
-async function getDirectImporters(
+/** Scan relative JS/TS imports once, returning changed-file importers and repo-wide fan-in counts. */
+export async function scanImportGraph(
   cwd: string,
   changedFiles: string[],
-): Promise<string[]> {
-  if (changedFiles.length === 0) return [];
-
+  knownSourceFiles?: string[],
+): Promise<{ importers: string[]; fanIn: Map<string, number> }> {
   try {
-    const sourceFiles = await collectFiles(
-      cwd,
-      cwd,
-      (relativePath) =>
-        DIFF_SOURCE_FILE_RE.test(relativePath) &&
-        !GENERATED_OR_MINIFIED_FILE_RE.test(relativePath) &&
-        !LOCKFILE_RE.test(relativePath) &&
-        !SECRET_FILE_RE.test(relativePath) &&
-        !pathHasEnvSegment(relativePath),
-      DIFF_SKIP_DIRS,
-    );
+    const sourceFiles = knownSourceFiles
+      ? [...new Set(knownSourceFiles.filter((file) => DIFF_SOURCE_FILE_RE.test(file)))].sort()
+      : await collectFiles(
+          cwd,
+          cwd,
+          (relativePath) =>
+            DIFF_SOURCE_FILE_RE.test(relativePath) &&
+            !GENERATED_OR_MINIFIED_FILE_RE.test(relativePath) &&
+            !LOCKFILE_RE.test(relativePath) &&
+            !SECRET_FILE_RE.test(relativePath) &&
+            !pathHasEnvSegment(relativePath),
+          DIFF_SKIP_DIRS,
+        );
+
+    const candidateToSource = new Map<string, string>();
+    for (const sourceFile of sourceFiles) {
+      for (const candidate of buildAbsoluteFileCandidates(path.resolve(cwd, sourceFile), true)) {
+        if (!candidateToSource.has(candidate)) candidateToSource.set(candidate, sourceFile);
+      }
+    }
 
     const changedTargets = new Set<string>();
     const changedPaths = new Set<string>();
     for (const file of changedFiles) {
       const normalized = normalizeRelativePath(file.replace(/^\.\//, ""));
       changedPaths.add(normalized);
-      const absolute = path.resolve(cwd, normalized);
-      for (const candidate of buildAbsoluteFileCandidates(absolute, true)) {
+      for (const candidate of buildAbsoluteFileCandidates(path.resolve(cwd, normalized), true)) {
         changedTargets.add(candidate);
       }
     }
 
     const importPattern = /(?:from\s+|require\(\s*|import\(\s*)['"](\.[^'"]+)['"]/g;
-
     const results = await mapWithConcurrencyLimit(sourceFiles, 8, async (sourceFile) => {
-      if (changedPaths.has(sourceFile)) return undefined;
-
       const absSource = path.resolve(cwd, sourceFile);
       let content: string;
       try {
         content = await readFile(absSource, "utf-8");
       } catch {
-        return undefined;
+        return { sourceFile, targets: [] as string[], importsChanged: false };
       }
 
+      const targets = new Set<string>();
+      let importsChanged = false;
       for (const match of content.matchAll(importPattern)) {
-          const importPath = match[1];
-          if (!importPath) continue;
-
-          const resolvedImport = path.resolve(path.dirname(absSource), importPath);
-          if (buildAbsoluteFileCandidates(resolvedImport).some((candidate) => changedTargets.has(candidate))) {
-            return sourceFile;
-          }
-        }
-      return undefined;
+        const importPath = match[1];
+        if (!importPath) continue;
+        const candidates = buildAbsoluteFileCandidates(path.resolve(path.dirname(absSource), importPath));
+        const target = candidates.map((candidate) => candidateToSource.get(candidate)).find((file) => file !== undefined);
+        if (target && target !== sourceFile) targets.add(target);
+        if (candidates.some((candidate) => changedTargets.has(candidate))) importsChanged = true;
+      }
+      return { sourceFile, targets: [...targets], importsChanged };
     });
 
+    const importerSets = new Map(sourceFiles.map((file) => [file, new Set<string>()]));
     const importers = new Set<string>();
     for (const result of results) {
-      if (result !== undefined) importers.add(result);
+      for (const target of result.targets) importerSets.get(target)?.add(result.sourceFile);
+      if (result.importsChanged && !changedPaths.has(result.sourceFile)) importers.add(result.sourceFile);
     }
-    return [...importers].sort();
+    const fanIn = new Map(
+      [...importerSets.entries()].map(([file, sourceImporters]) => [file, sourceImporters.size] as const),
+    );
+    return { importers: [...importers].sort(), fanIn };
   } catch (error) {
-    throw new Error(`Failed to scan importers: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(`Failed to scan import graph: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -570,6 +576,7 @@ export default function (pi: ExtensionAPI): void {
       let fileCount: number;
       let changedFiles: string[] = [];
       let importers: string[] = [];
+      let blastFanIn = new Map<string, number>();
       let truncated = false;
       let totalFilesFound: number | undefined;
       let diffBaseHash: string | undefined;
@@ -638,7 +645,9 @@ export default function (pi: ExtensionAPI): void {
             return;
           }
 
-          importers = await getDirectImporters(ctx.cwd, changedFiles);
+          const graph = await scanImportGraph(ctx.cwd, changedFiles);
+          importers = graph.importers;
+          blastFanIn = graph.fanIn;
 
           const allFiles = [...new Set([...changedFiles, ...importers])].sort();
           fileManifest = allFiles;
@@ -655,6 +664,7 @@ export default function (pi: ExtensionAPI): void {
         try {
           const found = await getFullTreeManifest(ctx.cwd, scope);
           const capped = capFileList(found, FULL_TREE_FILE_CAP);
+          blastFanIn = (await scanImportGraph(ctx.cwd, [], found)).fanIn;
 
           if (capped.totalFound === 0) {
             ctx.ui.notify(`No auditable files found in scope "${scope}"`, "error");
@@ -675,6 +685,17 @@ export default function (pi: ExtensionAPI): void {
         } catch (error) {
           ctx.ui.notify(`Failed to scan files: ${error instanceof Error ? error.message : String(error)}`, "error");
           return;
+        }
+      }
+
+      if (mode === "handoff") {
+        try {
+          blastFanIn = (await scanImportGraph(ctx.cwd, [])).fanIn;
+        } catch (error) {
+          ctx.ui.notify(
+            `Blast-radius fan-in unavailable; using path, test, and change-kind signals only: ${error instanceof Error ? error.message : String(error)}`,
+            "warning",
+          );
         }
       }
 
@@ -775,6 +796,7 @@ export default function (pi: ExtensionAPI): void {
           baseCommit,
           changedFiles,
           importers,
+          blastFanIn,
           fileManifest,
           fileCount,
           truncated,

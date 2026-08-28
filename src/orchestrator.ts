@@ -19,6 +19,7 @@ import { createHash } from "node:crypto";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir, withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { collectReviewerFindings } from "./findingsTransport.ts";
+import { computeBlastRadius, hasCorrespondingTest, sensitivityTags } from "./blastRadius.ts";
 import { isRecord, normalizeFindingText } from "./dedup.ts";
 import { type AuditProgressWidget, formatTokens } from "./components/AuditProgress.ts";
 import type { ReviewerFailurePrompt } from "./components/ReviewerRetry.ts";
@@ -150,6 +151,7 @@ export interface AuditInput {
   baseCommit?: string;
   changedFiles: string[];
   importers: string[];
+  blastFanIn?: ReadonlyMap<string, number>;
   fileManifest: string[];
   fileCount: number;
   /** True when a --full scan exceeded the file cap and was deterministically truncated. */
@@ -1709,6 +1711,23 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
         return makeSummary("cancelled", relPath, { findings: collection.dedupedFindings.length }, skippedVerification());
       }
     }
+
+    const testCoverage = new Map(
+      await mapWithConcurrencyLimit(
+        [...new Set(annotatedFindings.map((finding) => finding.file))],
+        8,
+        async (file) => [file, await hasCorrespondingTest(ctx.cwd, file)] as const,
+      ),
+    );
+    annotatedFindings = annotatedFindings.map((finding) => ({
+      ...finding,
+      blastRadius: computeBlastRadius({
+        fanIn: input.blastFanIn?.get(finding.file) ?? 0,
+        tags: sensitivityTags(finding.file),
+        hasTest: testCoverage.get(finding.file),
+        changeKind: finding.changeKind,
+      }),
+    }));
 
     // ── Step f: findings review TUI (direct call) ───────────────────────
     notifyPhase(`reviewing ${annotatedFindings.length} finding${annotatedFindings.length === 1 ? "" : "s"}`);
