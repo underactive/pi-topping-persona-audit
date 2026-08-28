@@ -55,6 +55,8 @@ export interface MenuButton {
 export interface MenuSection {
   /** Empty renders a blank spacer instead of a divider, for a section needing no label. */
   title: string;
+  /** Dimmed explanatory text rendered directly below the section heading. */
+  description?: string;
   items: MenuItem[];
 }
 
@@ -70,6 +72,8 @@ export interface MenuConfig {
    * cursor. Needed for widgets, which get no host-side height clipping.
    */
   maxItemsPerSection?: number;
+  /** Handle a key against the selected item before standard menu navigation. */
+  onItemKey?: (item: MenuItem, data: string) => boolean;
 }
 
 export interface MenuResult<T> {
@@ -229,6 +233,7 @@ export class MenuComponent implements Component {
   private readonly buttons: MenuButton[];
   private readonly fullWidth: boolean;
   private readonly maxItemsPerSection: number | undefined;
+  private readonly onItemKey: ((item: MenuItem, data: string) => boolean) | undefined;
   private readonly theme: MenuTheme;
   private readonly done: (result: MenuResult<Record<string, boolean>>) => void;
   private readonly tui: TUI | undefined;
@@ -256,6 +261,7 @@ export class MenuComponent implements Component {
     this.buttons = config.buttons ?? [];
     this.fullWidth = config.fullWidth ?? false;
     this.maxItemsPerSection = config.maxItemsPerSection;
+    this.onItemKey = config.onItemKey;
     this.hints = config.hints ?? (this.buttons.length > 0
       ? ["↑↓ item", "←→ value", "⇥ switch btn", "⏎ select", "esc cancel"]
       : DEFAULT_HINTS);
@@ -304,6 +310,10 @@ export class MenuComponent implements Component {
       return;
     }
     if (this.items.length === 0) return;
+    if (this.onItemKey?.(this.items[this.cursor]!, data)) {
+      this.tui?.requestRender();
+      return;
+    }
     if (matchesKey(data, Key.up)) {
       this.cursor = (this.cursor - 1 + this.items.length) % this.items.length;
       this.invalidate();
@@ -379,6 +389,12 @@ export class MenuComponent implements Component {
       lines.push(section.title
         ? renderMenuSectionDivider(theme, innerWidth, section.title)
         : renderMenuContentRow(theme, innerWidth, ""));
+      if (section.description) {
+        const indent = "    ";
+        lines.push(...wrapText(section.description, Math.max(0, innerWidth - indent.length - 2)).map((line) =>
+          renderMenuContentRow(theme, innerWidth, theme.fg("dim", indent + line)),
+        ));
+      }
       const [from, to] = this.itemWindow(section, flatIndex);
       if (from > 0) lines.push(renderMenuContentRow(theme, innerWidth, theme.fg("dim", `    ↑ ${from} more`)));
       for (const [index, item] of section.items.entries()) {

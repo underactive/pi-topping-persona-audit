@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
-- **Artifact purge command** — `/persona-audit-purge [--older-than <days>]` lists reports, progress snapshots, handoffs, pre-fix snapshots, and this repo's reviewer cache in a tag-and-confirm menu for permanent deletion. Unknown files and settings are never touched; cache entries are never pre-tagged.
+- **Artifact purge command** — `/persona-audit-purge [--older-than <days>]` lists reports, progress snapshots, handoffs, pre-fix snapshots, and this repo's reviewer cache in a tag-and-confirm menu for permanent deletion. Sections explain retention purpose and display their parent folder; `P` opens a read-only Markdown or pretty-printed JSON preview. Unknown files and settings are never touched; cache entries are never pre-tagged.
 
 - **Aggregate progress-table cost readout** — the footer now shows the cumulative model cost beside whole-run elapsed time; an asterisk marks a partial total when one or more rows have unavailable or invalid cost telemetry.
 

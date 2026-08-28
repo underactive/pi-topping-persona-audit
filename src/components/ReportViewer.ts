@@ -18,6 +18,8 @@ export interface ReportViewerTheme {
 
 /** Header metadata shown above the saved report. */
 export interface ReportViewerHeader {
+  /** Optional replacement for the standard audit-report heading. */
+  title?: string;
   status: string;
   findingCount: number;
   verification: string;
@@ -98,7 +100,7 @@ export class ReportViewer implements Component {
     const body = bodyLines.slice(start, end).map((line) => this.fit(line, inner));
     if (body.length === 0) body.push(this.fit(this.theme.fg("dim", "No report content."), inner));
 
-    const heading = `Audit Report — ${this.header.status} · ${this.header.findingCount} findings · verification ${this.header.verification}`;
+    const heading = this.header.title ?? `Audit Report — ${this.header.status} · ${this.header.findingCount} findings · verification ${this.header.verification}`;
     const rows: string[] = [];
     if (!narrow) rows.push(this.fit(this.theme.fg("dim", this.header.reportPath), inner));
     rows.push(this.scrollHint("↑", start, inner));
@@ -182,4 +184,15 @@ export function showReportViewer(
       },
     },
   );
+}
+
+/** Show a read-only Markdown or JSON artifact using the standard scrolling overlay. */
+export function showArtifactViewer(ctx: Pick<ExtensionCommandContext, "ui">, content: string, artifactPath: string): Promise<void> {
+  return showReportViewer(ctx, content, {
+    title: `Artifact preview — ${artifactPath.split(/[\\/]/).pop() ?? artifactPath}`,
+    status: "read-only",
+    findingCount: 0,
+    verification: "n/a",
+    reportPath: artifactPath,
+  });
 }

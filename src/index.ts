@@ -26,7 +26,7 @@ import { EXPERT_PICKER_WIDGET_KEY } from "./components/ExpertPicker.ts";
 import { showPhaseModelPicker, MODEL_PICKER_WIDGET_KEY } from "./components/ModelPicker.ts";
 import { showReviewerRetryPrompt, REVIEWER_RETRY_WIDGET_KEY } from "./components/ReviewerRetry.ts";
 import { showVerifierRetryPrompt, VERIFIER_RETRY_WIDGET_KEY } from "./components/VerifierRetry.ts";
-import { showReportViewer } from "./components/ReportViewer.ts";
+import { showArtifactViewer, showReportViewer } from "./components/ReportViewer.ts";
 import { showSettingsMenu, SETTINGS_MENU_WIDGET_KEY } from "./components/SettingsMenu.ts";
 import { showPurgeMenu, PURGE_MENU_WIDGET_KEY } from "./components/PurgeMenu.ts";
 import {
@@ -966,12 +966,28 @@ export default function (pi: ExtensionAPI): void {
         return;
       }
       const preTagged = new Set(olderThan === undefined ? [] : entries.filter((entry) => isOlderThan(entry, olderThan)).map((entry) => entry.id));
-      const tagged = await showPurgeMenu(ctx, entries, preTagged);
-      if (!tagged || tagged.size === 0) {
+      let menuResult = await showPurgeMenu(ctx, entries, preTagged);
+      while (menuResult?.action === "preview") {
+        if (menuResult.entry.isDirectory) {
+          ctx.ui.notify("Snapshot folders cannot be previewed as a single file.", "info");
+        } else {
+          try {
+            const raw = await readFile(menuResult.entry.absPath, "utf-8");
+            const content = menuResult.entry.absPath.endsWith(".json")
+              ? `\`\`\`json\n${JSON.stringify(JSON.parse(raw), null, 2)}\n\`\`\``
+              : raw;
+            await showArtifactViewer(ctx, content, menuResult.entry.absPath);
+          } catch (error) {
+            ctx.ui.notify(`Could not preview ${menuResult.entry.displayPath}: ${error instanceof Error ? error.message : String(error)}`, "error");
+          }
+        }
+        menuResult = await showPurgeMenu(ctx, entries, menuResult.tagged, true);
+      }
+      if (!menuResult || menuResult.tagged.size === 0) {
         ctx.ui.notify("Nothing tagged — no files deleted.", "info");
         return;
       }
-      const selected = entries.filter((entry) => tagged.has(entry.id));
+      const selected = entries.filter((entry) => menuResult.tagged.has(entry.id));
       const counts = new Map<string, number>();
       for (const entry of selected) counts.set(entry.kind, (counts.get(entry.kind) ?? 0) + 1);
       const totalSize = selected.reduce((total, entry) => total + entry.sizeBytes, 0);

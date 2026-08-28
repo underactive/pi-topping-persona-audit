@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { homedir } from "node:os";
+import * as path from "node:path";
 import { test } from "node:test";
 import type { ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
 import type { Component, TUI } from "@earendil-works/pi-tui";
-import { showPurgeMenu, PURGE_MENU_WIDGET_KEY } from "../src/components/PurgeMenu.ts";
+import { displayDirectory, showPurgeMenu, PURGE_MENU_WIDGET_KEY } from "../src/components/PurgeMenu.ts";
 import type { ArtifactEntry } from "../src/artifacts.ts";
 
 const strip = (text: string) => text.replace(/\x1b\[[0-9;]*m/g, "");
@@ -11,24 +13,32 @@ const tui = { requestRender: () => {} } as unknown as TUI;
 
 const entries: ArtifactEntry[] = [
   { id: "report", kind: "report", absPath: "/report", displayPath: "report.md", isDirectory: false, sizeBytes: 1024, mtimeMs: Date.now() - 86_400_000 },
+  { id: "progress", kind: "progress", absPath: "/progress", displayPath: "progress.md", isDirectory: false, sizeBytes: 4, mtimeMs: Date.now() },
+  { id: "snapshot", kind: "snapshot-set", absPath: "/snapshot", displayPath: "snapshot/", isDirectory: true, sizeBytes: 5, mtimeMs: Date.now() },
   { id: "handoff", kind: "handoff", absPath: "/handoff", displayPath: "handoff.md", isDirectory: false, sizeBytes: 2, mtimeMs: Date.now(), detail: "resumable" },
   { id: "cache", kind: "cache", absPath: "/cache", displayPath: "cache.json", isDirectory: false, sizeBytes: 3, mtimeMs: Date.now() },
 ];
 
-function mount(preTagged = new Set<string>()) {
+function mount(preTagged = new Set<string>(), preserveCacheTags = false) {
   let component: Component | undefined;
   let handler: ((data: string) => unknown) | undefined;
   const ctx = { ui: {
     onTerminalInput: (fn: (data: string) => unknown) => { handler = fn; return () => { handler = undefined; }; },
     setWidget: (key: string, content?: (host: TUI, currentTheme: Theme) => Component) => { assert.equal(key, PURGE_MENU_WIDGET_KEY); if (content) component = content(tui, theme); },
   } } as unknown as ExtensionCommandContext;
-  return { result: showPurgeMenu(ctx, entries, preTagged), send: (...keys: string[]) => keys.forEach((key) => handler?.(key)), render: () => (component?.render(100) ?? []).map(strip).join("\n") };
+  return { result: showPurgeMenu(ctx, entries, preTagged, preserveCacheTags), send: (...keys: string[]) => keys.forEach((key) => handler?.(key)), render: () => (component?.render(100) ?? []).map(strip).join("\n") };
 }
 
 test("purge menu renders categorized tagged rows and keeps cache untagged", () => {
   const menu = mount(new Set(["report", "cache"]));
   const rendered = menu.render();
-  assert.match(rendered, /Audit reports/);
+  assert.match(rendered, /Audit reports · \//);
+  assert.match(rendered, /Progress snapshots · \//);
+  assert.match(rendered, /permanent record of findings/);
+  assert.match(rendered, /Partial reports saved while an audit runs/);
+  assert.match(rendered, /Deferred findings saved for later review/);
+  assert.match(rendered, /Copies of files before accepted fixes/);
+  assert.match(rendered, /Cached reviewer outputs for unchanged runs/);
   assert.match(rendered, /1 KB.*1d/);
   assert.match(rendered, /resumable/);
   assert.match(rendered, /Reviewer cache/);
@@ -39,7 +49,21 @@ test("purge menu renders categorized tagged rows and keeps cache untagged", () =
 test("space toggles a row and Purge tagged resolves its ids", async () => {
   const menu = mount();
   menu.send(" ", "\t", "\r");
-  assert.deepEqual(await menu.result, new Set(["report"]));
+  assert.deepEqual(await menu.result, { action: "purge", tagged: new Set(["report"]) });
+});
+
+test("P previews the selected artifact while preserving tags", async () => {
+  const menu = mount(new Set(["report"]));
+  menu.send("P");
+  assert.deepEqual(await menu.result, { action: "preview", entry: entries[0], tagged: new Set(["report"]) });
+
+  const restored = mount(new Set(["cache"]), true);
+  restored.send("\x1b[B", "\x1b[B", "\x1b[B", "\x1b[B", "P");
+  assert.deepEqual(await restored.result, { action: "preview", entry: entries[4], tagged: new Set(["cache"]) });
+});
+
+test("section directories shorten paths below the home directory", () => {
+  assert.equal(displayDirectory(path.join(homedir(), "persona-audit", "cache", "item.json")), "~/persona-audit/cache");
 });
 
 test("escape cancels", async () => {
