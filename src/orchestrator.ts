@@ -611,9 +611,13 @@ interface ReviewerCache {
 }
 
 /** User-owned cache location, keyed by repo path + cacheKey — a repo-controlled `.pi/persona-audit/cache` file could otherwise smuggle in forged "clean" reviewer output. */
-function cacheFilePath(cwd: string, cacheKey: string): string {
+export function repoCacheDir(cwd: string, agentDir: string = getAgentDir()): string {
   const repoHash = createHash("sha256").update(cwd).digest("hex").slice(0, 16);
-  return path.join(getAgentDir(), "persona-audit", "cache", repoHash, `${cacheKey}.json`);
+  return path.join(agentDir, "persona-audit", "cache", repoHash);
+}
+
+function cacheFilePath(cwd: string, cacheKey: string): string {
+  return path.join(repoCacheDir(cwd), `${cacheKey}.json`);
 }
 
 async function loadCache(cwd: string, cacheKey: string): Promise<ReviewerOutput[]> {

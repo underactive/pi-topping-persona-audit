@@ -20,6 +20,7 @@ A [Pi coding agent](https://github.com/earendil-works/pi) extension that impleme
 - **Audit report viewer** — Opens the completed report in a scrollable Markdown overlay; use arrows to scroll, `u`/`d` to page, `g`/`G` for top/bottom, and `Esc` to close. Cancelled audits do not open the viewer.
 - **Audit report** — Generates a structured report in `.pi/persona-audit/audits/`
 - **Settings menu** — `/persona-audit-settings` configures the progress table's activity monitor (color and scroll direction), the Linus Torvalds reviewer's temperament, and the fix + verify round cap
+- **Artifact purge** — `/persona-audit-purge [--older-than <days>]` lists audit reports, progress snapshots, handoffs, pre-fix snapshots, and this repo's reviewer cache for explicit tagging and permanent deletion. Unknown files and `settings.json` are never touched; deleting cache entries forces fresh reviewer passes.
 
 ## Install
 
@@ -38,6 +39,7 @@ The extension registers itself automatically via `package.json` — Pi discovers
 ```
 /persona-audit --diff [--base <commit>] [path]
 /persona-audit --full [path]
+/persona-audit-purge [--older-than <days>]
 ```
 
 Exactly one of `--diff` or `--full` is required.
@@ -51,6 +53,7 @@ Exactly one of `--diff` or `--full` is required.
 - `--full` — Enable full-tree mode, no git required (mutually exclusive with `--diff`)
 - `--base <commit>` — Base commit to diff against, `--diff` only (default: merge-base with main)
 - `[path]` — Optional path filter (default: ".")
+- `/persona-audit-purge [--older-than <days>]` — tag and permanently delete recognized audit artifacts. `--older-than` pre-tags old audit artifacts only; reviewer-cache entries always require explicit tagging.
 
 #### Examples
 

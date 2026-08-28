@@ -13,7 +13,7 @@ import { errorCode, message, resolveSafeWritePath } from "./report.ts";
 import { mapWithConcurrencyLimit } from "./subprocess.ts";
 import { CATEGORY_PRIORITY, type FileChangeEvidence, type Finding, type FindingCategory, type SelfReport } from "./types.ts";
 
-const SNAPSHOTS_DIR = ".pi/persona-audit/snapshots";
+export const SNAPSHOTS_DIR = ".pi/persona-audit/snapshots";
 
 /** Concurrency cap for the per-file read/hash/write work in snapshotFiles and compareToSnapshots. */
 const SNAPSHOT_CONCURRENCY = 8;

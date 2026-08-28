@@ -8,6 +8,7 @@ import type { Dirent } from "node:fs";
 import { lstat, readdir, readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { runAudit } from "./orchestrator.ts";
+import { collectArtifacts, deleteArtifacts, formatBytes, isOlderThan } from "./artifacts.ts";
 import { filterExistingFindings, parseHandoffPayload, type HandoffPayload } from "./handoff.ts";
 import { gitHeadCommit } from "./git.ts";
 import { resolveTargetPath } from "./snapshot.ts";
@@ -27,6 +28,7 @@ import { showReviewerRetryPrompt, REVIEWER_RETRY_WIDGET_KEY } from "./components
 import { showVerifierRetryPrompt, VERIFIER_RETRY_WIDGET_KEY } from "./components/VerifierRetry.ts";
 import { showReportViewer } from "./components/ReportViewer.ts";
 import { showSettingsMenu, SETTINGS_MENU_WIDGET_KEY } from "./components/SettingsMenu.ts";
+import { showPurgeMenu, PURGE_MENU_WIDGET_KEY } from "./components/PurgeMenu.ts";
 import {
   loadPersonaAuditConfig,
   modelRefLabel,
@@ -926,6 +928,67 @@ export default function (pi: ExtensionAPI): void {
     },
   });
 
+  // ── /persona-audit-purge command ──────────────────────────────
+  pi.registerCommand("persona-audit-purge", {
+    description: "List, tag, and delete persona-audit artifacts (reports, progress snapshots, handoffs, snapshots, and this repo's reviewer cache)",
+    handler: async (args, ctx) => {
+      const tokens = args.trim() ? args.trim().split(/\s+/) : [];
+      let olderThan: number | undefined;
+      if (tokens.length > 0) {
+        if (tokens.length !== 2 || tokens[0] !== "--older-than") {
+          ctx.ui.notify("Usage: /persona-audit-purge [--older-than <days>]", "error");
+          return;
+        }
+        const days = Number(tokens[1]);
+        if (!Number.isFinite(days) || days < 0) {
+          ctx.ui.notify("Error: --older-than requires a non-negative number of days.", "error");
+          return;
+        }
+        olderThan = days;
+      }
+      if (ctx.mode !== "tui") {
+        ctx.ui.notify("persona-audit-purge requires TUI mode", "error");
+        return;
+      }
+      if (activeAuditController !== null) {
+        ctx.ui.notify("Cannot purge while persona-audit is running: it is writing progress reports and snapshots.", "warning");
+        return;
+      }
+      let entries;
+      try {
+        entries = await collectArtifacts(ctx.cwd);
+      } catch (error) {
+        ctx.ui.notify(`Could not list persona-audit artifacts: ${error instanceof Error ? error.message : String(error)}`, "error");
+        return;
+      }
+      if (entries.length === 0) {
+        ctx.ui.notify("No persona-audit artifacts found in this repo.", "info");
+        return;
+      }
+      const preTagged = new Set(olderThan === undefined ? [] : entries.filter((entry) => isOlderThan(entry, olderThan)).map((entry) => entry.id));
+      const tagged = await showPurgeMenu(ctx, entries, preTagged);
+      if (!tagged || tagged.size === 0) {
+        ctx.ui.notify("Nothing tagged — no files deleted.", "info");
+        return;
+      }
+      const selected = entries.filter((entry) => tagged.has(entry.id));
+      const counts = new Map<string, number>();
+      for (const entry of selected) counts.set(entry.kind, (counts.get(entry.kind) ?? 0) + 1);
+      const totalSize = selected.reduce((total, entry) => total + entry.sizeBytes, 0);
+      const countText = [...counts.entries()].map(([kind, count]) => `${count} ${kind}`).join(" · ");
+      const ok = await ctx.ui.confirm(
+        `Delete ${selected.length} persona-audit artifacts?`,
+        `${countText} · total ${formatBytes(totalSize)}. Snapshot dirs are removed recursively; deleting a resumable handoff makes its deferred findings non-resumable; deleting cache entries forces fresh reviewer passes.`,
+      );
+      if (!ok) return;
+      const result = await deleteArtifacts(ctx.cwd, selected);
+      ctx.ui.notify(`Deleted ${result.deleted} artifacts (freed ${formatBytes(result.freedBytes)})`, "info");
+      if (result.failed.length > 0) {
+        ctx.ui.notify(`Could not delete ${result.failed.length} artifact(s): ${result.failed.map(({ entry, error }) => `${entry.displayPath}: ${error}`).join("; ")}`, "warning");
+      }
+    },
+  });
+
   // ── Session lifecycle: tear down pipeline on shutdown/reload ─────────
   //
   // `session_shutdown` fires during /reload (reason: "reload"), /new
@@ -954,5 +1017,6 @@ export default function (pi: ExtensionAPI): void {
     ctx.ui.setWidget(REVIEWER_RETRY_WIDGET_KEY, undefined);
     ctx.ui.setWidget(VERIFIER_RETRY_WIDGET_KEY, undefined);
     ctx.ui.setWidget(SETTINGS_MENU_WIDGET_KEY, undefined);
+    ctx.ui.setWidget(PURGE_MENU_WIDGET_KEY, undefined);
   });
 }

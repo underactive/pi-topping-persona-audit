@@ -23,8 +23,8 @@ import type {
   VerificationRound,
 } from "./types.ts";
 
-const AUDITS_DIR = ".pi/persona-audit/audits";
-const HANDOFFS_DIR = ".pi/persona-audit/handoffs";
+export const AUDITS_DIR = ".pi/persona-audit/audits";
+export const HANDOFFS_DIR = ".pi/persona-audit/handoffs";
 
 /** Static context shared by every report flavor for one audit run. */
 export interface ReportContext {
@@ -96,7 +96,7 @@ export function handoffRelPath(slug: string): string {
   return `${HANDOFFS_DIR}/${slug}_deferred-findings.md`;
 }
 
-function isWithinDirectory(parent: string, child: string): boolean {
+export function isWithinDirectory(parent: string, child: string): boolean {
   const rel = path.relative(parent, child);
   return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
 }

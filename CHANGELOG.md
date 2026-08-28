@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Artifact purge command** — `/persona-audit-purge [--older-than <days>]` lists reports, progress snapshots, handoffs, pre-fix snapshots, and this repo's reviewer cache in a tag-and-confirm menu for permanent deletion. Unknown files and settings are never touched; cache entries are never pre-tagged.
+
 - **Aggregate progress-table cost readout** — the footer now shows the cumulative model cost beside whole-run elapsed time; an asterisk marks a partial total when one or more rows have unavailable or invalid cost telemetry.
 
 - **Resume from a deferred-findings handoff** — `/persona-audit --handoff <path>` re-opens a handoff written during triage (`H` in the findings review) and resumes the audit from there: the reviewer and adjudication phases are skipped, the deferred findings load straight into the findings review overlay (pre-set to apply), and the implement/verify pipeline plus final report run as usual. Handoffs now embed a schema-versioned machine-readable payload (lossless findings JSON plus the HEAD commit at write time); on resume the run warns when the tree has moved since the handoff was written and drops findings whose target file no longer exists. Handoffs written before this release have no payload and cannot be resumed.
