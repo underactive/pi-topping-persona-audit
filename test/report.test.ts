@@ -95,6 +95,7 @@ const verificationOutcome = (overrides: Partial<VerificationOutcome> = {}): Veri
 });
 
 const summaryBase = {
+  fixedCount: 0,
   fixVerifications: [] as FixVerification[],
   regressions: [] as RegressionResult[],
   verificationNotes: [] as string[],
@@ -276,7 +277,7 @@ test("full report includes applied findings, apply report, and validation", () =
     partialReportPath: partialReportRelPath(ctx.slug),
   });
 
-  assert.ok(report.includes("### Fixed (applied) (1)"));
+  assert.ok(report.includes("### Applied (batch) (1)"));
   assert.ok(report.includes("**src/a.ts:12** [high] — security"));
   assert.ok(
     report.includes("## Adjudicator Fix Application Report\n\n### Fixes Applied\n- src/a.ts:12"),
@@ -630,6 +631,7 @@ test("chat summary renders verdict counts, the regression line, and verification
     passes: 1,
     findingsCount: 3,
     acceptedCount: 2,
+    fixedCount: 0,
     rejectedCount: 0,
     deferredCount: 0,
     verification: "partial",
@@ -739,4 +741,81 @@ test("an in-progress partial report marks its total time as still running", () =
   );
   assert.ok(cancelled.includes("- Total time: 4m 05s"));
   assert.ok(!cancelled.includes("(in progress)"), "a settled run's total is final");
+});
+
+// ── Fix Now sections ───────────────────────────────────────────────────────
+
+test("full report renders interactively fixed findings with their commit", () => {
+  const report = renderFullReport(ctx, {
+    accepted: [finding()],
+    deferred: [],
+    rejected: [],
+    fixed: [
+      { finding: finding({ file: "src/b.ts", line: 4, category: "bug" }), commitSha: "abc1234", files: ["src/b.ts"] },
+      { finding: finding({ file: "src/c.ts" }), files: ["src/c.ts"] },
+    ],
+    applyReport: "ok",
+    verification: verificationOutcome(),
+    diagnostics,
+  });
+
+  assert.ok(report.includes("### Fixed interactively (2)"));
+  assert.ok(report.includes("Commit: abc1234"));
+  assert.ok(report.includes("Commit: none (auto-commit declined)"));
+});
+
+test("full report omits the interactive section when nothing was fixed that way", () => {
+  const report = renderFullReport(ctx, {
+    accepted: [finding()],
+    deferred: [],
+    rejected: [],
+    applyReport: "ok",
+    verification: verificationOutcome(),
+    diagnostics,
+  });
+  assert.ok(!report.includes("Fixed interactively"));
+});
+
+test("compact none-accepted report accounts for interactive fixes", () => {
+  const report = renderCompactReport(ctx, {
+    reason: "none-accepted",
+    deferred: [],
+    rejected: [],
+    fixed: [{ finding: finding(), commitSha: "abc1234", files: ["src/a.ts"] }],
+    diagnostics,
+  });
+
+  assert.ok(report.includes("## No Batch-Applied Findings"));
+  assert.ok(report.includes("1 was fixed interactively during triage"));
+  assert.ok(report.includes("### Fixed interactively (1)"));
+  assert.ok(report.includes("Commit: abc1234"));
+});
+
+test("chat summary counts interactive fixes only when present", () => {
+  const base: AuditSummary = {
+    ...summaryBase,
+    status: "completed",
+    scope: ".",
+    fileCount: 5,
+    totalMs: 60_000,
+    reviewers: ["Security Engineer"],
+    passes: 1,
+    findingsCount: 3,
+    acceptedCount: 1,
+    fixedCount: 2,
+    rejectedCount: 0,
+    deferredCount: 0,
+    verification: "skipped",
+    verifyResults: [],
+    reportPath: "r.md",
+    expectedRuns: 1,
+    receivedRuns: 1,
+    malformedCount: 0,
+    missingCount: 0,
+    cacheHits: 0,
+    freshRuns: 1,
+  };
+
+  assert.ok(renderChatSummary(base).includes("2 fixed interactively"));
+  assert.ok(!renderChatSummary({ ...base, fixedCount: 0 }).includes("fixed interactively"));
 });

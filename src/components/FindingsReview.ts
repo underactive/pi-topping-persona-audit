@@ -2,11 +2,13 @@ import type { Component, TUI, KeybindingsManager } from "@earendil-works/pi-tui"
 import { Key, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { ExtensionCommandContext, Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { handoffRelPath, renderDeferredHandoff, writeReportFile } from "../report.ts";
-import type { Finding, FindingsReviewResult, FindingStatus } from "../types.ts";
+import type { Finding, FindingRecommendation, FindingsReviewOutcome, FindingsReviewResult, FindingStatus, FixedFinding, ReviewSessionState } from "../types.ts";
 import { FALLBACK_TERMINAL_ROWS, OVERLAY_HEIGHT_PERCENT, OVERLAY_MAX_HEIGHT, renderFramedBottom, renderFramedRow, renderFramedTop, SELECTOR } from "./menuChrome.ts";
 
 interface ReviewItem {
   finding: Finding;
+  /** Position in the original findings array — flatGroups reorders, and Fix Now must name the source finding. */
+  originalIndex: number;
   status: FindingStatus;
   /** Wrapped rationale/suggestedChange/reason lines, cached per width — arrow-key navigation invalidates the render cache on every keystroke, so this avoids re-wrapping every finding just to redraw the visible window. */
   wrapCache?: { width: number; rationale: string[]; suggestedChange: string[]; reason?: string[] };
@@ -34,10 +36,10 @@ export interface ReviewTheme {
 const STATUS_CYCLE: FindingStatus[] = ["apply", "reject", "defer"];
 
 /** Render order for recommendation groups — Apply first, Defer second, Reject last. */
-const RENDER_ORDER: FindingStatus[] = ["apply", "defer", "reject"];
+const RENDER_ORDER: FindingRecommendation[] = ["apply", "defer", "reject"];
 
 /** Human-readable labels for recommendation sections. */
-const REC_LABELS: Record<FindingStatus, string> = {
+const REC_LABELS: Record<FindingRecommendation, string> = {
   apply: "Recommended: Apply",
   defer: "Recommended: Defer",
   reject: "Recommended: Reject",
@@ -47,11 +49,13 @@ const STATUS_LABELS: Record<FindingStatus, string> = {
   apply: "[APPLY]",
   reject: "[REJECT]",
   defer: "[DEFER]",
+  fixed: "[FIXED]",
 };
 const STATUS_COLORS: Record<FindingStatus, ThemeColor> = {
   apply: "success",
   reject: "warning",
   defer: "dim",
+  fixed: "success",
 };
 /** Widest status label and severity name, so the reviewer column holds still as statuses cycle. */
 const STATUS_WIDTH = 8;
@@ -74,8 +78,9 @@ export class FindingsReview implements Component {
   /** Offset into the body's rendered lines — not an index into the findings. */
   private scrollOffset = 0;
   private readonly theme: ReviewTheme;
-  private readonly done: (result: FindingsReviewResult | null) => void;
+  private readonly done: (outcome: FindingsReviewOutcome) => void;
   private readonly tui: ReviewHost;
+  private readonly fixedByIndex: Map<number, FixedFinding>;
   private readonly onWriteHandoff: (deferred: Finding[]) => Promise<string>;
   private handoffNote: string | undefined;
   private lastHandoffPath: string | undefined;
@@ -88,18 +93,38 @@ export class FindingsReview implements Component {
   constructor(
     findings: Finding[],
     theme: ReviewTheme,
-    done: (result: FindingsReviewResult | null) => void,
+    done: (outcome: FindingsReviewOutcome) => void,
     tui: ReviewHost,
     onWriteHandoff: (deferred: Finding[]) => Promise<string>,
     degradationNote?: string,
+    restore?: ReviewSessionState,
   ) {
     this.degradationNote = degradationNote;
-    this.items = findings.map((f) => ({ finding: f, status: f.recommendation ?? "apply" }));
+    this.items = findings.map((f, index) => ({
+      finding: f,
+      originalIndex: index,
+      status: restore?.statuses[index] ?? f.recommendation ?? "apply",
+    }));
+    this.fixedByIndex = new Map(restore?.fixed ?? []);
     this.theme = theme;
     this.done = done;
     this.tui = tui;
     this.onWriteHandoff = onWriteHandoff;
     this.populateGroups();
+    if (restore) {
+      this.selectedIndex = Math.max(0, Math.min(restore.selectedIndex, this.flatGroups.length - 1));
+      this.lastHandoffPath = restore.handoffPath;
+    }
+  }
+
+  /** Snapshot the mutable review state so a Fix Now round-trip can reopen the overlay unchanged. */
+  private captureState(): ReviewSessionState {
+    return {
+      statuses: this.items.map((item) => item.status),
+      selectedIndex: this.selectedIndex,
+      fixed: new Map(this.fixedByIndex),
+      handoffPath: this.lastHandoffPath,
+    };
   }
 
   /** Adjudication degradation to surface in the header (recommendations are defaults, not judgments). */
@@ -107,8 +132,8 @@ export class FindingsReview implements Component {
 
   // ── Group findings by recommendation, then by file ─────────────────────
 
-  private readonly flatGroups: { groupRec: FindingStatus; groupFile: string; item: ReviewItem }[] = [];
-  private readonly recCounts = new Map<FindingStatus, number>();
+  private readonly flatGroups: { groupRec: FindingRecommendation; groupFile: string; item: ReviewItem }[] = [];
+  private readonly recCounts = new Map<FindingRecommendation, number>();
 
   private populateGroups(): void {
     const recMap = new Map<FindingStatus, Map<string, ReviewItem[]>>();
@@ -162,7 +187,7 @@ export class FindingsReview implements Component {
         this.invalidate();
         return;
       }
-      this.done(null);
+      this.done({ kind: "cancelled" });
       return;
     }
     if (this.awaitingCancelConfirm) {
@@ -213,15 +238,23 @@ export class FindingsReview implements Component {
       return;
     }
 
+    // Fix Now: hand the highlighted finding to the interactive fix flow.
+    if (data === "f" || data === "F") {
+      const current = this.flatGroups[this.selectedIndex];
+      if (current && current.item.status !== "fixed") {
+        this.done({ kind: "fixNow", index: current.item.originalIndex, state: this.captureState() });
+      }
+      return;
+    }
+
     if (matchesKey(data, Key.enter)) {
-      const result = this.buildResult();
-      this.done(result);
+      this.done({ kind: "finalized", result: this.buildResult() });
       return;
     }
 
     if (matchesKey(data, Key.space)) {
       const current = this.flatGroups[this.selectedIndex];
-      if (current) {
+      if (current && current.item.status !== "fixed") {
         const idx = STATUS_CYCLE.indexOf(current.item.status);
         current.item.status = STATUS_CYCLE[(idx + 1) % STATUS_CYCLE.length]!;
         this.invalidate();
@@ -328,6 +361,7 @@ export class FindingsReview implements Component {
     const accepted: Finding[] = [];
     const rejected: Finding[] = [];
     const deferred: Finding[] = [];
+    const fixed: FixedFinding[] = [];
 
     for (const item of this.items) {
       switch (item.status) {
@@ -340,10 +374,16 @@ export class FindingsReview implements Component {
         case "defer":
           deferred.push(item.finding);
           break;
+        case "fixed":
+          fixed.push(
+            this.fixedByIndex.get(item.originalIndex)
+              ?? { finding: item.finding, files: [item.finding.file] },
+          );
+          break;
       }
     }
 
-    return { accepted, rejected, deferred, handoffPath: this.lastHandoffPath };
+    return { accepted, rejected, deferred, fixed, handoffPath: this.lastHandoffPath };
   }
 
   /** The one selectable line per finding: marker, status, severity, reviewer. */
@@ -354,7 +394,9 @@ export class FindingsReview implements Component {
     const severityText = severe ? item.finding.severity.toUpperCase() : item.finding.severity;
     const severity = t.fg(severe ? "error" : "muted", severityText.padEnd(SEVERITY_WIDTH));
     const marker = selected ? t.bold(t.fg("accent", SELECTOR)) : " ";
-    const row = `  ${marker} ${status} ${severity} ${item.finding.reviewer}`;
+    const sha = item.status === "fixed" ? this.fixedByIndex.get(item.originalIndex)?.commitSha : undefined;
+    const reviewer = sha ? `${item.finding.reviewer} ${t.fg("dim", `@${sha}`)}` : item.finding.reviewer;
+    const row = `  ${marker} ${status} ${severity} ${reviewer}`;
     if (!selected) return row;
     // Pad the bar to the full overlay width so the highlight reads as one row.
     const clipped = truncateToWidth(row, width, "…");
@@ -428,7 +470,7 @@ export class FindingsReview implements Component {
     const t = this.theme;
     // Side walls cost two columns, so all content is laid out one frame in.
     const inner = Math.max(0, width - 2);
-    const keybinds = "↑↓ navigate · Space cycle (A→R→D→A) · O defer-override · H handoff-deferred · Enter finish · Esc Esc cancel";
+    const keybinds = "↑↓ navigate · Space cycle (A→R→D→A) · F fix now · O defer-override · H handoff-deferred · Enter finish · Esc Esc cancel";
     const header = [
       renderFramedTop(t, inner, `Findings Review (${this.items.length} total)`),
       ...this.wordWrap(keybinds, Math.max(2, inner - 1)).map((line) => " " + t.fg("dim", line)),
@@ -459,14 +501,17 @@ export class FindingsReview implements Component {
     let applyCount = 0;
     let rejectCount = 0;
     let deferCount = 0;
+    let fixedCount = 0;
     for (const i of this.items) {
       if (i.status === "apply") applyCount++;
       else if (i.status === "reject") rejectCount++;
+      else if (i.status === "fixed") fixedCount++;
       else deferCount++;
     }
     const counts = `  ${t.fg("success", `${applyCount} apply`)} · `
       + `${t.fg("warning", `${rejectCount} reject`)} · `
-      + `${t.fg("dim", `${deferCount} defer`)}`;
+      + `${t.fg("dim", `${deferCount} defer`)}`
+      + (fixedCount > 0 ? ` · ${t.fg("success", `${fixedCount} fixed`)}` : "");
     const position = this.flatGroups.length > 0 ? `${this.selectedIndex + 1}/${this.flatGroups.length}` : "0/0";
     const gap = " ".repeat(Math.max(1, inner - visibleWidth(counts) - position.length - 2));
 
@@ -495,13 +540,14 @@ export class FindingsReview implements Component {
   }
 }
 
-/** Show the findings review TUI overlay; resolves null when cancelled. */
+/** Show the findings review TUI overlay. */
 export async function showFindingsReview(
   ctx: Pick<ExtensionCommandContext, "cwd" | "ui">,
   findings: Finding[],
   handoff: { slug: string; isoDate: string; scope: string; reviewers: string[] },
   degradationNote?: string,
-): Promise<FindingsReviewResult | null> {
+  restore?: ReviewSessionState,
+): Promise<FindingsReviewOutcome> {
   const onWriteHandoff = async (deferred: Finding[]): Promise<string> => {
     const relPath = handoffRelPath(handoff.slug);
     await writeReportFile(
@@ -515,9 +561,9 @@ export async function showFindingsReview(
     return relPath;
   };
 
-  return ctx.ui.custom<FindingsReviewResult | null>(
-    (tui: TUI, theme: Theme, _kb: KeybindingsManager, done: (result: FindingsReviewResult | null) => void) =>
-      new FindingsReview(findings, theme, done, tui, onWriteHandoff, degradationNote),
+  return ctx.ui.custom<FindingsReviewOutcome>(
+    (tui: TUI, theme: Theme, _kb: KeybindingsManager, done: (outcome: FindingsReviewOutcome) => void) =>
+      new FindingsReview(findings, theme, done, tui, onWriteHandoff, degradationNote, restore),
     {
       overlay: true,
       overlayOptions: {

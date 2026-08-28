@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { FindingsReview, type ReviewHost, type ReviewTheme } from "../src/components/FindingsReview.ts";
-import type { Finding, FindingsReviewResult } from "../src/types.ts";
+import type { Finding, FindingsReviewOutcome, FindingsReviewResult, ReviewSessionState } from "../src/types.ts";
 
 const strip = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
 
@@ -46,10 +46,10 @@ function finding(n: number, overrides: Partial<Finding> = {}): Finding {
  * clip to the overlay height. Assertions run against the clipped lines, since
  * anything past the budget is dropped before the user ever sees it.
  */
-function harness(findings: Finding[], rows: number) {
+function harness(findings: Finding[], rows: number, restore?: ReviewSessionState) {
   const host: ReviewHost = { requestRender: () => {}, terminal: { rows } };
-  const settled: (FindingsReviewResult | null)[] = [];
-  const component = new FindingsReview(findings, theme, (result) => settled.push(result), host, async () => "handoff.md");
+  const settled: FindingsReviewOutcome[] = [];
+  const component = new FindingsReview(findings, theme, (outcome) => settled.push(outcome), host, async () => "handoff.md", undefined, restore);
   const visible = (): string[] => component.render(WIDTH).slice(0, clipBudget(rows));
   return {
     component,
@@ -57,7 +57,10 @@ function harness(findings: Finding[], rows: number) {
     rendered: (): string[] => component.render(WIDTH),
     visible,
     /** Every value handed to `done` — empty until the overlay resolves. */
-    settled: (): (FindingsReviewResult | null)[] => settled,
+    settled: (): FindingsReviewOutcome[] => settled,
+    /** The finalized result of the first settle, when it was Enter. */
+    result: (): FindingsReviewResult | undefined =>
+      settled[0]?.kind === "finalized" ? settled[0].result : undefined,
     /** The highlighted row, which is also the row carrying the selection marker. */
     selected: (): string | undefined => visible().find((line) => line.includes(HIGHLIGHT)),
   };
@@ -188,7 +191,7 @@ test("a second Esc confirms the cancel", () => {
   ui.press(ESCAPE);
   ui.press(ESCAPE);
 
-  assert.deepEqual(ui.settled(), [null], "cancelling resolves null");
+  assert.deepEqual(ui.settled(), [{ kind: "cancelled" }], "cancelling resolves the cancelled outcome");
 });
 
 test("any other key disarms the cancel and keeps the triage decisions", () => {
@@ -206,7 +209,7 @@ test("any other key disarms the cancel and keeps the triage decisions", () => {
   ui.press(ESCAPE);
   ui.press(ENTER);
 
-  const [result] = ui.settled();
+  const result = ui.result();
   assert.ok(result, "Enter still finishes the review after a disarmed Esc");
   assert.equal(result.rejected.length, 1, "the earlier reject survived the disarmed cancel");
   assert.equal(result.accepted.length, 2);
@@ -227,4 +230,81 @@ test("a degradation note renders as a header warning, and only when provided", (
     !withoutNote.render(WIDTH).map(strip).some((line) => line.includes("⚠")),
     "no warning line without a note",
   );
+});
+
+// ── Fix Now ────────────────────────────────────────────────────────────────
+
+test("F resolves a fixNow outcome carrying the original index and current state", () => {
+  const ui = harness(list(3), 40);
+
+  ui.press(SPACE); // first finding → reject
+  ui.press(DOWN);
+  ui.press("f");
+
+  const [outcome] = ui.settled();
+  assert.ok(outcome && outcome.kind === "fixNow");
+  assert.equal(outcome.index, 1, "the second finding's original index");
+  assert.deepEqual(outcome.state.statuses, ["reject", "apply", "apply"]);
+  assert.equal(outcome.state.selectedIndex, 1);
+});
+
+test("restore state round-trips statuses, cursor, and fixed lock", () => {
+  const findings = list(3);
+  const state: ReviewSessionState = {
+    statuses: ["reject", "fixed", "defer"],
+    selectedIndex: 1,
+    fixed: new Map([[1, { finding: findings[1]!, commitSha: "abc1234", files: ["src/file02.ts"] }]]),
+    handoffPath: "handoff.md",
+  };
+  const ui = harness(findings, 40, state);
+
+  const row = ui.selected();
+  assert.ok(row, "the cursor lands back on the previously selected finding");
+  assert.match(strip(row), /\[FIXED]\s+low\s+Reviewer 02 @abc1234/);
+
+  ui.press(ENTER);
+  const result = ui.result();
+  assert.ok(result);
+  assert.equal(result.rejected.length, 1);
+  assert.equal(result.deferred.length, 1);
+  assert.equal(result.fixed.length, 1);
+  assert.equal(result.fixed[0]?.commitSha, "abc1234");
+  assert.equal(result.accepted.length, 0);
+  assert.equal(result.handoffPath, "handoff.md");
+});
+
+test("Space, O, and F are inert on a fixed finding", () => {
+  const findings = list(2);
+  const state: ReviewSessionState = {
+    statuses: ["fixed", "apply"],
+    selectedIndex: 0,
+    fixed: new Map([[0, { finding: findings[0]!, commitSha: "abc1234", files: ["src/file01.ts"] }]]),
+  };
+  const ui = harness(findings, 40, state);
+
+  ui.press(SPACE);
+  ui.press("o");
+  ui.press("f");
+
+  assert.deepEqual(ui.settled(), [], "F does not resolve on a fixed finding");
+  const row = ui.selected();
+  assert.ok(row);
+  assert.match(strip(row), /\[FIXED]/, "the status did not cycle");
+});
+
+test("the footer counts fixed findings separately", () => {
+  const findings = list(3);
+  const state: ReviewSessionState = {
+    statuses: ["fixed", "apply", "apply"],
+    selectedIndex: 0,
+    fixed: new Map([[0, { finding: findings[0]!, commitSha: "abc1234", files: ["src/file01.ts"] }]]),
+  };
+  const lines = harness(findings, 40, state).visible().map(strip);
+
+  assert.ok(lines.some((line) => /2 apply · 0 reject · 0 defer · 1 fixed/.test(line)));
+});
+
+test("the keybind help mentions fix now", () => {
+  const lines = harness(list(1), 40).visible().map(strip);
+  assert.ok(lines.some((line) => line.includes("F fix now")));
 });

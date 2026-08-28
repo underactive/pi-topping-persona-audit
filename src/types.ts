@@ -20,8 +20,11 @@ export type FindingCategory = (typeof CATEGORY_PRIORITY)[number];
 export const SEVERITY_ORDER = ["critical", "high", "medium", "low", "info"] as const;
 export type FindingSeverity = (typeof SEVERITY_ORDER)[number];
 
+/** Action the adjudicator can recommend for a finding. */
+export type FindingRecommendation = "apply" | "reject" | "defer";
+
 /** Status assigned to a finding during the findings review overlay. */
-export type FindingStatus = "apply" | "reject" | "defer";
+export type FindingStatus = FindingRecommendation | "fixed";
 
 /** A single finding from a reviewer subagent. */
 export interface Finding {
@@ -32,7 +35,7 @@ export interface Finding {
   severity: FindingSeverity;
   rationale: string; // max 100 chars
   suggestedChange: string; // max 2000 chars, newlines flattened
-  recommendation?: FindingStatus; // adjudicator's recommended action
+  recommendation?: FindingRecommendation; // adjudicator's recommended action
   recommendationReason?: string; // why the adjudicator recommends reject/defer
 }
 
@@ -88,14 +91,41 @@ export type AuditMode = "diff" | "full";
 
 // ── Findings review types ───────────────────────────────────────────────────
 
+/** A finding fixed interactively via the Fix Now flow. */
+export interface FixedFinding {
+  finding: Finding;
+  /** Short SHA of the audit-fix commit. Absent when the user opted out of auto-commit. */
+  commitSha?: string;
+  /** Repo-relative files the fix touched. */
+  files: string[];
+}
+
 /** Result returned by the findings review TUI. */
 export interface FindingsReviewResult {
   accepted: Finding[];
   rejected: Finding[];
   deferred: Finding[];
+  /** Findings fixed interactively during review, excluded from the batch implement phase. */
+  fixed: FixedFinding[];
   /** Relative path of a deferred-findings handoff written during triage. */
   handoffPath?: string;
 }
+
+/** Snapshot of the review overlay's mutable state, carried across a Fix Now round-trip. */
+export interface ReviewSessionState {
+  /** Per-finding status, indexed by position in the original findings array. */
+  statuses: FindingStatus[];
+  selectedIndex: number;
+  /** Completed interactive fixes, keyed by original finding index. */
+  fixed: Map<number, FixedFinding>;
+  handoffPath?: string;
+}
+
+/** How one showing of the findings review overlay ended. */
+export type FindingsReviewOutcome =
+  | { kind: "finalized"; result: FindingsReviewResult }
+  | { kind: "cancelled" }
+  | { kind: "fixNow"; index: number; state: ReviewSessionState };
 
 // ── Headless agent-session types ────────────────────────────────────────────
 
@@ -314,6 +344,8 @@ export interface AuditSummary {
   passes: number;
   findingsCount: number;
   acceptedCount: number;
+  /** Findings fixed interactively during review (Fix Now). */
+  fixedCount: number;
   rejectedCount: number;
   deferredCount: number;
   verification: VerificationStatus;

@@ -88,13 +88,16 @@ import type {
   FileChangeEvidence,
   Finding,
   FindingCategory,
+  FindingRecommendation,
   FindingStatus,
+  FindingsReviewResult,
   FixVerdict,
   FixVerification,
   HeadlessOptions,
   ReviewerOutput,
   ReviewerRunRecord,
   ReviewerSelection,
+  ReviewSessionState,
   SelfReport,
   VerificationOutcome,
   VerificationRound,
@@ -262,7 +265,7 @@ export function annotateFindings(
     };
   }
 
-  const annotations = new Map<string, { rec: FindingStatus; reason?: string }>();
+  const annotations = new Map<string, { rec: FindingRecommendation; reason?: string }>();
   for (const raw of items) {
     if (!isRecord(raw)) continue;
     const rec = normalizeFindingText(raw.recommendation).toLowerCase();
@@ -273,7 +276,7 @@ export function annotateFindings(
     const lineNum = Number(raw.line);
     const key = `${file}\u0000${Number.isFinite(lineNum) ? lineNum : -1}\u0000${category}`;
     const reason = normalizeFindingText(raw.recommendationReason, 120) || undefined;
-    annotations.set(key, { rec: rec as FindingStatus, reason });
+    annotations.set(key, { rec, reason });
   }
 
   let matched = 0;
@@ -1273,7 +1276,7 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
   const makeSummary = (
     status: AuditStatus,
     reportPath: string,
-    counts: { findings?: number; accepted?: number; rejected?: number; deferred?: number },
+    counts: { findings?: number; accepted?: number; rejected?: number; deferred?: number; fixed?: number },
     verification: VerificationOutcome,
     failureNote?: string,
     implementFailedNote?: string,
@@ -1287,6 +1290,7 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
     passes: selection.passes,
     findingsCount: counts.findings ?? 0,
     acceptedCount: counts.accepted ?? 0,
+    fixedCount: counts.fixed ?? 0,
     rejectedCount: counts.rejected ?? 0,
     deferredCount: counts.deferred ?? 0,
     verification: verification.status,
@@ -1684,27 +1688,76 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
     runSummary.note = "awaiting triage decisions";
     refreshSummary();
     const { showFindingsReview } = await import("./components/FindingsReview.ts");
-    const review = await showFindingsReview(
-      ctx,
-      annotatedFindings,
-      {
-        slug,
-        isoDate: iso,
-        scope: input.scope,
-        reviewers: selection.reviewers,
-      },
-      diagnostics.annotationNote,
-    );
-
-    if (!review) {
-      const relPath = await writePartial(
-        "cancelled",
-        "User cancelled during findings review. No fixes were applied; findings are listed above.",
+    const { runFixNow } = await import("./fixNow.ts");
+    // The overlay resolves early with a fixNow outcome, the interactive fix
+    // flow runs, and the overlay reopens with its state restored — looping
+    // until the user finalizes or cancels.
+    let sessionState: ReviewSessionState | undefined;
+    let review: FindingsReviewResult | undefined;
+    let fixNowCount = 0;
+    for (;;) {
+      const outcome = await showFindingsReview(
+        ctx,
+        annotatedFindings,
+        {
+          slug,
+          isoDate: iso,
+          scope: input.scope,
+          reviewers: selection.reviewers,
+        },
+        diagnostics.annotationNote,
+        sessionState,
       );
-      runSummary.note = "cancelled at triage";
-      refreshSummary();
-      progress?.settleOpenRows("cancelled", "cancelled");
-      return makeSummary("cancelled", relPath, { findings: annotatedFindings.length }, skippedVerification());
+
+      if (outcome.kind === "cancelled") {
+        const relPath = await writePartial(
+          "cancelled",
+          "User cancelled during findings review. No fixes were applied; findings are listed above.",
+        );
+        runSummary.note = "cancelled at triage";
+        refreshSummary();
+        progress?.settleOpenRows("cancelled", "cancelled");
+        return makeSummary("cancelled", relPath, { findings: annotatedFindings.length }, skippedVerification());
+      }
+
+      if (outcome.kind === "finalized") {
+        review = outcome.result;
+        break;
+      }
+
+      sessionState = outcome.state;
+      const target = annotatedFindings[outcome.index];
+      if (!target) continue;
+      const fixNowRowKey = `implement:fixnow:${outcome.index}:${fixNowCount++}`;
+      progress?.addRow("Implement", fixNowRowKey, `fix now · ${findingLabel(target)}`, { state: "working" });
+      await runFixNow(
+        {
+          ctx,
+          adjudicatorSystemPrompt: adjudicatorAgent.systemPrompt,
+          verifierSystemPrompt: verifierAgent.systemPrompt,
+          adjudicatorTools: adjudicatorAgent.tools ?? EDIT_TOOLS,
+          readOnlyTools: READ_ONLY_TOOLS,
+          implementModel: { model: implementModel.model, thinking: implementModel.thinking },
+          verifyModel: { model: verifyModel.model, thinking: verifyModel.thinking },
+          signal: input.signal,
+          onTelemetry: (snapshot) => progress?.applyProgress(fixNowRowKey, snapshot),
+        },
+        target,
+        outcome.index,
+        sessionState,
+      );
+      const landed = sessionState.statuses[outcome.index] === "fixed";
+      progress?.settleRow(fixNowRowKey, landed ? "done" : "cancelled", landed ? "fixed" : "not applied");
+      if (input.signal?.aborted) {
+        const relPath = await writePartial("cancelled", "Run aborted during findings review.");
+        progress?.settleOpenRows("cancelled", "aborted");
+        return makeSummary(
+          "cancelled",
+          relPath,
+          { findings: annotatedFindings.length, fixed: sessionState.fixed.size },
+          skippedVerification(),
+        );
+      }
     }
 
     // Runs before the zero-accepted check below so a set emptied by scoping
@@ -1727,6 +1780,9 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
     }
 
     // ── Step g: zero accepted → compact report ──────────────────────────
+    // Interactive fixes are already on disk (and committed), so a run with
+    // fixed findings but no batch-accepted ones still counts as completed —
+    // it just skips the implement/verify pipeline.
     if (review.accepted.length === 0) {
       diagnostics.failedRuns = runRecords.filter((run) => run.status === "failed");
       const relPath = reportRelPath(slug);
@@ -1737,19 +1793,22 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
           reason: "none-accepted",
           deferred: review.deferred,
           rejected: review.rejected,
+          fixed: review.fixed,
           diagnostics,
         }),
       );
       await supersedePartial();
       return makeSummary(
-        "none-accepted",
+        review.fixed.length > 0 ? "completed" : "none-accepted",
         relPath,
         {
           findings: annotatedFindings.length,
           rejected: review.rejected.length,
           deferred: review.deferred.length,
+          fixed: review.fixed.length,
         },
         skippedVerification(),
+        undefined,
         undefined,
         review.handoffPath,
       );
@@ -2188,6 +2247,7 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
         accepted: review.accepted,
         deferred: review.deferred,
         rejected: review.rejected,
+        fixed: review.fixed,
         applyReport,
         verification,
         diagnostics,
@@ -2204,6 +2264,7 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
         accepted: review.accepted.length,
         rejected: review.rejected.length,
         deferred: review.deferred.length,
+        fixed: review.fixed.length,
       },
       verification,
       undefined,

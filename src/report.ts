@@ -14,6 +14,7 @@ import type {
   AuditSummary,
   CollectReviewerFindingsResult,
   Finding,
+  FixedFinding,
   FixVerification,
   RegressionResult,
   ReviewerRunRecord,
@@ -257,6 +258,16 @@ function findingsSection(title: string, findings: Finding[], emptyText: string):
   const header = `### ${title} (${findings.length})`;
   if (findings.length === 0) return `${header}\n\n${emptyText}`;
   return `${header}\n\n${findings.flatMap((f) => findingLines(f)).join("\n")}`;
+}
+
+/** Findings fixed one at a time through the review overlay's Fix Now flow, each with its commit. */
+function fixedInteractivelySection(fixed: FixedFinding[]): string {
+  const header = `### Fixed interactively (${fixed.length})`;
+  if (fixed.length === 0) return `${header}\n\nNone.`;
+  const lines = fixed.flatMap((entry) =>
+    findingLines(entry.finding, entry.commitSha ? `Commit: ${entry.commitSha}` : "Commit: none (auto-commit declined)"),
+  );
+  return `${header}\n\n${lines.join("\n")}`;
 }
 
 /** Render a self-contained handoff for findings deferred during TUI triage. */
@@ -507,22 +518,27 @@ export function renderCompactReport(
     reason: "no-findings" | "none-accepted";
     deferred: Finding[];
     rejected: Finding[];
+    fixed?: FixedFinding[];
     diagnostics: CollectionDiagnostics;
   },
 ): string {
+  const fixed = opts.fixed ?? [];
   const reasonText =
     opts.reason === "no-findings"
       ? "No findings were reported by any reviewer pass."
-      : "Findings were reported, but the user accepted none during triage.";
+      : fixed.length > 0
+        ? `Findings were reported; ${fixed.length} ${fixed.length === 1 ? "was" : "were"} fixed interactively during triage, and none were accepted for batch implementation.`
+        : "Findings were reported, but the user accepted none during triage.";
   return [
     frontmatter(ctx, `Persona audit of ${ctx.scope} — no actionable findings`),
     "",
     overviewSection(ctx),
     "",
-    "## No Actionable Findings",
+    fixed.length > 0 ? "## No Batch-Applied Findings" : "## No Actionable Findings",
     "",
     reasonText,
     "",
+    ...(fixed.length > 0 ? [fixedInteractivelySection(fixed), ""] : []),
     findingsSection("Deferred", opts.deferred, "None."),
     "",
     findingsSection("Rejected", opts.rejected, "None."),
@@ -573,6 +589,7 @@ export function renderFullReport(
     accepted: Finding[];
     deferred: Finding[];
     rejected: Finding[];
+    fixed?: FixedFinding[];
     applyReport: string;
     verification: VerificationOutcome;
     diagnostics: CollectionDiagnostics;
@@ -586,8 +603,9 @@ export function renderFullReport(
     overviewSection(ctx),
     ...(modelsLine ? [modelsLine] : []),
     "",
-    findingsSection("Fixed (applied)", opts.accepted, "None."),
+    findingsSection("Applied (batch)", opts.accepted, "None."),
     "",
+    ...((opts.fixed?.length ?? 0) > 0 ? [fixedInteractivelySection(opts.fixed!), ""] : []),
     "#### Adjudicator apply report",
     "",
     normalizeMultilineText(opts.applyReport) || "_No apply report produced._",
@@ -633,7 +651,7 @@ export function renderChatSummary(summary: AuditSummary): string {
     `Scope: ${summary.scope}`,
     `Files audited: ${summary.fileCount}`,
     `Total time: ${formatDuration(summary.totalMs)}`,
-    `${summary.findingsCount} issue${summary.findingsCount === 1 ? "" : "s"} found | ${summary.acceptedCount} ${appliedLabel} | ${summary.deferredCount} deferred | ${summary.rejectedCount} rejected`,
+    `${summary.findingsCount} issue${summary.findingsCount === 1 ? "" : "s"} found | ${summary.acceptedCount} ${appliedLabel}${summary.fixedCount > 0 ? ` | ${summary.fixedCount} fixed interactively` : ""} | ${summary.deferredCount} deferred | ${summary.rejectedCount} rejected`,
     `Verification: ${summary.verification}` +
       (summary.fixVerifications.length > 0 ? ` | ${verdictCounts(summary.fixVerifications)}` : "") +
       (summary.verifyResults.length > 0
