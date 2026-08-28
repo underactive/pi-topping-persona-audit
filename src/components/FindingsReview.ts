@@ -66,9 +66,10 @@ const SEVERITY_WIDTH = 8;
  * Findings review overlay — displays findings grouped by adjudicator recommendation.
  * Within each recommendation group, findings are sub-grouped by file.
  * The user cycles through apply → reject → defer states per finding.
- * `O` key promotes deferred → apply directly. Enter returns the structured
- * result; Esc arms a cancel that a second Esc confirms, returning null (the
- * orchestrator writes a partial report and applies no fixes).
+ * `A`, `R`, and `D` set the selected finding to apply, reject, or defer directly.
+ * Enter returns the structured result; Esc arms a cancel that a second Esc
+ * confirms, returning null (the orchestrator writes a partial report and
+ * applies no fixes).
  *
  * Findings vary in height with word wrapping, so the body is measured as it is
  * built and scrolled in line space; see {@link resolveScroll}.
@@ -178,6 +179,14 @@ export class FindingsReview implements Component {
     this.cachedLines = undefined;
   }
 
+  private setSelectedStatus(status: Exclude<FindingStatus, "fixed">): void {
+    const current = this.flatGroups[this.selectedIndex];
+    if (current && current.item.status !== "fixed") {
+      current.item.status = status;
+      this.invalidate();
+    }
+  }
+
   handleInput(data: string): void {
     // Two-step abort. Triage decisions live only in this component, and the
     // adjudicator's annotations are never persisted, so a single stray Esc
@@ -229,13 +238,16 @@ export class FindingsReview implements Component {
       return;
     }
 
-    // Override key: promote deferred → apply
-    if (data === "o" || data === "O") {
-      const current = this.flatGroups[this.selectedIndex];
-      if (current && current.item.status === "defer") {
-        current.item.status = "apply";
-        this.invalidate();
-      }
+    if (data === "a" || data === "A") {
+      this.setSelectedStatus("apply");
+      return;
+    }
+    if (data === "r" || data === "R") {
+      this.setSelectedStatus("reject");
+      return;
+    }
+    if (data === "d" || data === "D") {
+      this.setSelectedStatus("defer");
       return;
     }
 
@@ -471,7 +483,7 @@ export class FindingsReview implements Component {
     const t = this.theme;
     // Side walls cost two columns, so all content is laid out one frame in.
     const inner = Math.max(0, width - 2);
-    const keybinds = "↑↓ navigate · Space cycle (A→R→D→A) · F fix now · O defer-override · H handoff-deferred · Enter finish · Esc Esc cancel";
+    const keybinds = "↑↓ navigate · A apply · R reject · D defer · Space cycle (A→R→D→A) · F fix now · H handoff-deferred · Enter finish · Esc Esc cancel";
     const header = [
       renderFramedTop(t, inner, `Findings Review (${this.items.length} total)`),
       ...this.wordWrap(keybinds, Math.max(2, inner - 1)).map((line) => " " + t.fg("dim", line)),

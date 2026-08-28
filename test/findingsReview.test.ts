@@ -172,6 +172,26 @@ test("severe findings keep their uppercase emphasis without breaking alignment",
   assert.equal(strip(low).indexOf("Reviewer"), strip(critical).indexOf("Reviewer"));
 });
 
+test("A, R, and D set the selected finding directly", () => {
+  const ui = harness([finding(1)], 40);
+  const statusRow = (): string => strip(ui.selected() ?? "");
+
+  ui.press("R");
+  assert.match(statusRow(), /\[REJECT]/);
+  ui.press("D");
+  assert.match(statusRow(), /\[DEFER]/);
+  ui.press("A");
+  assert.match(statusRow(), /\[APPLY]/);
+});
+
+test("O no longer overrides a deferred finding", () => {
+  const ui = harness([finding(1, { recommendation: "defer" })], 40);
+
+  ui.press("O");
+
+  assert.match(strip(ui.selected() ?? ""), /\[DEFER]/);
+});
+
 test("one Esc arms the cancel rather than discarding the review", () => {
   const ui = harness(list(3), 24);
 
@@ -273,7 +293,7 @@ test("restore state round-trips statuses, cursor, and fixed lock", () => {
   assert.equal(result.handoffPath, "handoff.md");
 });
 
-test("Space, O, and F are inert on a fixed finding", () => {
+test("Space, A, R, D, and F are inert on a fixed finding", () => {
   const findings = list(2);
   const state: ReviewSessionState = {
     statuses: ["fixed", "apply"],
@@ -283,8 +303,10 @@ test("Space, O, and F are inert on a fixed finding", () => {
   const ui = harness(findings, 40, state);
 
   ui.press(SPACE);
-  ui.press("o");
-  ui.press("f");
+  ui.press("A");
+  ui.press("R");
+  ui.press("D");
+  ui.press("F");
 
   assert.deepEqual(ui.settled(), [], "F does not resolve on a fixed finding");
   const row = ui.selected();
@@ -304,7 +326,12 @@ test("the footer counts fixed findings separately", () => {
   assert.ok(lines.some((line) => /2 apply · 0 reject · 0 defer · 1 fixed/.test(line)));
 });
 
-test("the keybind help mentions fix now", () => {
-  const lines = harness(list(1), 40).visible().map(strip);
-  assert.ok(lines.some((line) => line.includes("F fix now")));
+test("the keybind help lists direct triage keys and fix now", () => {
+  const help = harness(list(1), 40).visible().map(strip).join(" ").replace(/║/g, " ").replace(/\s+/g, " ");
+  assert.match(help, /A apply/);
+  assert.match(help, /R reject/);
+  assert.match(help, /D defer/);
+  assert.match(help, /Space cycle/);
+  assert.match(help, /F fix now/);
+  assert.doesNotMatch(help, /O defer-override/);
 });

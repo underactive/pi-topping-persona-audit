@@ -24,6 +24,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - **Headless progress table displays generated token counts** — instead of character counts, uses abbreviated formatting (e.g., "1.2K tokens") for easier reading in the ACTIVITY column.
 
+- **Findings review hotkeys** — `A`, `R`, and `D` now set the selected finding to apply, reject, or defer directly; `O` defer-override is removed while `Space` continues to cycle statuses.
+
 ## [0.1.3] - 2026-08-21
 
 ### Fixed
