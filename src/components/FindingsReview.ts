@@ -544,7 +544,7 @@ export class FindingsReview implements Component {
     const t = this.theme;
     // Side walls cost two columns, so all content is laid out one frame in.
     const inner = Math.max(0, width - 2);
-    const keybinds = "↑↓ navigate · PgUp/PgDn page · A apply · R reject · D defer · Space cycle (A→R→D→A) · F fix now · H handoff-deferred · Enter finish · Esc Esc cancel";
+    const keybinds = "↑↓ navigate · PgUp/PgDn page · A apply · R reject · D defer · Space cycle (A→R→D→A) · F fix now · H handoff-deferred · Enter finish · Esc cancel";
     const header = [
       renderFramedTop(t, inner, `Findings Review (${this.items.length} total)`),
       ...this.wordWrap(keybinds, Math.max(2, inner - 1)).map((line) => " " + t.fg("dim", line)),

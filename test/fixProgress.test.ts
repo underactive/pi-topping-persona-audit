@@ -44,7 +44,7 @@ test("the working view names the phase, the finding, and the cancel key", (t) =>
   assert.ok(lines.some((l) => l.includes("Fix Now — src/a.ts")));
   assert.ok(lines.some((l) => l.includes("src/a.ts:12 · security/high")));
   assert.ok(lines.some((l) => l.includes("implementing fix")));
-  assert.ok(lines.some((l) => l.includes("Esc Esc cancel fix")));
+  assert.ok(lines.some((l) => l.includes("Esc cancel fix")));
 });
 
 test("telemetry snapshots surface in the working view", (t) => {

@@ -358,5 +358,7 @@ test("the keybind help lists direct triage keys and fix now", () => {
   assert.match(help, /PgUp\/PgDn page/);
   assert.match(help, /Space cycle/);
   assert.match(help, /F fix now/);
+  assert.match(help, /Esc cancel/);
+  assert.doesNotMatch(help, /Esc Esc cancel/);
   assert.doesNotMatch(help, /O defer-override/);
 });

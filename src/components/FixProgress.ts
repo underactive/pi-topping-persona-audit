@@ -300,7 +300,7 @@ export class FixProgress implements Component {
     } else if (this.awaitingCancelConfirm) {
       lines.push(" " + t.fg("warning", "Press Esc again to cancel this fix — clean edits will be reverted"));
     } else {
-      lines.push(" " + t.fg("dim", "Esc Esc cancel fix"));
+      lines.push(" " + t.fg("dim", "Esc cancel fix"));
     }
     lines.push(renderFramedBottom(t, inner));
     return lines;
