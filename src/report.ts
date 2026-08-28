@@ -9,6 +9,7 @@
 import { lstat, mkdir, realpath, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 import { normalizeFindingText, normalizeMultilineText } from "./dedup.ts";
+import { HANDOFF_SCHEMA_VERSION, renderHandoffResumeBlock } from "./handoff.ts";
 import type {
   AuditMode,
   AuditSummary,
@@ -47,6 +48,10 @@ export interface ReportContext {
   phaseModels?: Partial<Record<string, string>>;
   /** Wall-clock duration of the run at the moment the report is rendered. */
   totalMs?: number;
+  /** Handoff file a resumed run loaded its findings from (handoff mode only). */
+  handoffSource?: string;
+  /** Resume degradation notes: HEAD mismatch, dropped findings (handoff mode only). */
+  resumeNotes?: string[];
 }
 
 /** Collection-integrity diagnostics rendered into every report flavor. */
@@ -65,6 +70,8 @@ export interface DeferredHandoffContext {
   isoDate: string;
   scope: string;
   reviewers: string[];
+  /** HEAD commit at handoff-write time; absent outside a git repo. */
+  headCommit?: string;
 }
 
 export function makeSlug(date: Date = new Date()): { slug: string; iso: string } {
@@ -211,13 +218,17 @@ export function formatDuration(ms: number): string {
 
 function overviewSection(ctx: ReportContext, opts: { inProgress?: boolean } = {}): string {
   const modeLine =
-    ctx.mode === "full"
-      ? `- Mode: full-tree scan (no git required)`
-      : `- Mode: diff-based (base: ${ctx.baseLabel})`;
+    ctx.mode === "handoff"
+      ? `- Mode: resumed from handoff${ctx.handoffSource ? ` (${ctx.handoffSource})` : ""}`
+      : ctx.mode === "full"
+        ? `- Mode: full-tree scan (no git required)`
+        : `- Mode: diff-based (base: ${ctx.baseLabel})`;
   const filesLine =
-    ctx.mode === "full"
-      ? `- Files audited: ${ctx.fileCount} (full-tree scan${ctx.truncated ? `, capped from ${ctx.totalFilesFound} found — see note below` : ""})`
-      : `- Files audited: ${ctx.fileCount} (${ctx.changedCount} changed, ${ctx.importerCount} importers)`;
+    ctx.mode === "handoff"
+      ? `- Files audited: ${ctx.fileCount} (from deferred findings)`
+      : ctx.mode === "full"
+        ? `- Files audited: ${ctx.fileCount} (full-tree scan${ctx.truncated ? `, capped from ${ctx.totalFilesFound} found — see note below` : ""})`
+        : `- Files audited: ${ctx.fileCount} (${ctx.changedCount} changed, ${ctx.importerCount} importers)`;
   const lines = [
     "## Audit Overview",
     "",
@@ -225,9 +236,18 @@ function overviewSection(ctx: ReportContext, opts: { inProgress?: boolean } = {}
     modeLine,
     filesLine,
     `- Reviewers: ${ctx.reviewers.join(", ")}`,
-    `- Passes per reviewer: ${ctx.passes}`,
-    `- Reviewer runs: ${ctx.cacheHits} from cache, ${ctx.freshRuns} fresh`,
+    // A resumed run spawns no reviewer passes, so the pass/run tallies would
+    // render as a misleading "0".
+    ...(ctx.mode === "handoff"
+      ? []
+      : [
+          `- Passes per reviewer: ${ctx.passes}`,
+          `- Reviewer runs: ${ctx.cacheHits} from cache, ${ctx.freshRuns} fresh`,
+        ]),
   ];
+  for (const note of ctx.resumeNotes ?? []) {
+    lines.push(`- Note: ${note}`);
+  }
   if (ctx.totalMs !== undefined) {
     lines.push(`- Total time: ${formatDuration(ctx.totalMs)}${opts.inProgress ? " (in progress)" : ""}`);
   }
@@ -326,13 +346,23 @@ export function renderDeferredHandoff(ctx: DeferredHandoffContext, deferred: Fin
     `- Scope: \`${ctx.scope}\``,
     `- Reviewers: ${reviewers}`,
     "",
+    renderHandoffResumeBlock({
+      schemaVersion: HANDOFF_SCHEMA_VERSION,
+      writtenAt: ctx.isoDate,
+      scope: ctx.scope,
+      reviewers: ctx.reviewers,
+      ...(ctx.headCommit ? { headCommit: ctx.headCommit } : {}),
+      findings: deferred,
+    }),
   ].join("\n");
 }
 
 function collectionSection(ctx: ReportContext, diag: CollectionDiagnostics): string {
   const lines = ["### Collection Integrity", ""];
   const c = diag.collection;
-  if (!c) {
+  if (ctx.mode === "handoff") {
+    lines.push("- Skipped — findings were loaded from a deferred-findings handoff, not collected in this run.");
+  } else if (!c) {
     lines.push("- Findings collection did not run (audit ended before collection).");
   } else {
     lines.push(
@@ -667,7 +697,13 @@ export function renderChatSummary(summary: AuditSummary): string {
     ...(summary.verificationRounds.length > 1
       ? [`Fix + verify rounds: ${summary.verificationRounds.length} (final round ${summary.verificationRounds.length}: ${summary.verification})`]
       : []),
-    `Collection: ${summary.receivedRuns}/${summary.expectedRuns} reviewer passes received | ${summary.malformedCount} malformed | ${summary.missingCount} missing | cache ${summary.cacheHits} hit${summary.cacheHits === 1 ? "" : "s"} / ${summary.freshRuns} fresh`,
+    // A resumed handoff run spawns no reviewer passes (expectedRuns 0); a
+    // "0/0 received" collection line would read as a failure.
+    ...(summary.expectedRuns > 0
+      ? [
+          `Collection: ${summary.receivedRuns}/${summary.expectedRuns} reviewer passes received | ${summary.malformedCount} malformed | ${summary.missingCount} missing | cache ${summary.cacheHits} hit${summary.cacheHits === 1 ? "" : "s"} / ${summary.freshRuns} fresh`,
+        ]
+      : []),
   ];
   for (const note of summary.verificationNotes) lines.push(`Note: ${normalizeFindingText(note)}`);
   if (summary.failureNote) lines.push(`Note: ${summary.failureNote}`);

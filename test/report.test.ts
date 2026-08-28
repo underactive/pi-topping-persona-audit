@@ -167,6 +167,17 @@ test("deferred handoff renders a valid empty handoff", () => {
   assert.ok(handoff.includes("No findings were deferred."));
 });
 
+test("deferred handoff embeds a machine-readable resume block", () => {
+  const handoff = renderDeferredHandoff(
+    { ...handoffCtx, headCommit: "b".repeat(40) },
+    [finding({ recommendation: "defer" })],
+  );
+  assert.ok(handoff.includes("## Resume Data"));
+  assert.ok(handoff.includes("<!-- persona-audit-resume:v1 -->"));
+  assert.ok(handoff.includes('"schemaVersion":1'));
+  assert.ok(handoff.includes(`"headCommit":"${"b".repeat(40)}"`));
+});
+
 // ── Full-tree mode overview ──────────────────────────────────────────
 
 test("full-tree mode overview omits diff-based/base wording and shows scan mode", () => {
@@ -184,6 +195,23 @@ test("full-tree mode overview surfaces the truncation note when capped", () => {
   assert.ok(report.includes("capped from 812 found"));
   assert.ok(report.includes("the scan found 812 files"));
   assert.ok(report.includes("not sampled"));
+});
+
+// ── Handoff-resume mode overview ────────────────────────────────
+
+test("handoff mode overview names the source handoff and resume notes", () => {
+  const handoffModeCtx: ReportContext = {
+    ...ctx,
+    mode: "handoff",
+    handoffSource: ".pi/persona-audit/handoffs/old_deferred-findings.md",
+    resumeNotes: ["1 finding dropped — target file no longer exists: src/gone.ts:3"],
+  };
+  const report = renderCompactReport(handoffModeCtx, { reason: "none-accepted", deferred: [], rejected: [], diagnostics });
+  assert.ok(report.includes("Mode: resumed from handoff (.pi/persona-audit/handoffs/old_deferred-findings.md)"));
+  assert.ok(report.includes("Files audited: 5 (from deferred findings)"));
+  assert.ok(report.includes("Note: 1 finding dropped — target file no longer exists: src/gone.ts:3"));
+  assert.ok(!report.includes("diff-based"));
+  assert.ok(!report.includes("full-tree scan"));
 });
 
 // ── Compact report ──────────────────────────────────────────────────────

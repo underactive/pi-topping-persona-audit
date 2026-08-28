@@ -87,7 +87,7 @@ export interface ReviewerSelection {
 }
 
 /** How the file manifest was scoped for this audit run. */
-export type AuditMode = "diff" | "full";
+export type AuditMode = "diff" | "full" | "handoff";
 
 // ── Findings review types ───────────────────────────────────────────────────
 

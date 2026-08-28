@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Resume from a deferred-findings handoff** — `/persona-audit --handoff <path>` re-opens a handoff written during triage (`H` in the findings review) and resumes the audit from there: the reviewer and adjudication phases are skipped, the deferred findings load straight into the findings review overlay (pre-set to apply), and the implement/verify pipeline plus final report run as usual. Handoffs now embed a schema-versioned machine-readable payload (lossless findings JSON plus the HEAD commit at write time); on resume the run warns when the tree has moved since the handoff was written and drops findings whose target file no longer exists. Handoffs written before this release have no payload and cannot be resumed.
+
 - **Tool-call and cost columns in the progress table** — rows now show cumulative tool calls and model cost (`$0.000`, or `—` when the model cannot be resolved) beside turns and elapsed time; the stats block still sheds as one unit on narrow terminals
 
 - **Diff base hash in the progress table header** — in `--diff` mode the title bar now shows the short hash of the commit the audit diffed from (e.g. `src/components · @a1b2c3d`), reporting the merge-base when `--base` names a ref rather than that ref's own tip; the hash also persists into the frozen transcript snapshot

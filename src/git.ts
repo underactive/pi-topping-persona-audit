@@ -19,6 +19,16 @@ async function git(cwd: string, args: string[]): Promise<string> {
   return stdout;
 }
 
+/** HEAD commit hash, or undefined outside a git repo — handoffs must stay writable in non-git runs. */
+export async function gitHeadCommit(cwd: string): Promise<string | undefined> {
+  try {
+    const head = (await git(cwd, ["rev-parse", "HEAD"])).trim();
+    return head || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Working-tree state of one file, from `git status --porcelain`. */
 export interface FileGitStatus {
   file: string;

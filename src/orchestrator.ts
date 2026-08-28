@@ -172,6 +172,12 @@ export interface AuditInput {
   /** Owned by the command handler (index.ts), not ctx.signal — see cancellation note above. */
   signal?: AbortSignal;
   /**
+   * Resume from a deferred-findings handoff: skip reviewer passes, collection,
+   * re-voice, and adjudication, and seed triage with these findings (already
+   * validated, staleness-filtered, and status-normalized by the caller).
+   */
+  resume?: { handoffPath: string; findings: Finding[]; notes: string[] };
+  /**
    * Checkpoint invoked once per round after a reviewer batch settles with
    * failures. Omitted (as in tests) means every failed pass is skipped, which
    * is how the audit behaved before the checkpoint existed.
@@ -1202,6 +1208,10 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
     cacheHits: 0,
     freshRuns: 0,
   };
+  if (input.resume) {
+    reportCtx.handoffSource = input.resume.handoffPath;
+    if (input.resume.notes.length > 0) reportCtx.resumeNotes = input.resume.notes;
+  }
 
   const runRecords: ReviewerRunRecord[] = [];
   const diagnostics: CollectionDiagnostics = { failedRuns: [] };
@@ -1326,8 +1336,12 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
       );
     }
     // Validate personalities up front so we fail before spawning anything.
-    for (const reviewer of selection.reviewers) {
-      buildReviewerSystemPrompt(reviewerAgent, reviewer, input.temperament);
+    // Skipped on resume: handoff reviewer names are historical labels, not
+    // personalities to spawn.
+    if (!input.resume) {
+      for (const reviewer of selection.reviewers) {
+        buildReviewerSystemPrompt(reviewerAgent, reviewer, input.temperament);
+      }
     }
 
     // Resolve each phase's effective model/thinking: the post-ExpertPicker
@@ -1343,13 +1357,13 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
     let verifyModel = resolvePhaseModel(input.phaseModels, "verify", verifierAgent.model);
     let verifyChoice = input.phaseModels?.verify;
     reportCtx.phaseModels = {
-      Review: reviewModel.label,
+      ...(input.resume ? {} : { Review: reviewModel.label }),
       Triage: triageModel.label,
       Implement: implementModel.label,
       Verify: verifyModel.label,
     };
     progress?.setPhaseModels({
-      Review: reviewModel.model,
+      ...(input.resume ? {} : { Review: reviewModel.model }),
       Triage: triageModel.model,
       Implement: implementModel.model,
       Verify: verifyModel.model,
@@ -1391,7 +1405,7 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
     runSummary.reviewTotal = cachedRuns + pendingTasks.length;
     runSummary.reviewDone = cachedRuns;
     refreshSummary();
-    progress?.setActivePhase("Review");
+    if (!input.resume) progress?.setActivePhase("Review");
 
     const freshOutputs: ReviewerOutput[] = [];
     // Passes re-run on a model other than the one the cache key was built from.
@@ -1527,158 +1541,169 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
       await saveCache(ctx.cwd, input.cacheKey, [...cachedOutputs, ...cacheableFresh]);
     }
 
-    // ── Step c: deterministic collection + dedup (direct call) ──────────
-    progress?.setActivePhase("Triage");
-    notifyPhase("collecting findings from reviewer passes…");
-    // Deterministic collection is Triage preparation: it decides what the
-    // adjudicator is asked to reconcile, so it belongs in that group.
-    progress?.addRow("Triage", COLLECT_ROW, "collection", { state: "working", statusText: "deduplicating…" });
-    collection = collectReviewerFindings(selection.reviewers, selection.passes, allOutputs);
-    diagnostics.collection = collection;
-    progress?.settleRow(
-      COLLECT_ROW,
-      "done",
-      `${collection.inputCount} raw → ${collection.dedupedFindings.length} unique`,
-    );
-    runSummary.findings = collection.dedupedFindings.length;
-    refreshSummary();
+    // ── Steps c–e: collection, re-voice, adjudication — skipped on resume ──
+    let annotatedFindings: Finding[];
+    if (input.resume) {
+      // Findings were already collected, deduped, and adjudicated in the
+      // original run; the handoff carries them losslessly.
+      progress?.setActivePhase("Triage");
+      annotatedFindings = input.resume.findings;
+      runSummary.findings = annotatedFindings.length;
+      refreshSummary();
+    } else {
+      // ── Step c: deterministic collection + dedup (direct call) ──────────
+      progress?.setActivePhase("Triage");
+      notifyPhase("collecting findings from reviewer passes…");
+      // Deterministic collection is Triage preparation: it decides what the
+      // adjudicator is asked to reconcile, so it belongs in that group.
+      progress?.addRow("Triage", COLLECT_ROW, "collection", { state: "working", statusText: "deduplicating…" });
+      collection = collectReviewerFindings(selection.reviewers, selection.passes, allOutputs);
+      diagnostics.collection = collection;
+      progress?.settleRow(
+        COLLECT_ROW,
+        "done",
+        `${collection.inputCount} raw → ${collection.dedupedFindings.length} unique`,
+      );
+      runSummary.findings = collection.dedupedFindings.length;
+      refreshSummary();
 
-    // ── Step d: no findings → compact report, unless collection failed ──
-    if (collection.dedupedFindings.length === 0) {
-      diagnostics.failedRuns = runRecords.filter((run) => run.status === "failed");
-      const relPath = reportRelPath(slug);
+      // ── Step d: no findings → compact report, unless collection failed ──
+      if (collection.dedupedFindings.length === 0) {
+        diagnostics.failedRuns = runRecords.filter((run) => run.status === "failed");
+        const relPath = reportRelPath(slug);
 
-      if (collection.expectedRuns > 0 && collection.receivedRuns === 0) {
-        const failureDetails = runRecords
-          .filter((run) => run.status === "failed")
-          .map((run) => `${run.reviewer} pass ${run.pass}: ${run.detail ?? "no output"}`)
-          .join("; ");
-        const reason = `All ${collection.expectedRuns} reviewer ${collection.expectedRuns === 1 ? "pass has" : "passes have"} failed${failureDetails ? ` — ${failureDetails}` : ". This typically means the model could not be resolved or the agent session failed to start; see the per-pass failure details above."}. (${collection.missingRuns.length} missing, ${collection.malformed.length} malformed)`;
-        ctx.ui.notify(`persona-audit: ${reason}`, "error");
-        await writeReportFile(ctx.cwd, relPath, renderCollectionFailureReport(report(), { diagnostics, reason }));
+        if (collection.expectedRuns > 0 && collection.receivedRuns === 0) {
+          const failureDetails = runRecords
+            .filter((run) => run.status === "failed")
+            .map((run) => `${run.reviewer} pass ${run.pass}: ${run.detail ?? "no output"}`)
+            .join("; ");
+          const reason = `All ${collection.expectedRuns} reviewer ${collection.expectedRuns === 1 ? "pass has" : "passes have"} failed${failureDetails ? ` — ${failureDetails}` : ". This typically means the model could not be resolved or the agent session failed to start; see the per-pass failure details above."}. (${collection.missingRuns.length} missing, ${collection.malformed.length} malformed)`;
+          ctx.ui.notify(`persona-audit: ${reason}`, "error");
+          await writeReportFile(ctx.cwd, relPath, renderCollectionFailureReport(report(), { diagnostics, reason }));
+          await supersedePartial();
+          return makeSummary("failed", relPath, { findings: 0 }, skippedVerification(), reason);
+        }
+
+        await writeReportFile(
+          ctx.cwd,
+          relPath,
+          renderCompactReport(report(), { reason: "no-findings", deferred: [], rejected: [], diagnostics }),
+        );
         await supersedePartial();
-        return makeSummary("failed", relPath, { findings: 0 }, skippedVerification(), reason);
+        return makeSummary("no-findings", relPath, { findings: 0 }, skippedVerification());
       }
 
-      await writeReportFile(
-        ctx.cwd,
-        relPath,
-        renderCompactReport(report(), { reason: "no-findings", deferred: [], rejected: [], diagnostics }),
-      );
-      await supersedePartial();
-      return makeSummary("no-findings", relPath, { findings: 0 }, skippedVerification());
-    }
+      // ── Step d2: register re-voice (hot registers only, voice-only rewrite) ─
+      // Register-in-JSON is model-dependent: some review models write neutral
+      // structured output during long agentic sessions no matter what the task
+      // demands, but comply in a short no-tools call — which this is.
+      const revoiceTargets = selectRevoiceTargets(collection.dedupedFindings, input.temperament);
+      if (revoiceTargets.length > 0 && !input.signal?.aborted) {
+        notifyPhase("re-voicing findings into the configured register…");
+        progress?.addRow("Triage", REVOICE_ROW, "register re-voice", { state: "working", statusText: "re-voicing…" });
+        const revoicePersonality = getPersonality(LINUS_TORVALDS, input.temperament);
+        const revoiceResult = await runAgentSession({
+          agentName: "register re-voice",
+          systemPrompt: ["Obey the following persona exactly.", "", "## Your Reviewer Personality", "", revoicePersonality ?? ""].join("\n"),
+          tools: [],
+          model: reviewModel.model,
+          thinking: reviewModel.thinking,
+          task: buildRevoiceTask(revoiceTargets, input.temperament ?? DEFAULT_TEMPERAMENT),
+          cwd: ctx.cwd,
+          modelRegistry: ctx.modelRegistry,
+          signal: input.signal,
+          idleTimeoutMs: AGENT_IDLE_TIMEOUT_MS,
+          onProgress: (snapshot) => progress?.applyProgress(REVOICE_ROW, snapshot),
+        });
+        if (isFailedRun(revoiceResult) || !revoiceResult.allText.trim()) {
+          diagnostics.revoiceNote = `register re-voice failed (${
+            revoiceResult.errorMessage || (revoiceResult.aborted ? "aborted" : revoiceResult.stopReason) || "no output"
+          }) — findings keep the reviewer's original text`;
+          progress?.settleRow(REVOICE_ROW, revoiceResult.aborted ? "cancelled" : "error", "kept original text");
+        } else {
+          const revoiced = applyRevoicedFindings(
+            collection.dedupedFindings,
+            revoiceTargets.map((t) => t.index),
+            [revoiceResult.finalText, revoiceResult.allText],
+          );
+          collection.dedupedFindings = revoiced.findings;
+          diagnostics.revoiceNote = revoiced.note;
+          progress?.settleRow(REVOICE_ROW, "done", `${revoiced.matched}/${revoiceTargets.length} re-voiced`);
+        }
+      }
 
-    // ── Step d2: register re-voice (hot registers only, voice-only rewrite) ─
-    // Register-in-JSON is model-dependent: some review models write neutral
-    // structured output during long agentic sessions no matter what the task
-    // demands, but comply in a short no-tools call — which this is.
-    const revoiceTargets = selectRevoiceTargets(collection.dedupedFindings, input.temperament);
-    if (revoiceTargets.length > 0 && !input.signal?.aborted) {
-      notifyPhase("re-voicing findings into the configured register…");
-      progress?.addRow("Triage", REVOICE_ROW, "register re-voice", { state: "working", statusText: "re-voicing…" });
-      const revoicePersonality = getPersonality(LINUS_TORVALDS, input.temperament);
-      const revoiceResult = await runAgentSession({
-        agentName: "register re-voice",
-        systemPrompt: ["Obey the following persona exactly.", "", "## Your Reviewer Personality", "", revoicePersonality ?? ""].join("\n"),
-        tools: [],
-        model: reviewModel.model,
-        thinking: reviewModel.thinking,
-        task: buildRevoiceTask(revoiceTargets, input.temperament ?? DEFAULT_TEMPERAMENT),
+      // ── Step e: adjudicator reconcile (read-only agent session) ────────────
+      notifyPhase("adjudicating findings…");
+      progress?.addRow("Triage", RECONCILE_ROW, "adjudicator · reconcile", {
+        state: "working",
+        statusText: "annotating…",
+      });
+      const reconcileOptions: HeadlessOptions = {
+        agentName: "adjudicator reconcile",
+        systemPrompt: adjudicatorAgent.systemPrompt,
+        tools: READ_ONLY_TOOLS,
+        model: triageModel.model,
+        thinking: triageModel.thinking,
+        task: buildReconcileTask(input, baseLabel, collection.dedupedFindings),
         cwd: ctx.cwd,
         modelRegistry: ctx.modelRegistry,
         signal: input.signal,
         idleTimeoutMs: AGENT_IDLE_TIMEOUT_MS,
-        onProgress: (snapshot) => progress?.applyProgress(REVOICE_ROW, snapshot),
-      });
-      if (isFailedRun(revoiceResult) || !revoiceResult.allText.trim()) {
-        diagnostics.revoiceNote = `register re-voice failed (${
-          revoiceResult.errorMessage || (revoiceResult.aborted ? "aborted" : revoiceResult.stopReason) || "no output"
-        }) — findings keep the reviewer's original text`;
-        progress?.settleRow(REVOICE_ROW, revoiceResult.aborted ? "cancelled" : "error", "kept original text");
-      } else {
-        const revoiced = applyRevoicedFindings(
-          collection.dedupedFindings,
-          revoiceTargets.map((t) => t.index),
-          [revoiceResult.finalText, revoiceResult.allText],
-        );
-        collection.dedupedFindings = revoiced.findings;
-        diagnostics.revoiceNote = revoiced.note;
-        progress?.settleRow(REVOICE_ROW, "done", `${revoiced.matched}/${revoiceTargets.length} re-voiced`);
+        onProgress: (snapshot) => progress?.applyProgress(RECONCILE_ROW, snapshot),
+      };
+      let reconcileResult = await runAgentSession(reconcileOptions);
+      // A transient provider error drops every recommendation from this phase, so it gets one retry before being recorded as failed.
+      // A "Model not found" error is resolveModelRef rejecting the ref before any network call — deterministic and permanent, so retrying just wastes 5s.
+      if (
+        isFailedRun(reconcileResult) &&
+        reconcileResult.stopReason === "error" &&
+        !isPermanentRunFailure(reconcileResult.errorMessage) &&
+        !input.signal?.aborted
+      ) {
+        await new Promise((r) => setTimeout(r, 5_000));
+        reconcileResult = await runAgentSession(reconcileOptions);
       }
-    }
 
-    // ── Step e: adjudicator reconcile (read-only agent session) ────────────
-    notifyPhase("adjudicating findings…");
-    progress?.addRow("Triage", RECONCILE_ROW, "adjudicator · reconcile", {
-      state: "working",
-      statusText: "annotating…",
-    });
-    const reconcileOptions: HeadlessOptions = {
-      agentName: "adjudicator reconcile",
-      systemPrompt: adjudicatorAgent.systemPrompt,
-      tools: READ_ONLY_TOOLS,
-      model: triageModel.model,
-      thinking: triageModel.thinking,
-      task: buildReconcileTask(input, baseLabel, collection.dedupedFindings),
-      cwd: ctx.cwd,
-      modelRegistry: ctx.modelRegistry,
-      signal: input.signal,
-      idleTimeoutMs: AGENT_IDLE_TIMEOUT_MS,
-      onProgress: (snapshot) => progress?.applyProgress(RECONCILE_ROW, snapshot),
-    };
-    let reconcileResult = await runAgentSession(reconcileOptions);
-    // A transient provider error drops every recommendation from this phase, so it gets one retry before being recorded as failed.
-    // A "Model not found" error is resolveModelRef rejecting the ref before any network call — deterministic and permanent, so retrying just wastes 5s.
-    if (
-      isFailedRun(reconcileResult) &&
-      reconcileResult.stopReason === "error" &&
-      !isPermanentRunFailure(reconcileResult.errorMessage) &&
-      !input.signal?.aborted
-    ) {
-      await new Promise((r) => setTimeout(r, 5_000));
-      reconcileResult = await runAgentSession(reconcileOptions);
-    }
-
-    let annotatedFindings = collection.dedupedFindings;
-    if (isFailedRun(reconcileResult)) {
-      annotatedFindings = collection.dedupedFindings.map((f) => ({ ...f, recommendation: "defer" }));
-      diagnostics.annotationNote = `adjudicator reconcile failed (${
-        reconcileResult.errorMessage || reconcileResult.stopReason || "aborted"
-      }) — findings triaged without recommendations`;
-      progress?.settleRow(RECONCILE_ROW, "error", "no recommendations");
-    } else {
-      let annotated = annotateFindings(collection.dedupedFindings, [
-        reconcileResult.finalText,
-        reconcileResult.allText,
-      ]);
-      // A session that succeeded but produced nothing usable gets one more
-      // chance before every finding falls back to a reason-less defer.
-      if (annotated.matched === 0 && collection.dedupedFindings.length > 0 && !input.signal?.aborted) {
-        progress?.startRow(RECONCILE_ROW, "output unusable — retrying…");
-        const retryRun = await runAgentSession(reconcileOptions);
-        if (!isFailedRun(retryRun)) {
-          const retried = annotateFindings(collection.dedupedFindings, [retryRun.finalText, retryRun.allText]);
-          if (retried.matched > 0) {
-            annotated = retried;
-          } else if (retried.note) {
-            annotated = { ...retried, note: `${retried.note} (after one retry)` };
+      annotatedFindings = collection.dedupedFindings;
+      if (isFailedRun(reconcileResult)) {
+        annotatedFindings = collection.dedupedFindings.map((f) => ({ ...f, recommendation: "defer" }));
+        diagnostics.annotationNote = `adjudicator reconcile failed (${
+          reconcileResult.errorMessage || reconcileResult.stopReason || "aborted"
+        }) — findings triaged without recommendations`;
+        progress?.settleRow(RECONCILE_ROW, "error", "no recommendations");
+      } else {
+        let annotated = annotateFindings(collection.dedupedFindings, [
+          reconcileResult.finalText,
+          reconcileResult.allText,
+        ]);
+        // A session that succeeded but produced nothing usable gets one more
+        // chance before every finding falls back to a reason-less defer.
+        if (annotated.matched === 0 && collection.dedupedFindings.length > 0 && !input.signal?.aborted) {
+          progress?.startRow(RECONCILE_ROW, "output unusable — retrying…");
+          const retryRun = await runAgentSession(reconcileOptions);
+          if (!isFailedRun(retryRun)) {
+            const retried = annotateFindings(collection.dedupedFindings, [retryRun.finalText, retryRun.allText]);
+            if (retried.matched > 0) {
+              annotated = retried;
+            } else if (retried.note) {
+              annotated = { ...retried, note: `${retried.note} (after one retry)` };
+            }
           }
         }
+        annotatedFindings = annotated.findings;
+        diagnostics.annotationNote = annotated.note;
+        progress?.settleRow(
+          RECONCILE_ROW,
+          annotated.matched > 0 ? "done" : "error",
+          `${annotated.matched}/${collection.dedupedFindings.length} annotated`,
+        );
       }
-      annotatedFindings = annotated.findings;
-      diagnostics.annotationNote = annotated.note;
-      progress?.settleRow(
-        RECONCILE_ROW,
-        annotated.matched > 0 ? "done" : "error",
-        `${annotated.matched}/${collection.dedupedFindings.length} annotated`,
-      );
-    }
 
-    if (input.signal?.aborted) {
-      const relPath = await writePartial("cancelled", "Run aborted during adjudication.");
-      progress?.settleOpenRows("cancelled", "aborted");
-      return makeSummary("cancelled", relPath, { findings: collection.dedupedFindings.length }, skippedVerification());
+      if (input.signal?.aborted) {
+        const relPath = await writePartial("cancelled", "Run aborted during adjudication.");
+        progress?.settleOpenRows("cancelled", "aborted");
+        return makeSummary("cancelled", relPath, { findings: collection.dedupedFindings.length }, skippedVerification());
+      }
     }
 
     // ── Step f: findings review TUI (direct call) ───────────────────────

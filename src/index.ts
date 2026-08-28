@@ -8,6 +8,9 @@ import type { Dirent } from "node:fs";
 import { lstat, readdir, readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { runAudit } from "./orchestrator.ts";
+import { filterExistingFindings, parseHandoffPayload, type HandoffPayload } from "./handoff.ts";
+import { gitHeadCommit } from "./git.ts";
+import { resolveTargetPath } from "./snapshot.ts";
 import { REVIEWER_OUTPUT_CONTRACT, getPersonality } from "./skillContent.ts";
 import { renderChatSummary } from "./report.ts";
 import {
@@ -32,7 +35,7 @@ import {
   type PhaseModelSelection,
   type Temperament,
 } from "./modelConfig.ts";
-import type { ReviewerSelection } from "./types.ts";
+import type { AuditMode, Finding, ReviewerSelection } from "./types.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -484,13 +487,15 @@ export default function (pi: ExtensionAPI): void {
 
   // ── /persona-audit command ─────────────────────────────────────
   pi.registerCommand("persona-audit", {
-    description: "Run a multi-persona code audit on a deterministic file manifest (--diff or --full)",
+    description: "Run a multi-persona code audit on a deterministic file manifest (--diff, --full, or --handoff <path>)",
     handler: async (args, ctx) => {
       const argsList = args.trim().split(/\s+/);
       let useDiff = false;
       let useFull = false;
       let baseCommit: string | undefined;
+      let handoffPath: string | undefined;
       let scope = ".";
+      let scopeGiven = false;
 
       for (let i = 0; i < argsList.length; i++) {
         const arg = argsList[i];
@@ -505,12 +510,29 @@ export default function (pi: ExtensionAPI): void {
             return;
           }
           baseCommit = next;
+        } else if (arg === "--handoff") {
+          const next = argsList[++i];
+          if (!next || next.startsWith("-")) {
+            ctx.ui.notify("Error: --handoff requires a path to a deferred-findings handoff file.", "error");
+            return;
+          }
+          handoffPath = next;
         } else if (arg && !arg.startsWith("-")) {
           scope = arg;
+          scopeGiven = true;
         }
       }
 
-      if (useDiff === useFull) {
+      if (handoffPath !== undefined) {
+        if (useDiff || useFull || baseCommit !== undefined || scopeGiven) {
+          ctx.ui.notify(
+            "Error: --handoff cannot be combined with --diff, --full, --base, or a scope path. " +
+              "Usage: /persona-audit --handoff <path-to-deferred-findings.md>",
+            "error",
+          );
+          return;
+        }
+      } else if (useDiff === useFull) {
         ctx.ui.notify(
           "Error: exactly one of --diff or --full is required. " +
             "--diff (git-based, requires a git repository): /persona-audit --diff [--base <commit>] [path]. " +
@@ -524,7 +546,7 @@ export default function (pi: ExtensionAPI): void {
         ctx.ui.notify("Note: --base only applies to --diff mode and will be ignored.", "warning");
       }
 
-      const mode: "diff" | "full" = useFull ? "full" : "diff";
+      const mode: AuditMode = handoffPath !== undefined ? "handoff" : useFull ? "full" : "diff";
 
       // Guard: expert picker + findings review require TUI mode
       if (ctx.mode !== "tui") {
@@ -533,7 +555,14 @@ export default function (pi: ExtensionAPI): void {
       }
 
       // ── Step 1: Programmatic file scan (no LLM) ─────────────────────
-      ctx.ui.notify(mode === "full" ? "Scanning full directory tree…" : "Scanning changed files…", "info");
+      ctx.ui.notify(
+        mode === "handoff"
+          ? "Loading deferred-findings handoff…"
+          : mode === "full"
+            ? "Scanning full directory tree…"
+            : "Scanning changed files…",
+        "info",
+      );
 
       let fileManifest: string[];
       let fileCount: number;
@@ -542,8 +571,61 @@ export default function (pi: ExtensionAPI): void {
       let truncated = false;
       let totalFilesFound: number | undefined;
       let diffBaseHash: string | undefined;
+      let resume: { handoffPath: string; findings: Finding[]; notes: string[] } | undefined;
+      let handoffPayload: HandoffPayload | undefined;
 
-      if (mode === "diff") {
+      if (mode === "handoff") {
+        try {
+          const abs = path.isAbsolute(handoffPath!) ? handoffPath! : path.resolve(ctx.cwd, handoffPath!);
+          handoffPayload = parseHandoffPayload(await readFile(abs, "utf-8"));
+        } catch (error) {
+          ctx.ui.notify(
+            `Failed to load handoff: ${error instanceof Error ? error.message : String(error)}`,
+            "error",
+          );
+          return;
+        }
+
+        const notes: string[] = [];
+        const head = await gitHeadCommit(ctx.cwd);
+        if (handoffPayload.headCommit && head && handoffPayload.headCommit !== head) {
+          const note = `the tree has moved since the handoff was written (handoff HEAD ${handoffPayload.headCommit.slice(0, 7)}, current ${head.slice(0, 7)}) — line numbers may be stale`;
+          notes.push(note);
+          ctx.ui.notify(`persona-audit: ${note}`, "warning");
+        }
+
+        // Handoff content is untrusted input feeding edit-capable agents:
+        // resolveTargetPath rejects escapes, and missing files are dropped.
+        const existing = new Set<string>();
+        for (const file of new Set(handoffPayload.findings.map((f) => f.file))) {
+          const absFile = resolveTargetPath(ctx.cwd, file);
+          if (!absFile) continue;
+          try {
+            if ((await lstat(absFile)).isFile()) existing.add(file);
+          } catch {
+            /* missing file — dropped below */
+          }
+        }
+        const { kept, dropped } = filterExistingFindings(handoffPayload.findings, (file) => existing.has(file));
+        if (dropped.length > 0) {
+          const list = dropped.map((f) => (f.line > 0 ? `${f.file}:${f.line}` : f.file)).join(", ");
+          const note = `${dropped.length} finding${dropped.length === 1 ? "" : "s"} dropped — target file no longer exists or is not a regular file: ${list}`;
+          notes.push(note);
+          ctx.ui.notify(`persona-audit: ${note}`, "warning");
+        }
+        if (kept.length === 0) {
+          ctx.ui.notify("None of the handoff's target files still exist — nothing to resume.", "error");
+          return;
+        }
+
+        // Resuming means the user intends to fix: pre-set everything to apply
+        // (the FindingsReview overlay initializes status from recommendation).
+        const findings = kept.map((f): Finding => ({ ...f, recommendation: "apply" }));
+        resume = { handoffPath: handoffPath!, findings, notes };
+        scope = handoffPayload.scope;
+        fileManifest = [...new Set(findings.map((f) => f.file))].sort();
+        fileCount = fileManifest.length;
+      } else if (mode === "diff") {
         try {
           const { base, hash } = await resolveDiffBase(ctx.cwd, baseCommit);
           diffBaseHash = hash;
@@ -597,56 +679,76 @@ export default function (pi: ExtensionAPI): void {
       // ── Step 2: expert picker (live run-cost preview), then the
       //    per-phase model + thinking picker. Esc on the model picker steps
       //    back here, reopening the expert picker with the same selection.
-      const { showExpertPicker } = await import("./components/ExpertPicker.ts");
+      //    A handoff resume skips the expert picker — reviewers are the
+      //    original run's historical labels — but still needs the model
+      //    picker (the Implement/Verify and Fix Now models matter).
       let selection: ReviewerSelection;
       let phaseModels: PhaseModelSelection;
-      let restoredReviewers: ReviewerSelection | undefined;
-      let restoredModels: PhaseModelSelection | undefined;
-      for (;;) {
-        const reviewers = await showExpertPicker(ctx, fileCount, restoredReviewers);
-        if (!reviewers) {
+      if (mode === "handoff") {
+        const models = await showPhaseModelPicker(ctx, pi.getThinkingLevel());
+        if (models.action !== "start") {
           ctx.ui.notify("Audit cancelled.", "info");
           return;
         }
-        const models = await showPhaseModelPicker(ctx, pi.getThinkingLevel(), restoredModels);
-        if (models.action === "cancel") {
-          ctx.ui.notify("Audit cancelled.", "info");
-          return;
+        selection = { reviewers: handoffPayload!.reviewers, passes: 0 };
+        phaseModels = models.selections;
+      } else {
+        const { showExpertPicker } = await import("./components/ExpertPicker.ts");
+        let restoredReviewers: ReviewerSelection | undefined;
+        let restoredModels: PhaseModelSelection | undefined;
+        for (;;) {
+          const reviewers = await showExpertPicker(ctx, fileCount, restoredReviewers);
+          if (!reviewers) {
+            ctx.ui.notify("Audit cancelled.", "info");
+            return;
+          }
+          const models = await showPhaseModelPicker(ctx, pi.getThinkingLevel(), restoredModels);
+          if (models.action === "cancel") {
+            ctx.ui.notify("Audit cancelled.", "info");
+            return;
+          }
+          if (models.action === "start") {
+            selection = reviewers;
+            phaseModels = models.selections;
+            break;
+          }
+          restoredReviewers = reviewers;
+          restoredModels = models.selections;
         }
-        if (models.action === "start") {
-          selection = reviewers;
-          phaseModels = models.selections;
-          break;
-        }
-        restoredReviewers = reviewers;
-        restoredModels = models.selections;
       }
 
       const settings = loadPersonaAuditConfig();
 
       let cacheKey: string | undefined;
-      try {
-        cacheKey = await buildReviewerCacheKey(
-          ctx.cwd,
-          fileManifest,
-          selection.reviewers,
-          selection.passes,
-          mode,
-          settings.temperament,
-          phaseModels.review,
-        );
-      } catch (error) {
-        ctx.ui.notify(
-          `Skipping incremental cache because cache key construction failed: ${error instanceof Error ? error.message : String(error)}`,
-          "warning",
-        );
+      if (mode !== "handoff") {
+        try {
+          cacheKey = await buildReviewerCacheKey(
+            ctx.cwd,
+            fileManifest,
+            selection.reviewers,
+            selection.passes,
+            mode,
+            settings.temperament,
+            phaseModels.review,
+          );
+        } catch (error) {
+          ctx.ui.notify(
+            `Skipping incremental cache because cache key construction failed: ${error instanceof Error ? error.message : String(error)}`,
+            "warning",
+          );
+        }
       }
 
-      const modelsNote = ` · Review ${modelRefLabel(phaseModels.review.ref)}/${phaseModels.review.thinking} · Triage ${modelRefLabel(phaseModels.triage.ref)}/${phaseModels.triage.thinking} · Implement ${modelRefLabel(phaseModels.implement.ref)}/${phaseModels.implement.thinking}`;
+      const modelsNote =
+        mode === "handoff"
+          ? ` · Implement ${modelRefLabel(phaseModels.implement.ref)}/${phaseModels.implement.thinking} · Verify ${modelRefLabel(phaseModels.verify.ref)}/${phaseModels.verify.thinking}`
+          : ` · Review ${modelRefLabel(phaseModels.review.ref)}/${phaseModels.review.thinking} · Triage ${modelRefLabel(phaseModels.triage.ref)}/${phaseModels.triage.thinking} · Implement ${modelRefLabel(phaseModels.implement.ref)}/${phaseModels.implement.thinking}`;
       ctx.ui.notify(
-        (mode === "diff"
-          ? `Found ${fileCount} files (${changedFiles.length} changed, ${importers.length} importers) · ${selection.reviewers.length} reviewers selected · ${selection.passes} pass${selection.passes === 1 ? "" : "es"} each`
-          : `Found ${fileCount} files (full-tree scan${truncated ? `, truncated from ${totalFilesFound}` : ""}) · ${selection.reviewers.length} reviewers selected · ${selection.passes} pass${selection.passes === 1 ? "" : "es"} each`) + modelsNote,
+        (mode === "handoff"
+          ? `Resuming ${resume!.findings.length} deferred finding${resume!.findings.length === 1 ? "" : "s"} across ${fileCount} file${fileCount === 1 ? "" : "s"} from ${handoffPath}`
+          : mode === "diff"
+            ? `Found ${fileCount} files (${changedFiles.length} changed, ${importers.length} importers) · ${selection.reviewers.length} reviewers selected · ${selection.passes} pass${selection.passes === 1 ? "" : "es"} each`
+            : `Found ${fileCount} files (full-tree scan${truncated ? `, truncated from ${totalFilesFound}` : ""}) · ${selection.reviewers.length} reviewers selected · ${selection.passes} pass${selection.passes === 1 ? "" : "es"} each`) + modelsNote,
         "info",
       );
 
@@ -682,6 +784,7 @@ export default function (pi: ExtensionAPI): void {
           temperament: settings.temperament,
           maxVerifyRounds: settings.maxVerifyRounds,
           signal: auditController.signal,
+          resume,
           onReviewFailures: (failures, current) =>
             showReviewerRetryPrompt(
               ctx,

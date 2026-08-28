@@ -2,6 +2,7 @@ import type { Component, TUI, KeybindingsManager } from "@earendil-works/pi-tui"
 import { Key, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { ExtensionCommandContext, Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { handoffRelPath, renderDeferredHandoff, writeReportFile } from "../report.ts";
+import { gitHeadCommit } from "../git.ts";
 import type { Finding, FindingRecommendation, FindingsReviewOutcome, FindingsReviewResult, FindingStatus, FixedFinding, ReviewSessionState } from "../types.ts";
 import { FALLBACK_TERMINAL_ROWS, OVERLAY_HEIGHT_PERCENT, OVERLAY_MAX_HEIGHT, renderFramedBottom, renderFramedRow, renderFramedTop, SELECTOR } from "./menuChrome.ts";
 
@@ -550,11 +551,17 @@ export async function showFindingsReview(
 ): Promise<FindingsReviewOutcome> {
   const onWriteHandoff = async (deferred: Finding[]): Promise<string> => {
     const relPath = handoffRelPath(handoff.slug);
+    const headCommit = await gitHeadCommit(ctx.cwd);
     await writeReportFile(
       ctx.cwd,
       relPath,
       renderDeferredHandoff(
-        { isoDate: handoff.isoDate, scope: handoff.scope, reviewers: handoff.reviewers },
+        {
+          isoDate: handoff.isoDate,
+          scope: handoff.scope,
+          reviewers: handoff.reviewers,
+          ...(headCommit ? { headCommit } : {}),
+        },
         deferred,
       ),
     );
