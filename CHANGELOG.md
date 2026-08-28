@@ -28,6 +28,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - **Findings review hotkeys** — `A`, `R`, and `D` now set the selected finding to apply, reject, or defer directly; `O` defer-override is removed while `Space` continues to cycle statuses.
 
+### Fixed
+
+- **Findings review paging** — `PageUp` and `PageDown` now move through the findings by a rendered page while keeping the selected finding visible.
+
 ## [0.1.3] - 2026-08-21
 
 ### Fixed

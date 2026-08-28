@@ -35,6 +35,7 @@ export interface ReviewTheme {
 }
 
 const STATUS_CYCLE: FindingStatus[] = ["apply", "reject", "defer"];
+const PAGE_OVERLAP = 2;
 
 /** Render order for recommendation groups — Apply first, Defer second, Reject last. */
 const RENDER_ORDER: FindingRecommendation[] = ["apply", "defer", "reject"];
@@ -67,6 +68,7 @@ const SEVERITY_WIDTH = 8;
  * Within each recommendation group, findings are sub-grouped by file.
  * The user cycles through apply → reject → defer states per finding.
  * `A`, `R`, and `D` set the selected finding to apply, reject, or defer directly.
+ * `PageUp` and `PageDown` move the selection by one rendered page.
  * Enter returns the structured result; Esc arms a cancel that a second Esc
  * confirms, returning null (the orchestrator writes a partial report and
  * applies no fixes).
@@ -88,6 +90,7 @@ export class FindingsReview implements Component {
   private lastHandoffPath: string | undefined;
   private handoffWriting = false;
   private awaitingCancelConfirm = false;
+  private pendingPageDelta = 0;
   private cachedWidth: number | undefined;
   private cachedHeight: number | undefined;
   private cachedLines: string[] | undefined;
@@ -291,6 +294,18 @@ export class FindingsReview implements Component {
       }
       return;
     }
+
+    if (matchesKey(data, Key.pageUp)) {
+      this.pendingPageDelta--;
+      this.invalidate();
+      return;
+    }
+
+    if (matchesKey(data, Key.pageDown)) {
+      this.pendingPageDelta++;
+      this.invalidate();
+      return;
+    }
   }
 
   /**
@@ -349,6 +364,52 @@ export class FindingsReview implements Component {
     const cache = { width, rationale, suggestedChange, reason };
     item.wrapCache = cache;
     return cache;
+  }
+
+  /**
+   * Apply one page movement after the body has been measured. Findings have
+   * variable heights, so the target is a rendered-line offset rather than a
+   * fixed number of finding rows.
+   */
+  private applyPage(spans: LineSpan[], bodyHeight: number, bodyLength: number, direction: -1 | 1): void {
+    const pageStep = Math.max(1, bodyHeight - PAGE_OVERLAP);
+    const maxOffset = Math.max(0, bodyLength - bodyHeight);
+    const targetOffset = Math.max(0, Math.min(maxOffset, this.scrollOffset + direction * pageStep));
+    if (spans.length === 0) return;
+    if (targetOffset === this.scrollOffset) {
+      // The last page can still contain an unselected finding even when the
+      // offset is already clamped at the end (and likewise at the top).
+      if (bodyLength > bodyHeight && direction > 0 && this.selectedIndex < spans.length - 1) {
+        this.selectedIndex = spans.length - 1;
+      } else if (bodyLength > bodyHeight && direction < 0 && this.selectedIndex > 0) {
+        this.selectedIndex = 0;
+      }
+      return;
+    }
+
+    const step = direction > 0 ? 1 : -1;
+    const fitsTargetPage = (span: LineSpan): boolean =>
+      span.start >= targetOffset && span.end <= targetOffset + bodyHeight;
+    let targetIndex: number | undefined;
+
+    for (let index = this.selectedIndex + step; index >= 0 && index < spans.length; index += step) {
+      if (fitsTargetPage(spans[index]!)) {
+        targetIndex = index;
+        break;
+      }
+    }
+    if (targetIndex === undefined) {
+      for (let index = this.selectedIndex + step; index >= 0 && index < spans.length; index += step) {
+        if (spans[index]!.start >= targetOffset) {
+          targetIndex = index;
+          break;
+        }
+      }
+    }
+    targetIndex ??= direction > 0 ? spans.length - 1 : Math.max(0, this.selectedIndex - 1);
+
+    this.scrollOffset = targetOffset;
+    this.selectedIndex = targetIndex;
   }
 
   /**
@@ -483,7 +544,7 @@ export class FindingsReview implements Component {
     const t = this.theme;
     // Side walls cost two columns, so all content is laid out one frame in.
     const inner = Math.max(0, width - 2);
-    const keybinds = "↑↓ navigate · A apply · R reject · D defer · Space cycle (A→R→D→A) · F fix now · H handoff-deferred · Enter finish · Esc Esc cancel";
+    const keybinds = "↑↓ navigate · PgUp/PgDn page · A apply · R reject · D defer · Space cycle (A→R→D→A) · F fix now · H handoff-deferred · Enter finish · Esc Esc cancel";
     const header = [
       renderFramedTop(t, inner, `Findings Review (${this.items.length} total)`),
       ...this.wordWrap(keybinds, Math.max(2, inner - 1)).map((line) => " " + t.fg("dim", line)),
@@ -498,7 +559,19 @@ export class FindingsReview implements Component {
     const footerHeight = 4 + (this.handoffNote ? 1 : 0) + (this.awaitingCancelConfirm ? 1 : 0);
     const bodyHeight = Math.max(1, viewport - header.length - footerHeight);
 
-    const body = this.buildBody(inner);
+    let body = this.buildBody(inner);
+    if (this.pendingPageDelta !== 0) {
+      // Apply every queued key so rapid PageUp/PageDown presses are not lost
+      // while the host is waiting to render the next frame.
+      while (this.pendingPageDelta !== 0) {
+        const direction: -1 | 1 = this.pendingPageDelta < 0 ? -1 : 1;
+        this.pendingPageDelta -= direction;
+        this.applyPage(body.spans, bodyHeight, body.lines.length, direction);
+      }
+      // Page movement may change the selected row, so rebuild the body to put
+      // the highlight on the new selection before slicing the window.
+      body = this.buildBody(inner);
+    }
     this.scrollOffset = this.resolveScroll(body.spans, bodyHeight, body.lines.length);
     const windowed = body.lines.slice(this.scrollOffset, this.scrollOffset + bodyHeight);
     if (this.flatGroups.length === 0) windowed.push("  " + t.fg("dim", "No findings to review."));

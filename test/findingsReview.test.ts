@@ -17,6 +17,8 @@ const theme: ReviewTheme = {
 
 const DOWN = "\x1b[B";
 const UP = "\x1b[A";
+const PAGE_UP = "\x1b[5~";
+const PAGE_DOWN = "\x1b[6~";
 const SPACE = " ";
 const ESCAPE = "\x1b";
 const ENTER = "\r";
@@ -109,6 +111,28 @@ test("a finding taller than the viewport pins to its top rather than vanishing",
   const row = ui.selected();
   assert.ok(row, "the oversized finding still shows its selected row");
   assert.match(strip(row), /❯ .*Reviewer 02/);
+});
+
+test("PageUp and PageDown move through one rendered page and clamp at both ends", () => {
+  const ui = harness(list(30), 24);
+
+  ui.rendered();
+  assert.match(strip(ui.selected() ?? ""), /Reviewer 01/);
+
+  ui.press(PAGE_DOWN);
+  assert.match(strip(ui.selected() ?? ""), /Reviewer 03/);
+
+  ui.press(PAGE_UP);
+  assert.match(strip(ui.selected() ?? ""), /Reviewer 02/);
+
+  for (let i = 0; i < 100; i++) ui.press(PAGE_DOWN);
+  assert.match(strip(ui.selected() ?? ""), /Reviewer 30/);
+
+  ui.press(PAGE_DOWN);
+  assert.match(strip(ui.selected() ?? ""), /Reviewer 30/);
+
+  for (let i = 0; i < 100; i++) ui.press(PAGE_UP);
+  assert.match(strip(ui.selected() ?? ""), /Reviewer 01/);
 });
 
 test("the footer survives a list longer than the viewport", () => {
@@ -331,6 +355,7 @@ test("the keybind help lists direct triage keys and fix now", () => {
   assert.match(help, /A apply/);
   assert.match(help, /R reject/);
   assert.match(help, /D defer/);
+  assert.match(help, /PgUp\/PgDn page/);
   assert.match(help, /Space cycle/);
   assert.match(help, /F fix now/);
   assert.doesNotMatch(help, /O defer-override/);
