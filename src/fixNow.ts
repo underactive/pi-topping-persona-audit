@@ -117,10 +117,63 @@ export function parseFixVerdict(text: string): { verdict: string; evidence: stri
   return { verdict: verdictMatch[1]!.toLowerCase(), evidence: evidenceMatch?.[1]?.trim() ?? "" };
 }
 
-/** Build a deterministic commit message from the finding. */
-export function fixCommitMessage(finding: Finding): string {
-  const loc = finding.line > 0 ? `${finding.file}:${finding.line}` : finding.file;
-  const subject = `fix(${finding.category}): ${loc} — ${finding.rationale}`;
+/** Hard cap on the rendered commit subject, prefix included. */
+const COMMIT_SUBJECT_MAX = 72;
+
+/** Directive for the no-tools commit-subject summarizer run at accept time. */
+const COMMIT_SUMMARY_DIRECTIVE = [
+  "Summarize the code-review finding below into a git commit subject.",
+  "Requirements:",
+  "- Imperative mood (e.g. \"Stop trusting user-editable metadata for admin checks\").",
+  "- At most 55 characters.",
+  "- No file paths, line numbers, type prefix, quotes, or trailing period.",
+  "Reply with the subject line only.",
+].join("\n");
+
+function buildCommitSummaryTask(finding: Finding): string {
+  return [
+    COMMIT_SUMMARY_DIRECTIVE,
+    "",
+    UNTRUSTED_DATA_RULE,
+    "",
+    "## Finding (JSON)",
+    "",
+    JSON.stringify(finding),
+  ].join("\n");
+}
+
+/**
+ * Sanitize the summarizer's reply into a usable subject fragment: first
+ * non-empty line, stripped of fences/quotes/type prefixes/trailing period,
+ * whitespace collapsed. Undefined when nothing usable remains, so the caller
+ * falls back to the finding's rationale.
+ */
+export function parseCommitSummary(text: string): string | undefined {
+  const line = text
+    .split("\n")
+    .map((l) => l.trim())
+    .find((l) => l.length > 0 && !l.startsWith("```"));
+  if (!line) return undefined;
+  const cleaned = line
+    .replace(/^[`"'“]+|[`"'”]+$/g, "")
+    .replace(/^(?:fix|feat|chore|refactor)(?:\([^)]*\))?:\s*/i, "")
+    .replace(/\s+/g, " ")
+    .replace(/\.+$/, "")
+    .trim();
+  return cleaned || undefined;
+}
+
+/**
+ * Build the commit message from the finding: an LLM-summarized subject when a
+ * summary is available (rationale otherwise), never the file/line — that
+ * detail belongs to the diff, and locations blow the subject-length budget.
+ */
+export function fixCommitMessage(finding: Finding, summary?: string): string {
+  const prefix = `fix(${finding.category}): `;
+  const budget = Math.max(20, COMMIT_SUBJECT_MAX - prefix.length);
+  const raw = summary?.trim() || finding.rationale;
+  const clipped = raw.length > budget ? `${raw.slice(0, budget - 1).trimEnd()}…` : raw;
+  const subject = `${prefix}${clipped}`;
   const body = [
     `Audit finding by ${finding.reviewer} (${finding.severity}).`,
     "",
@@ -325,8 +378,31 @@ export async function runFixNow(
       const commitFiles = [...new Set([...changedFiles])];
       let commitSha: string | undefined;
       if (autoCommit && commitFiles.length > 0) {
+        // Short no-tools pass to compress the rationale into a subject-length
+        // summary. Any failure (including a cancel) just falls back to the
+        // rationale — the fix is already accepted and must still be committed.
+        let summary: string | undefined;
+        const summaryRun = await runSession({
+          agentName: "fix now commit subject",
+          systemPrompt: "You write concise, imperative git commit subjects.",
+          tools: [],
+          model: deps.implementModel.model,
+          thinking: deps.implementModel.thinking,
+          task: buildCommitSummaryTask(finding),
+          cwd: ctx.cwd,
+          modelRegistry: ctx.modelRegistry,
+          signal: abort.signal,
+          idleTimeoutMs: AGENT_IDLE_TIMEOUT_MS,
+          onProgress: (snapshot) => {
+            controller.applyProgress(snapshot);
+            deps.onTelemetry?.(snapshot);
+          },
+        });
+        if (!isFailedRun(summaryRun)) {
+          summary = parseCommitSummary(summaryRun.finalText || summaryRun.allText);
+        }
         try {
-          commitSha = await gitCommitFiles(ctx.cwd, commitFiles, fixCommitMessage(finding));
+          commitSha = await gitCommitFiles(ctx.cwd, commitFiles, fixCommitMessage(finding, summary));
         } catch (error) {
           notify(`commit failed: ${error instanceof Error ? error.message : String(error)} — fix kept on disk, uncommitted`, "error");
         }

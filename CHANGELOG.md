@@ -18,6 +18,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- **Fix Now commit subjects are summarized** — the auto-commit subject no longer embeds the file path and raw rationale (which routinely blew past subject-length limits); a short no-tools model pass now compresses the finding into an imperative summary (`fix(security): Stop trusting user metadata for admin checks`), falling back to the clipped rationale when the summarizer fails. Subjects are hard-capped at 72 characters; the commit body is unchanged.
+
 - **Audit progress phase separators** — phase subheadings now use horizontal rules, with blank lines separating each phase group; the responsive height budget accounts for the added rows.
 
 - **Compact audit progress layout** — phase headings now separate agent groups, while agent rows use the sibling status-and-label geometry without phase or tree-connector columns; responsive width and height budgets account for the compact layout.

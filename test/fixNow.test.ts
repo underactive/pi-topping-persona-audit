@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { FixGateDecision, FixGateInput, FixProgressController } from "../src/components/FixProgress.ts";
-import { fixCommitMessage, parseFixVerdict, runFixNow, type FixNowDeps } from "../src/fixNow.ts";
+import { fixCommitMessage, parseCommitSummary, parseFixVerdict, runFixNow, type FixNowDeps } from "../src/fixNow.ts";
 import type { Finding, HeadlessOptions, HeadlessResult, ReviewSessionState } from "../src/types.ts";
 
 const finding = (overrides: Partial<Finding> = {}): Finding => ({
@@ -68,6 +68,7 @@ interface HarnessOptions {
   /** Called on each fix-agent run (attempt n), mutates the repo like the agent would. */
   onFix: (attempt: number, task: string) => Promise<void>;
   verifierText?: string;
+  summaryText?: string;
   dirtyChoice?: "proceed" | "no-commit" | "abort";
 }
 
@@ -100,6 +101,10 @@ function makeDeps(opts: HarnessOptions) {
         await opts.onFix(fixRuns, options.task);
         return okResult("applied");
       }
+      if (options.agentName === "fix now commit subject") {
+        assert.deepEqual(options.tools, [], "the summarizer gets no tools");
+        return okResult(opts.summaryText ?? "Fix loop bound off-by-one");
+      }
       verifyRuns++;
       assert.deepEqual(options.tools, ["read", "grep", "find", "ls"], "the verifier is read-only");
       return okResult(opts.verifierText ?? "VERDICT: fixed\nEVIDENCE: loop bound corrected");
@@ -130,7 +135,7 @@ test("accept commits exactly the touched file and marks the finding fixed", asyn
   const status = execFileSync("git", ["status", "--porcelain"], { cwd, encoding: "utf-8" });
   assert.equal(status, "", "the tree is clean after the commit");
   const log = execFileSync("git", ["log", "-1", "--format=%s"], { cwd, encoding: "utf-8" });
-  assert.match(log, /fix\(bug\): src\/a\.ts:1 — off-by-one in loop bound/);
+  assert.match(log, /^fix\(bug\): Fix loop bound off-by-one$/m);
   assert.ok(h.gates[0]?.verdictNote?.includes("fixed"), "the verifier verdict reaches the gate");
 });
 
@@ -287,16 +292,29 @@ test("parseFixVerdict reads the trailing verdict lines and rejects garbage", () 
   assert.equal(parseFixVerdict("nothing here"), undefined);
 });
 
-test("fixCommitMessage carries category, location, rationale, and provenance", () => {
+test("fixCommitMessage carries category, rationale, and provenance without the location", () => {
   const message = fixCommitMessage(finding());
   const [subject] = message.split("\n");
-  assert.equal(subject, "fix(bug): src/a.ts:1 — off-by-one in loop bound");
+  assert.equal(subject, "fix(bug): off-by-one in loop bound");
   assert.match(message, /Security Engineer \(high\)/);
   assert.match(message, /use < instead of <=/);
   assert.match(message, /Fix Now/);
 });
 
-test("fixCommitMessage omits the line number for file-level findings", () => {
-  const message = fixCommitMessage(finding({ line: -1 }));
-  assert.match(message, /^fix\(bug\): src\/a\.ts — /);
+test("fixCommitMessage prefers the summary and clips overlong subjects", () => {
+  const summarized = fixCommitMessage(finding(), "Fix the loop bound");
+  assert.equal(summarized.split("\n")[0], "fix(bug): Fix the loop bound");
+
+  const long = fixCommitMessage(finding({ category: "security", rationale: "Admin check falls back to user_metadata.role, which users can self-edit, enabling privilege escalation" }));
+  const [subject] = long.split("\n");
+  assert.ok(subject!.length <= 72, `subject stays within budget (got ${subject!.length})`);
+  assert.match(subject!, /…$/);
+});
+
+test("parseCommitSummary sanitizes the summarizer's reply", () => {
+  assert.equal(parseCommitSummary("Stop trusting user metadata for admin checks\n"), "Stop trusting user metadata for admin checks");
+  assert.equal(parseCommitSummary('"Fix the loop bound."'), "Fix the loop bound");
+  assert.equal(parseCommitSummary("fix(security): Escape the argument"), "Escape the argument");
+  assert.equal(parseCommitSummary("```\nUse < instead of <=\n```"), "Use < instead of <=");
+  assert.equal(parseCommitSummary("   \n\n"), undefined);
 });
