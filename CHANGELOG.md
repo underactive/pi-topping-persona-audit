@@ -30,6 +30,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Findings review keeps complete summaries** — issue rationale text is no longer cut off at 100 characters before the TUI can wrap and display it.
+
 - **Findings review paging** — `PageUp` and `PageDown` now move through the findings by a rendered page while keeping the selected finding visible.
 
 ## [0.1.3] - 2026-08-21

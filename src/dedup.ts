@@ -18,12 +18,11 @@ function highestSeverity(a: FindingSeverity, b: FindingSeverity): FindingSeverit
     : a;
 }
 
-function clearerText(current: string, candidate: string, maxLength?: number): string {
+function clearerText(current: string, candidate: string): string {
   const trimmed = candidate.trim();
   if (!trimmed) return current;
-  const bounded = maxLength ? trimmed.slice(0, maxLength) : trimmed;
-  if (!current) return bounded;
-  return bounded.length > current.length ? bounded : current;
+  if (!current) return trimmed;
+  return trimmed.length > current.length ? trimmed : current;
 }
 
 export function normalizeFindingText(value: unknown, maxLength?: number): string {
@@ -55,7 +54,7 @@ export function coerceFinding(raw: unknown, assignedReviewer?: string): Finding 
   const file = normalizeFindingText(raw.file);
   const category = normalizeFindingText(raw.category).toLowerCase();
   const severity = normalizeFindingText(raw.severity).toLowerCase();
-  const rationale = normalizeFindingText(raw.rationale, 100);
+  const rationale = normalizeFindingText(raw.rationale);
   const suggestedChange = normalizeFindingText(raw.suggestedChange, 2000);
 
   if (!reviewer || !file || !rationale || !suggestedChange) {
@@ -110,7 +109,7 @@ export function dedupFindings(rawFindings: unknown[]): DedupFindingsResult {
     group.reviewerSet.add(finding.reviewer);
 
     group.finding.severity = highestSeverity(group.finding.severity, finding.severity);
-    group.finding.rationale = clearerText(group.finding.rationale, finding.rationale, 100);
+    group.finding.rationale = clearerText(group.finding.rationale, finding.rationale);
     group.finding.suggestedChange = clearerText(group.finding.suggestedChange, finding.suggestedChange);
   }
 

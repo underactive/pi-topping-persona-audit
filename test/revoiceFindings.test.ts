@@ -68,7 +68,7 @@ test("applyRevoicedFindings rejects out-of-target indices and empty rewrites", (
   assert.deepEqual(findings, base);
 });
 
-test("applyRevoicedFindings re-caps transport limits and flattens control chars", () => {
+test("applyRevoicedFindings preserves complete rationale text and bounds suggested changes", () => {
   const base = [finding()];
   const output = JSON.stringify([
     { index: 0, rationale: `NAK.\n${"x".repeat(200)}`, suggestedChange: "y".repeat(3000) },
@@ -76,7 +76,7 @@ test("applyRevoicedFindings re-caps transport limits and flattens control chars"
 
   const { findings, matched } = applyRevoicedFindings(base, [0], [output]);
   assert.equal(matched, 1);
-  assert.equal(findings[0]!.rationale.length, 100);
+  assert.equal(findings[0]!.rationale, `NAK. ${"x".repeat(200)}`);
   assert.ok(!findings[0]!.rationale.includes("\n"));
   assert.equal(findings[0]!.suggestedChange.length, 2000);
 });

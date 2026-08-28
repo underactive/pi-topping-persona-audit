@@ -33,7 +33,7 @@ export interface Finding {
   line: number; // -1 if file-level
   category: FindingCategory;
   severity: FindingSeverity;
-  rationale: string; // max 100 chars
+  rationale: string; // complete issue summary, newlines flattened
   suggestedChange: string; // max 2000 chars, newlines flattened
   recommendation?: FindingRecommendation; // adjudicator's recommended action
   recommendationReason?: string; // why the adjudicator recommends reject/defer

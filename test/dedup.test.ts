@@ -34,6 +34,13 @@ test("collapses findings with same file, line, and category", () => {
   assert.equal(result.findings[0]?.suggestedChange, "Fix it with a more concrete guard");
 });
 
+test("preserves complete rationale text for review display", () => {
+  const rationale = "Completely wrong: resolveSynthesizerFailure recursing into itself on undefined is a stack-bomb for callers";
+  const result = dedupFindings([baseFinding({ rationale })]);
+
+  assert.equal(result.findings[0]?.rationale, rationale);
+});
+
 test("keeps distinct file, line, or category findings separate", () => {
   const result = dedupFindings([
     baseFinding({ line: 1, category: "bug" }),

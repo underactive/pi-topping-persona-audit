@@ -907,7 +907,7 @@ Hard rules:
 - Voice only. The technical content is frozen: same defect, same fix, same file paths, identifiers, line numbers, and code snippets. If a rewrite would change what a finding says or proposes, keep that finding's original text by omitting it.
 - Severity is frozen. Never state, imply, or argue a different severity; the register changes the voice, never the grade.
 - Contempt lands on code, data structures, and decisions — never the author, never their intelligence. No person-directed profanity.
-- Transport limits: "rationale" is at most 100 characters; "suggestedChange" is at most 2000 characters; both must be single-line (newlines are flattened to spaces).
+- "rationale" must contain the complete issue summary; "suggestedChange" is at most 2000 characters; both must be single-line (newlines are flattened to spaces).
 
 Output contract: reply with ONLY a JSON array, one object per re-voiced finding, no prose before or after:
 
@@ -950,7 +950,7 @@ export const REVIEWER_OUTPUT_CONTRACT = `## Output Requirements
 
 For each issue you find, output this exact JSON structure on its own line:
 
-{"reviewer":"[YOUR FULL REVIEWER NAME]","file":"[file path]","line":[line number or -1 if file-level],"category":"[one of: security, bug, performance, maintainability, style, documentation, accessibility, reliability]","severity":"[one of: critical, high, medium, low, info]","rationale":"[max 100 chars]","suggestedChange":"[concrete actionable fix]"}
+{"reviewer":"[YOUR FULL REVIEWER NAME]","file":"[file path]","line":[line number or -1 if file-level],"category":"[one of: security, bug, performance, maintainability, style, documentation, accessibility, reliability]","severity":"[one of: critical, high, medium, low, info]","rationale":"[complete issue summary]","suggestedChange":"[concrete actionable fix]"}
 
 If you find no issues within your focus areas, output:
 {"reviewer":"[YOUR FULL REVIEWER NAME]","findings":0}

@@ -382,7 +382,7 @@ export function applyRevoicedFindings(
     if (!isRecord(raw)) continue;
     const index = Number(raw.index);
     if (!Number.isInteger(index) || !targets.has(index)) continue;
-    const rationale = normalizeFindingText(raw.rationale, 100);
+    const rationale = normalizeFindingText(raw.rationale);
     const suggestedChange = normalizeFindingText(raw.suggestedChange, 2000);
     if (!rationale && !suggestedChange) continue;
     rewrites.set(index, { rationale, suggestedChange });

@@ -128,7 +128,7 @@ test("revoice directive is voice-only, freezes severity, and states its contract
   assert.match(REVOICE_DIRECTIVE, /Voice only\. The technical content is frozen/);
   assert.match(REVOICE_DIRECTIVE, /Severity is frozen/);
   assert.match(REVOICE_DIRECTIVE, /never the author/);
-  assert.match(REVOICE_DIRECTIVE, /at most 100 characters/);
+  assert.match(REVOICE_DIRECTIVE, /complete issue summary/);
   assert.match(REVOICE_DIRECTIVE, /at most 2000 characters/);
   assert.match(REVOICE_DIRECTIVE, /\{"index": <index from the input>/);
   assert.match(REVOICE_DIRECTIVE, /omit keep their original text/);
