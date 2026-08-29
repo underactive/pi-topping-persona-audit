@@ -7,8 +7,13 @@
  */
 
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { runAgentSession } from "./agentRunner.ts";
-import { openFixProgress, type FixProgressController } from "./components/FixProgress.ts";
+import {
+  createInteractiveAgentSession,
+  runAgentSession,
+  type CreateInteractiveSessionOptions,
+  type InteractiveAgentSession,
+} from "./agentRunner.ts";
+import { openFixProgress, type FixChatMessage, type FixProgressController } from "./components/FixProgress.ts";
 import { gitCommitFiles, gitDiff, gitRestoreFiles, gitStatusPorcelain, type FileGitStatus } from "./git.ts";
 import type { ThinkingLevel } from "./modelConfig.ts";
 import { ADJUDICATOR_APPLY_DIRECTIVE, UNTRUSTED_DATA_RULE } from "./skillContent.ts";
@@ -37,6 +42,8 @@ export interface FixNowDeps {
   signal?: AbortSignal;
   /** Injectable for tests. */
   runSession?: (options: HeadlessOptions) => Promise<HeadlessResult>;
+  /** Injectable for tests — creates persistent interactive session. */
+  createInteractiveSession?: (options: CreateInteractiveSessionOptions) => Promise<InteractiveAgentSession>;
   /** Injectable for tests — defaults to a ctx.ui.select prompt. */
   promptDirtyChoice?: (files: string[]) => Promise<DirtyFileChoice>;
   /** Injectable for tests — defaults to openFixProgress. */
@@ -104,6 +111,21 @@ function buildFixVerifyTask(cwd: string, finding: Finding, diff: string): string
     "```diff",
     diff,
     "```",
+  ].join("\n");
+}
+
+function buildFixFollowUpTask(userMessage: string): string {
+  return [
+    "The user is reviewing your proposed fix in Fix Now and sent a follow-up message / question.",
+    "",
+    "Instructions:",
+    "- If the user asks a question, requests clarification, or asks about impact / callers, use read/grep/find/ls tools to inspect the repository and answer accurately. Do not edit files unless explicitly asked to modify the code.",
+    "- If the user asks you to modify, adjust, or redo the fix, apply the edits directly using edit/write tools.",
+    "- Never modify files that were dirty before the fix started or are unrelated to this finding.",
+    "",
+    "## User Message",
+    "",
+    userMessage,
   ].join("\n");
 }
 
@@ -277,136 +299,249 @@ export async function runFixNow(
   try {
     let verifierFeedback: string | undefined;
     for (let attempt = 1; attempt <= MAX_FIX_ATTEMPTS; attempt++) {
-      controller.setPhase("fixing", `applying ${finding.category} fix`, attempt);
-      const fixRun = await runSession({
-        agentName: "fix now implement",
-        systemPrompt: deps.adjudicatorSystemPrompt,
-        tools: deps.adjudicatorTools.filter((t) => t !== "bash"),
-        model: deps.implementModel.model,
-        thinking: deps.implementModel.thinking,
-        task: buildFixTask(finding, verifierFeedback),
-        cwd: ctx.cwd,
-        modelRegistry: ctx.modelRegistry,
-        signal: abort.signal,
-        idleTimeoutMs: AGENT_IDLE_TIMEOUT_MS,
-        onProgress: (snapshot) => {
-          controller.applyProgress(snapshot);
-        },
-      });
-      if (abort.signal.aborted) {
-        await computeTouched();
-        await cleanup();
-        notify("fix cancelled — edits reverted");
-        return;
-      }
-      if (isFailedRun(fixRun)) {
-        await computeTouched();
-        await cleanup();
-        notify(`fix agent failed: ${briefError(fixRun.errorMessage || fixRun.stopReason)}`, "error");
-        return;
-      }
+      let session: InteractiveAgentSession | undefined;
+      const chatHistory: FixChatMessage[] = [];
+      try {
+        if (deps.createInteractiveSession) {
+          session = await deps.createInteractiveSession({
+            agentName: "fix now implement",
+            systemPrompt: deps.adjudicatorSystemPrompt,
+            tools: deps.adjudicatorTools.filter((t) => t !== "bash"),
+            model: deps.implementModel.model,
+            thinking: deps.implementModel.thinking,
+            cwd: ctx.cwd,
+            modelRegistry: ctx.modelRegistry,
+            signal: abort.signal,
+            idleTimeoutMs: AGENT_IDLE_TIMEOUT_MS,
+            onProgress: (snapshot) => {
+              controller.applyProgress(snapshot);
+            },
+          });
+        } else if (deps.runSession) {
+          let disposed = false;
+          session = {
+            async prompt(task: string): Promise<HeadlessResult> {
+              if (disposed) return { finalText: "", allText: "", aborted: false, stopReason: "error", errorMessage: "session disposed", usage: { turns: 0, contextTokens: 0, outputTokens: 0 } };
+              return deps.runSession!({
+                agentName: "fix now implement",
+                systemPrompt: deps.adjudicatorSystemPrompt,
+                tools: deps.adjudicatorTools.filter((t) => t !== "bash"),
+                model: deps.implementModel.model,
+                thinking: deps.implementModel.thinking,
+                task,
+                cwd: ctx.cwd,
+                modelRegistry: ctx.modelRegistry,
+                signal: abort.signal,
+                idleTimeoutMs: AGENT_IDLE_TIMEOUT_MS,
+                onProgress: (snapshot) => {
+                  controller.applyProgress(snapshot);
+                },
+              });
+            },
+            dispose() {
+              disposed = true;
+            },
+          };
+        } else {
+          session = await createInteractiveAgentSession({
+            agentName: "fix now implement",
+            systemPrompt: deps.adjudicatorSystemPrompt,
+            tools: deps.adjudicatorTools.filter((t) => t !== "bash"),
+            model: deps.implementModel.model,
+            thinking: deps.implementModel.thinking,
+            cwd: ctx.cwd,
+            modelRegistry: ctx.modelRegistry,
+            signal: abort.signal,
+            idleTimeoutMs: AGENT_IDLE_TIMEOUT_MS,
+            onProgress: (snapshot) => {
+              controller.applyProgress(snapshot);
+            },
+          });
+        }
 
-      await computeTouched();
-      const changedFiles = [...touched.cleanTracked, ...touched.cleanUntracked, ...touched.wasDirty];
-      const diff = changedFiles.length > 0 ? await gitDiff(ctx.cwd, changedFiles, touched.cleanUntracked) : "";
+        controller.setPhase("fixing", `applying ${finding.category} fix`, attempt);
+        const fixRun = await session.prompt(buildFixTask(finding, verifierFeedback));
+        if (abort.signal.aborted) {
+          await computeTouched();
+          await cleanup();
+          notify("fix cancelled — edits reverted");
+          return;
+        }
+        if (isFailedRun(fixRun)) {
+          await computeTouched();
+          await cleanup();
+          notify(`fix agent failed: ${briefError(fixRun.errorMessage || fixRun.stopReason)}`, "error");
+          return;
+        }
 
-      // ── Lightweight verifier pass ────────────────────────────────────────
-      const warnings: string[] = [];
-      let verdictNote: string | undefined;
-      let verdict: { verdict: string; evidence: string } | undefined;
-      if (diff.trim().length === 0) {
-        warnings.push("the fix agent reported success but made no changes on disk");
-      } else {
-        controller.setPhase("verifying", "checking the fix", attempt);
-        const verifyRun = await runSession({
-          agentName: "fix now verify",
-          systemPrompt: deps.verifierSystemPrompt,
-          tools: deps.readOnlyTools,
-          model: deps.verifyModel.model,
-          thinking: deps.verifyModel.thinking,
-          task: buildFixVerifyTask(ctx.cwd, finding, diff),
-          cwd: ctx.cwd,
-          modelRegistry: ctx.modelRegistry,
-          signal: abort.signal,
-          idleTimeoutMs: AGENT_IDLE_TIMEOUT_MS,
-          onProgress: (snapshot) => {
-            controller.applyProgress(snapshot);
-          },
-        });
+        await computeTouched();
+        let changedFiles = [...touched.cleanTracked, ...touched.cleanUntracked, ...touched.wasDirty];
+        let diff = changedFiles.length > 0 ? await gitDiff(ctx.cwd, changedFiles, touched.cleanUntracked) : "";
+
+        // ── Lightweight verifier pass ────────────────────────────────────────
+        let warnings: string[] = [];
+        let verdictNote: string | undefined;
+        let verdict: { verdict: string; evidence: string } | undefined;
+
+        const runVerifierPass = async (currentDiff: string): Promise<void> => {
+          warnings = [];
+          verdictNote = undefined;
+          verdict = undefined;
+          if (currentDiff.trim().length === 0) {
+            warnings.push("the fix agent reported success but made no changes on disk");
+            return;
+          }
+          controller.setPhase("verifying", "checking the fix", attempt);
+          const verifyRun = await runSession({
+            agentName: "fix now verify",
+            systemPrompt: deps.verifierSystemPrompt,
+            tools: deps.readOnlyTools,
+            model: deps.verifyModel.model,
+            thinking: deps.verifyModel.thinking,
+            task: buildFixVerifyTask(ctx.cwd, finding, currentDiff),
+            cwd: ctx.cwd,
+            modelRegistry: ctx.modelRegistry,
+            signal: abort.signal,
+            idleTimeoutMs: AGENT_IDLE_TIMEOUT_MS,
+            onProgress: (snapshot) => {
+              controller.applyProgress(snapshot);
+            },
+          });
+          if (abort.signal.aborted) return;
+          if (isFailedRun(verifyRun)) {
+            warnings.push(`verifier failed (${briefError(verifyRun.errorMessage || verifyRun.stopReason)}) — judge the diff yourself`);
+          } else {
+            verdict = parseFixVerdict(verifyRun.finalText || verifyRun.allText);
+            if (!verdict) {
+              warnings.push("verifier output was unparsable — judge the diff yourself");
+            } else if (verdict.verdict === "fixed") {
+              verdictNote = `verifier: fixed — ${verdict.evidence}`;
+            } else {
+              warnings.push(`verifier: ${verdict.verdict} — ${verdict.evidence}`);
+            }
+          }
+        };
+
+        await runVerifierPass(diff);
         if (abort.signal.aborted) {
           await cleanup();
           notify("fix cancelled — edits reverted");
           return;
         }
-        if (isFailedRun(verifyRun)) {
-          warnings.push(`verifier failed (${briefError(verifyRun.errorMessage || verifyRun.stopReason)}) — judge the diff yourself`);
-        } else {
-          verdict = parseFixVerdict(verifyRun.finalText || verifyRun.allText);
-          if (!verdict) {
-            warnings.push("verifier output was unparsable — judge the diff yourself");
-          } else if (verdict.verdict === "fixed") {
-            verdictNote = `verifier: fixed — ${verdict.evidence}`;
-          } else {
-            warnings.push(`verifier: ${verdict.verdict} — ${verdict.evidence}`);
+
+        // ── Conversational gate loop ──────────────────────────────────────────
+        let attemptDecision: "accept" | "retry" | "discard" | undefined;
+        while (!attemptDecision) {
+          const activeWarnings = [...warnings];
+          if (!autoCommit) activeWarnings.push("auto-commit is off for this fix — accepted changes stay uncommitted");
+
+          const decision = await controller.gate({
+            diff,
+            verdictNote,
+            warnings: activeWarnings,
+            commitPlanned: autoCommit,
+            attempt,
+            chatHistory,
+          });
+
+          if (typeof decision === "object" && decision.type === "chat") {
+            chatHistory.push({ role: "user", text: decision.message });
+            controller.setPhase("fixing", "refining fix / answering question", attempt);
+            const preDiff = diff;
+            const chatRun = await session.prompt(buildFixFollowUpTask(decision.message));
+            if (abort.signal.aborted) {
+              await computeTouched();
+              await cleanup();
+              notify("fix cancelled — edits reverted");
+              return;
+            }
+
+            const replyText = chatRun.finalText || chatRun.allText;
+            if (isFailedRun(chatRun)) {
+              const errText = `Fix agent error: ${briefError(chatRun.errorMessage || chatRun.stopReason)}`;
+              chatHistory.push({ role: "assistant", text: replyText ? `${replyText}\n\n${errText}` : errText });
+            } else {
+              chatHistory.push({ role: "assistant", text: replyText || "(No reply text provided.)" });
+            }
+
+            await computeTouched();
+            changedFiles = [...touched.cleanTracked, ...touched.cleanUntracked, ...touched.wasDirty];
+            const newDiff = changedFiles.length > 0 ? await gitDiff(ctx.cwd, changedFiles, touched.cleanUntracked) : "";
+
+            if (newDiff !== preDiff) {
+              diff = newDiff;
+              await runVerifierPass(diff);
+              if (abort.signal.aborted) {
+                await cleanup();
+                notify("fix cancelled — edits reverted");
+                return;
+              }
+            }
+            continue;
+          }
+
+          if (decision === "accept" || decision === "retry" || decision === "discard") {
+            attemptDecision = decision;
           }
         }
-      }
-      if (!autoCommit) warnings.push("auto-commit is off for this fix — accepted changes stay uncommitted");
 
-      // ── User gate ────────────────────────────────────────────────────────
-      const decision = await controller.gate({ diff, verdictNote, warnings, commitPlanned: autoCommit, attempt });
+        if (attemptDecision === "retry") {
+          session.dispose();
+          await cleanup();
+          touched = { cleanTracked: [], cleanUntracked: [], wasDirty: [] };
+          verifierFeedback = verdict
+            ? `VERDICT: ${verdict.verdict}\nEVIDENCE: ${verdict.evidence}`
+            : "The previous attempt produced no acceptable change.";
+          continue;
+        }
+        if (attemptDecision === "discard") {
+          session.dispose();
+          await cleanup();
+          notify("fix discarded — edits reverted");
+          return;
+        }
 
-      if (decision === "retry") {
-        await cleanup();
-        touched = { cleanTracked: [], cleanUntracked: [], wasDirty: [] };
-        verifierFeedback = verdict
-          ? `VERDICT: ${verdict.verdict}\nEVIDENCE: ${verdict.evidence}`
-          : "The previous attempt produced no acceptable change.";
-        continue;
-      }
-      if (decision === "discard") {
-        await cleanup();
-        notify("fix discarded — edits reverted");
+        // ── Accept ───────────────────────────────────────────────────────────
+        session.dispose();
+        const commitFiles = [...new Set([...touched.cleanTracked, ...touched.cleanUntracked, ...(baseline.has(finding.file) ? [finding.file] : [])])];
+        let commitSha: string | undefined;
+        if (autoCommit && commitFiles.length > 0) {
+          // Short no-tools pass to compress the rationale into a subject-length
+          // summary. Any failure (including a cancel) just falls back to the
+          // rationale — the fix is already accepted and must still be committed.
+          let summary: string | undefined;
+          const summaryRun = await runSession({
+            agentName: "fix now commit subject",
+            systemPrompt: "You write concise, imperative git commit subjects.",
+            tools: [],
+            model: deps.implementModel.model,
+            thinking: deps.implementModel.thinking,
+            task: buildCommitSummaryTask(finding),
+            cwd: ctx.cwd,
+            modelRegistry: ctx.modelRegistry,
+            signal: abort.signal,
+            idleTimeoutMs: AGENT_IDLE_TIMEOUT_MS,
+            onProgress: (snapshot) => {
+              controller.applyProgress(snapshot);
+            },
+          });
+          if (!isFailedRun(summaryRun)) {
+            summary = parseCommitSummary(summaryRun.finalText || summaryRun.allText);
+          }
+          try {
+            commitSha = await gitCommitFiles(ctx.cwd, commitFiles, fixCommitMessage(finding, summary));
+          } catch (error) {
+            notify(`commit failed: ${error instanceof Error ? error.message : String(error)} — fix kept on disk, uncommitted`, "error");
+          }
+        }
+        const fixed: FixedFinding = { finding, commitSha, files: commitFiles };
+        state.statuses[index] = "fixed";
+        state.fixed.set(index, fixed);
+        notify(commitSha ? `fixed ${finding.file} — committed ${commitSha}` : `fixed ${finding.file} — not committed`);
         return;
+      } finally {
+        session?.dispose();
       }
-
-      // ── Accept ───────────────────────────────────────────────────────────
-      const commitFiles = [...new Set([...changedFiles])];
-      let commitSha: string | undefined;
-      if (autoCommit && commitFiles.length > 0) {
-        // Short no-tools pass to compress the rationale into a subject-length
-        // summary. Any failure (including a cancel) just falls back to the
-        // rationale — the fix is already accepted and must still be committed.
-        let summary: string | undefined;
-        const summaryRun = await runSession({
-          agentName: "fix now commit subject",
-          systemPrompt: "You write concise, imperative git commit subjects.",
-          tools: [],
-          model: deps.implementModel.model,
-          thinking: deps.implementModel.thinking,
-          task: buildCommitSummaryTask(finding),
-          cwd: ctx.cwd,
-          modelRegistry: ctx.modelRegistry,
-          signal: abort.signal,
-          idleTimeoutMs: AGENT_IDLE_TIMEOUT_MS,
-          onProgress: (snapshot) => {
-            controller.applyProgress(snapshot);
-          },
-        });
-        if (!isFailedRun(summaryRun)) {
-          summary = parseCommitSummary(summaryRun.finalText || summaryRun.allText);
-        }
-        try {
-          commitSha = await gitCommitFiles(ctx.cwd, commitFiles, fixCommitMessage(finding, summary));
-        } catch (error) {
-          notify(`commit failed: ${error instanceof Error ? error.message : String(error)} — fix kept on disk, uncommitted`, "error");
-        }
-      }
-      const fixed: FixedFinding = { finding, commitSha, files: commitFiles };
-      state.statuses[index] = "fixed";
-      state.fixed.set(index, fixed);
-      notify(commitSha ? `fixed ${finding.file} — committed ${commitSha}` : `fixed ${finding.file} — not committed`);
-      return;
     }
     notify(`giving up after ${MAX_FIX_ATTEMPTS} attempts — finding left unfixed`, "warning");
     await cleanup();

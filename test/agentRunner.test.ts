@@ -8,6 +8,7 @@ import { DefaultResourceLoader, getAgentDir, ModelRegistry, ModelRuntime } from 
 import {
   buildRuntimeWithExtensionProviders,
   calculateTurnCost,
+  createInteractiveAgentSession,
   createIsolatedResourceLoader,
   getAllAssistantText,
   getFinalAssistantText,
@@ -215,6 +216,38 @@ test("createIsolatedResourceLoader discovers no extensions, even where the unres
     const isolated = createIsolatedResourceLoader(cwd, agentDir, "");
     await isolated.reload();
     assert.equal(isolated.getExtensions().extensions.length, 0);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+// ── InteractiveAgentSession ──
+
+test("createInteractiveAgentSession returns a session that can be aborted and disposed idempotently", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "persona-audit-session-"));
+  try {
+    const registry = await testRegistry();
+    const abort = new AbortController();
+    const session = await createInteractiveAgentSession({
+      cwd,
+      modelRegistry: registry,
+      model: "zzz-rt-test-provider/zzz-rt-test-alpha-4-5",
+      systemPrompt: "sys",
+      tools: [],
+      agentName: "test agent",
+      signal: abort.signal,
+    });
+
+    abort.abort();
+    const result = await session.prompt("hello");
+    assert.equal(result.aborted, true);
+
+    session.dispose();
+    session.dispose(); // Idempotent
+
+    const postDispose = await session.prompt("hello again");
+    assert.equal(postDispose.stopReason, "error");
+    assert.equal(postDispose.errorMessage, "session is disposed");
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }

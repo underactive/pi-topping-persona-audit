@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Fix Now inline conversation and requested modifications** — press `C` in the Fix Now gate to chat directly with the fix agent. Users can ask impact and caller questions without touching the diff, or request targeted modifications to refine the fix; diffs and verifier verdicts automatically refresh when code changes, and prior conversation context persists across turns within the attempt.
+
 - **Findings review sorting and blast-radius risk** — press `S` to cycle file, severity-priority, reviewer, and blast-radius ordering within each recommendation section. Blast radius is a deterministic 0–100 score from direct importer fan-in, sensitive code surfaces, corresponding tests, and the reviewer's change-kind classification; the overlay shows Low/Medium/High/Critical buckets with leading reasons and preserves the active sort across Fix Now.
 
 - **Artifact purge command** — `/persona-audit-purge [--older-than <days>]` lists reports, progress snapshots, handoffs, pre-fix snapshots, and this repo's reviewer cache in a tag-and-confirm menu for permanent deletion. Sections explain retention purpose and display their parent folder; `P` opens a read-only Markdown or pretty-printed JSON preview. Unknown files and settings are never touched; cache entries are never pre-tagged.

@@ -9,15 +9,20 @@
  * or commit work begins.
  */
 
-import type { Component, KeybindingsManager, OverlayOptions, TUI } from "@earendil-works/pi-tui";
-import { isKeyRelease, Key, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
+import type { Component, Focusable, KeybindingsManager, OverlayOptions, TUI } from "@earendil-works/pi-tui";
+import { Input, isKeyRelease, Key, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
 import type { TerminalInputHandler, Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import type { AuditProgressWidget } from "./AuditProgress.ts";
 import type { Finding, HeadlessProgress } from "../types.ts";
 import { sanitizeTerminalText } from "./AuditProgress.ts";
 import { FALLBACK_TERMINAL_ROWS, OVERLAY_HEIGHT_PERCENT, PROMPT_OVERLAY_OPTIONS, renderFramedBottom, renderFramedRow, renderFramedTop, wrapText } from "./menuChrome.ts";
 
-export type FixGateDecision = "accept" | "retry" | "discard";
+export interface FixChatMessage {
+  role: "user" | "assistant";
+  text: string;
+}
+
+export type FixGateDecision = "accept" | "retry" | "discard" | { type: "chat"; message: string };
 
 /** The slice of pi's `TUI` the surfaces need. Structural so tests can supply a stub. */
 export interface FixProgressHost {
@@ -42,6 +47,8 @@ export interface FixGateInput {
   commitPlanned: boolean;
   /** Attempt number, 1-based. */
   attempt: number;
+  /** Prior conversation history within this attempt. */
+  chatHistory?: FixChatMessage[];
 }
 
 // ── Shared gate helpers ────────────────────────────────────────────────────
@@ -103,16 +110,19 @@ function assembleFixFrame(theme: FixProgressTheme, inner: number, header: string
  * immediately, ending the prompt lifecycle span before the flow's follow-up
  * work begins.
  */
-export class FixGate implements Component {
+export class FixGate implements Component, Focusable {
   private readonly theme: FixProgressTheme;
   private readonly tui: FixProgressHost;
   private readonly finding: Finding;
   private readonly input: FixGateInput;
   private readonly done: (decision: FixGateDecision) => void;
+  private readonly inputWidget: Input;
 
   private readonly diffLines: string[];
   private scrollOffset = 0;
   private awaitingDiscardConfirm = false;
+  private isChatMode = false;
+  private _focused = false;
   private settled = false;
 
   private cachedWidth: number | undefined;
@@ -131,6 +141,20 @@ export class FixGate implements Component {
     this.tui = tui;
     this.done = done;
     this.diffLines = input.diff.replace(/\r/g, "").split("\n");
+    this.inputWidget = new Input();
+  }
+
+  get focused(): boolean {
+    return this._focused;
+  }
+
+  set focused(value: boolean) {
+    this._focused = value;
+    this.inputWidget.focused = value && this.isChatMode;
+  }
+
+  isInChatMode(): boolean {
+    return this.isChatMode;
   }
 
   private decide(decision: FixGateDecision): void {
@@ -141,6 +165,28 @@ export class FixGate implements Component {
 
   handleInput(data: string): void {
     if (this.settled) return;
+
+    if (this.isChatMode) {
+      if (matchesKey(data, Key.escape)) {
+        this.isChatMode = false;
+        this.inputWidget.focused = false;
+        this.inputWidget.setValue("");
+        this.invalidate();
+        this.tui.requestRender();
+        return;
+      }
+      if (matchesKey(data, Key.enter)) {
+        const text = this.inputWidget.getValue().trim();
+        if (!text) return;
+        this.decide({ type: "chat", message: text });
+        return;
+      }
+      this.inputWidget.handleInput(data);
+      this.invalidate();
+      this.tui.requestRender();
+      return;
+    }
+
     if (matchesKey(data, Key.escape)) {
       if (!this.awaitingDiscardConfirm) {
         this.awaitingDiscardConfirm = true;
@@ -157,6 +203,13 @@ export class FixGate implements Component {
       this.invalidate();
     }
 
+    if (data === "c" || data === "C") {
+      this.isChatMode = true;
+      this.inputWidget.focused = true;
+      this.invalidate();
+      this.tui.requestRender();
+      return;
+    }
     if (data === "a" || data === "A") {
       this.decide("accept");
       return;
@@ -199,7 +252,7 @@ export class FixGate implements Component {
     return lines;
   }
 
-  /** Gate body: verdict, warnings, scrollable diff, decision keys. */
+  /** Gate body: verdict, warnings, chat history, input prompt, scrollable diff, decision keys. */
   private renderGateBody(inner: number, viewport: number, headerLines: number): string[] {
     const t = this.theme;
     const input = this.input;
@@ -212,15 +265,55 @@ export class FixGate implements Component {
     }
     if (pre.length > 0) pre.push("");
 
+    const chatLines: string[] = [];
+    if (input.chatHistory && input.chatHistory.length > 0) {
+      for (const msg of input.chatHistory) {
+        const isUser = msg.role === "user";
+        const prefix = isUser ? t.bold(t.fg("accent", "You: ")) : t.bold(t.fg("muted", "Agent: "));
+        const prefixLen = isUser ? 5 : 7;
+        const textLines = wrapText(sanitizeTerminalText(msg.text), Math.max(2, inner - prefixLen - 2));
+        if (textLines.length === 0) continue;
+        chatLines.push(" " + prefix + (isUser ? t.fg("accent", textLines[0]!) : textLines[0]!));
+        const indent = " ".repeat(prefixLen + 1);
+        for (let i = 1; i < textLines.length; i++) {
+          chatLines.push(indent + (isUser ? t.fg("accent", textLines[i]!) : textLines[i]!));
+        }
+      }
+      chatLines.push("");
+    }
+
+    const chatInputLines: string[] = [];
+    if (this.isChatMode) {
+      for (const line of this.inputWidget.render(Math.max(2, inner - 2))) {
+        chatInputLines.push(" " + line);
+      }
+      chatInputLines.push("");
+    }
+
     const acceptLabel = input.commitPlanned === false ? "A accept (no commit)" : "A accept & commit";
-    const keybinds = `${acceptLabel} · R retry · D discard · ↑↓/PgUp/PgDn scroll`;
+    const keybinds = this.isChatMode
+      ? "Enter send · Esc cancel chat"
+      : `${acceptLabel} · R retry · D discard · C chat / modify · ↑↓/PgUp/PgDn scroll`;
     const footer: string[] = [""];
     if (this.awaitingDiscardConfirm) {
       footer.push(" " + t.fg("warning", "Press Esc again to discard this fix"));
     }
     footer.push(...wrapText(keybinds, Math.max(2, inner - 2)).map((l) => " " + t.fg("dim", l)));
 
-    const diffBudget = Math.max(1, viewport - headerLines - pre.length - footer.length - 2);
+    const maxChatBudget = Math.max(3, viewport - headerLines - pre.length - chatInputLines.length - footer.length - 5);
+    let boundedChatLines = chatLines;
+    if (chatLines.length > maxChatBudget) {
+      const omitted = chatLines.length - maxChatBudget;
+      boundedChatLines = [
+        " " + t.fg("dim", `↑ ${omitted} earlier chat lines…`),
+        ...chatLines.slice(-maxChatBudget + 1),
+      ];
+    }
+
+    const diffBudget = Math.max(
+      1,
+      viewport - headerLines - pre.length - boundedChatLines.length - chatInputLines.length - footer.length - 2,
+    );
     const maxOffset = Math.max(0, this.diffLines.length - diffBudget);
     this.scrollOffset = Math.min(this.scrollOffset, maxOffset);
     const windowed = this.diffLines
@@ -238,7 +331,14 @@ export class FixGate implements Component {
     ].filter(Boolean).join(" · ");
     if (scrollHint) windowed.push(" " + t.fg("dim", scrollHint));
 
-    return [...pre, ...windowed, ...footer, renderFramedBottom(t, inner)];
+    return [
+      ...pre,
+      ...boundedChatLines,
+      ...chatInputLines,
+      ...windowed,
+      ...footer,
+      renderFramedBottom(t, inner),
+    ];
   }
 }
 
@@ -353,9 +453,11 @@ export function openFixProgress(
       return shown
         .then((decision) => {
           if (!closed) {
-            settling = true;
-            setArmed(false);
-            sink?.progress.updateFixNowSettling(sink.key, decision, input.commitPlanned);
+            if (typeof decision === "string") {
+              settling = true;
+              setArmed(false);
+              sink?.progress.updateFixNowSettling(sink.key, decision, input.commitPlanned);
+            }
           }
           return decision;
         })

@@ -277,6 +277,143 @@ test("an unparsable verifier reply degrades to a warning instead of blocking the
   assert.equal(state.statuses[0], "fixed");
 });
 
+test("a chat Q&A question keeps the diff unchanged, skips verifier re-run, and appends to chat history", async (t) => {
+  const cwd = await makeRepo();
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  let chatAnswered = false;
+  const h = makeDeps({
+    cwd,
+    decisions: [{ type: "chat", message: "What callers are affected?" }, "accept"],
+    onFix: async (attempt, task) => {
+      if (attempt === 1) {
+        await writeFile(path.join(cwd, "src/a.ts"), "const a = 2;\n");
+      } else {
+        assert.ok(task.includes("What callers are affected?"));
+        chatAnswered = true;
+        // Do not touch files
+      }
+    },
+  });
+  const state = makeState();
+
+  await runFixNow(h.deps, finding(), 0, state);
+
+  assert.equal(chatAnswered, true);
+  assert.equal(h.counts().fixRuns, 2);
+  assert.equal(h.counts().verifyRuns, 1, "verifier must not re-run when diff is unchanged");
+  assert.equal(h.gates.length, 2);
+  assert.deepEqual(h.gates[1]?.chatHistory, [
+    { role: "user", text: "What callers are affected?" },
+    { role: "assistant", text: "applied" },
+  ]);
+  assert.equal(state.statuses[0], "fixed");
+  const log = execFileSync("git", ["log", "-1", "--format=%s"], { cwd, encoding: "utf-8" });
+  assert.match(log, /^fix\(bug\):/);
+});
+
+test("a requested change in chat modifies files, updates diff, and triggers verifier re-run", async (t) => {
+  const cwd = await makeRepo();
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  let verifyCount = 0;
+  const h = makeDeps({
+    cwd,
+    decisions: [{ type: "chat", message: "Use const b = 2 instead" }, "accept"],
+    onFix: async (attempt) => {
+      if (attempt === 1) {
+        await writeFile(path.join(cwd, "src/a.ts"), "const a = 2;\n");
+      } else {
+        await writeFile(path.join(cwd, "src/a.ts"), "const b = 2;\n");
+      }
+    },
+  });
+  const state = makeState();
+
+  await runFixNow(h.deps, finding(), 0, state);
+
+  assert.equal(h.counts().fixRuns, 2);
+  assert.equal(h.counts().verifyRuns, 2, "verifier must re-run when diff changes");
+  assert.equal(h.gates.length, 2);
+  assert.ok(h.gates[0]?.diff.includes("+const a = 2;"));
+  assert.ok(h.gates[1]?.diff.includes("+const b = 2;"));
+  assert.equal(state.statuses[0], "fixed");
+  assert.equal(await readFile(path.join(cwd, "src/a.ts"), "utf-8"), "const b = 2;\n");
+});
+
+test("a failed chat turn surfaces the error in chat history and keeps the gate intact", async (t) => {
+  const cwd = await makeRepo();
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const notifications: string[] = [];
+  const { controller, gates } = stubController([{ type: "chat", message: "Help" }, "accept"]);
+  let fixRuns = 0;
+  const deps: FixNowDeps = {
+    ctx: {
+      cwd,
+      ui: { notify: (msg: string) => notifications.push(msg), select: async () => undefined },
+      modelRegistry: {} as ModelRegistry,
+    } as unknown as FixNowDeps["ctx"],
+    adjudicatorSystemPrompt: "adjudicator",
+    verifierSystemPrompt: "verifier",
+    adjudicatorTools: ["read", "edit", "write"],
+    readOnlyTools: ["read"],
+    implementModel: {},
+    verifyModel: {},
+    runSession: async (opts) => {
+      if (opts.agentName === "fix now implement") {
+        fixRuns++;
+        if (fixRuns === 1) {
+          await writeFile(path.join(cwd, "src/a.ts"), "const a = 2;\n");
+          return okResult("initial fix");
+        }
+        return {
+          finalText: "",
+          allText: "",
+          aborted: false,
+          stopReason: "error",
+          errorMessage: "Rate limit exceeded",
+          usage: { turns: 0, contextTokens: 0, outputTokens: 0 },
+        };
+      }
+      if (opts.agentName === "fix now commit subject") return okResult("Fix loop bound");
+      return okResult("VERDICT: fixed\nEVIDENCE: ok");
+    },
+    openProgress: () => controller,
+  };
+  const state = makeState();
+
+  await runFixNow(deps, finding(), 0, state);
+
+  assert.equal(gates.length, 2);
+  assert.ok(gates[1]?.chatHistory?.[1]?.text.includes("Rate limit exceeded"));
+  assert.equal(state.statuses[0], "fixed");
+});
+
+test("retrying after chat turns resets the conversation history for attempt 2", async (t) => {
+  const cwd = await makeRepo();
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const h = makeDeps({
+    cwd,
+    decisions: [
+      { type: "chat", message: "Can we do better?" },
+      "retry",
+      "accept",
+    ],
+    onFix: async (attempt) => {
+      await writeFile(path.join(cwd, "src/a.ts"), `const a = ${attempt + 1};\n`);
+    },
+  });
+  const state = makeState();
+
+  await runFixNow(h.deps, finding(), 0, state);
+
+  assert.equal(h.gates.length, 3);
+  assert.equal(h.gates[0]?.attempt, 1);
+  assert.equal(h.gates[1]?.attempt, 1);
+  assert.equal(h.gates[1]?.chatHistory?.length, 2);
+  assert.equal(h.gates[2]?.attempt, 2);
+  assert.deepEqual(h.gates[2]?.chatHistory, [], "attempt 2 has empty chat history");
+  assert.equal(state.statuses[0], "fixed");
+});
+
 // ── Unit helpers ───────────────────────────────────────────────────────────
 
 test("parseFixVerdict reads the trailing verdict lines and rejects garbage", () => {

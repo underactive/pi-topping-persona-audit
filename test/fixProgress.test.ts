@@ -130,6 +130,93 @@ test("an empty diff reads as no changes", () => {
   assert.ok(ui.lines().some((l) => l.includes("No changes on disk.")));
 });
 
+test("C enters chat mode and shows chat input and key hints", () => {
+  const ui = gateHarness({ diff: "+x", commitPlanned: true, attempt: 1 });
+  assert.equal(ui.component.isInChatMode(), false);
+  assert.ok(ui.lines().some((l) => l.includes("C chat / modify")));
+
+  ui.press("c");
+  assert.equal(ui.component.isInChatMode(), true);
+  const lines = ui.lines();
+  assert.ok(lines.some((l) => l.includes("Enter send · Esc cancel chat")));
+});
+
+test("typing in chat mode routes to input and does not trigger A/R/D shortcuts", () => {
+  const ui = gateHarness({ diff: "+x", commitPlanned: true, attempt: 1 });
+  ui.press("c");
+
+  // Type characters including 'a', 'r', 'd'
+  ui.press("a");
+  ui.press("r");
+  ui.press("d");
+  assert.deepEqual(ui.decisions(), [], "typing letters must not trigger accept/retry/discard");
+
+  // Enter sends the chat decision
+  ui.press("\r");
+  assert.deepEqual(ui.decisions(), [{ type: "chat", message: "ard" }]);
+});
+
+test("pressing Enter with empty text in chat mode does not decide", () => {
+  const ui = gateHarness({ diff: "+x", commitPlanned: true, attempt: 1 });
+  ui.press("c");
+  ui.press("\r");
+  ui.press("   ");
+  ui.press("\r");
+  assert.deepEqual(ui.decisions(), []);
+});
+
+test("Escape in chat mode leaves chat mode without arming discard", () => {
+  const ui = gateHarness({ diff: "+x", commitPlanned: true, attempt: 1 });
+  ui.press("c");
+  assert.equal(ui.component.isInChatMode(), true);
+
+  ui.press(ESCAPE);
+  assert.equal(ui.component.isInChatMode(), false);
+  assert.deepEqual(ui.decisions(), []);
+
+  // Now press Escape again in nav mode — this only arms discard
+  ui.press(ESCAPE);
+  assert.ok(ui.lines().some((l) => l.includes("Press Esc again to discard")));
+  assert.deepEqual(ui.decisions(), []);
+});
+
+test("renders conversation history cleanly with role styling", () => {
+  const ui = gateHarness({
+    diff: "+x",
+    commitPlanned: true,
+    attempt: 1,
+    chatHistory: [
+      { role: "user", text: "What is the impact on callers?" },
+      { role: "assistant", text: "Only test/a.test.ts calls this function." },
+    ],
+  });
+
+  const lines = ui.lines();
+  assert.ok(lines.some((l) => l.includes("You: What is the impact on callers?")));
+  assert.ok(lines.some((l) => l.includes("Agent: Only test/a.test.ts calls this function.")));
+});
+
+test("bounds long chat history on a short terminal", () => {
+  const chatHistory = Array.from({ length: 20 }, (_, i) => ({
+    role: (i % 2 === 0 ? "user" : "assistant") as "user" | "assistant",
+    text: `Message number ${i} with detail`,
+  }));
+  const ui = gateHarness({ diff: "+x", commitPlanned: true, attempt: 1, chatHistory }, 20);
+
+  const lines = ui.lines();
+  assert.ok(lines.some((l) => l.includes("earlier chat lines")));
+});
+
+test("propagates focus state to the embedded input widget", () => {
+  const ui = gateHarness({ diff: "+x", commitPlanned: true, attempt: 1 });
+  ui.component.focused = true;
+  assert.equal(ui.component.focused, true);
+  ui.press("c");
+  assert.equal(ui.component.focused, true);
+  ui.press(ESCAPE);
+  assert.equal(ui.component.focused, true);
+});
+
 // ── openFixProgress (raw listener + gate-only overlays + table sink) ───────
 
 interface CustomCall {

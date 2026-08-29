@@ -209,155 +209,197 @@ async function buildRuntime(source: ModelRegistry, agentDir: string): Promise<Mo
   return runtime;
 }
 
+export interface InteractiveAgentSession {
+  prompt(task: string): Promise<HeadlessResult>;
+  dispose(): void;
+}
+
+export type CreateInteractiveSessionOptions = Omit<HeadlessOptions, "task">;
+
+/**
+ * Creates a persistent interactive agent session.
+ * The session maintains conversation history across multiple prompt() calls
+ * until dispose() is called.
+ */
+export async function createInteractiveAgentSession(
+  opts: CreateInteractiveSessionOptions,
+): Promise<InteractiveAgentSession> {
+  const resolvedModel = resolveModelRef(opts.model, opts.modelRegistry);
+  const agentDir = getAgentDir();
+  const modelRuntime = await buildRuntimeWithExtensionProviders(opts.modelRegistry, agentDir);
+  const loader = createIsolatedResourceLoader(opts.cwd, agentDir, opts.systemPrompt);
+  await loader.reload();
+
+  const created = await createAgentSession({
+    cwd: opts.cwd,
+    agentDir,
+    modelRuntime,
+    model: resolvedModel,
+    // "max" isn't in the installed SDK's ThinkingLevel type yet; the picker can never produce it, so fall back to the session default.
+    thinkingLevel: opts.thinking === "max" ? undefined : opts.thinking,
+    tools: opts.tools,
+    resourceLoader: loader,
+    sessionManager: SessionManager.inMemory(opts.cwd),
+    settingsManager: SettingsManager.create(opts.cwd, agentDir),
+  });
+  const session = created.session;
+  session.setSessionName(opts.agentName);
+
+  let disposed = false;
+
+  return {
+    async prompt(task: string): Promise<HeadlessResult> {
+      if (disposed) {
+        return failedResult("session is disposed");
+      }
+
+      const startIndex = session.messages.length;
+      const tracker = new OutputActivityTracker();
+      const usage = emptyUsage();
+      let activity: string | undefined;
+      let toolCalls = 0;
+      let costModel = resolvedModel;
+      let costUsd: number | undefined = costModel ? 0 : undefined;
+      let lastProgressAt = 0;
+      let provider: string | undefined;
+      let modelId: string | undefined;
+      let stopReason: string | undefined;
+      let errorMessage: string | undefined;
+      let aborted = false;
+      let idleTimedOut = false;
+
+      let idleTimer: ReturnType<typeof setTimeout> | undefined;
+      let lastEventAt = Date.now();
+      const armIdleTimer = () => {
+        if (!opts.idleTimeoutMs || opts.idleTimeoutMs <= 0) return;
+        const idleTimeoutMs = opts.idleTimeoutMs;
+        if (idleTimer) clearTimeout(idleTimer);
+        const checkIdle = () => {
+          const elapsed = Date.now() - lastEventAt;
+          if (elapsed >= idleTimeoutMs) {
+            idleTimedOut = true;
+            session.abort();
+            return;
+          }
+          idleTimer = setTimeout(checkIdle, idleTimeoutMs - elapsed);
+        };
+        idleTimer = setTimeout(checkIdle, idleTimeoutMs);
+      };
+
+      const unsubscribe = session.subscribe((event: AgentSessionEvent) => {
+        lastEventAt = Date.now();
+        if (event.type === "message_start" && event.message.role === "assistant") {
+          tracker.messageStart(event.message);
+        }
+        if (event.type === "message_update" && event.message.role === "assistant") {
+          tracker.messageUpdate(event.assistantMessageEvent, event.message);
+          const liveTotal = event.message.usage?.totalTokens;
+          if (liveTotal && liveTotal > usage.contextTokens) usage.contextTokens = liveTotal;
+        }
+        if (event.type === "message_end" && event.message.role === "assistant") {
+          const msg = event.message;
+          tracker.messageEnd(msg);
+          usage.turns++;
+          if (msg.usage) usage.contextTokens = msg.usage.totalTokens || 0;
+          if (!provider && msg.provider) provider = msg.provider;
+          if (!modelId && msg.model) modelId = msg.model;
+          if (!costModel && provider && modelId) {
+            costModel = opts.modelRegistry.find(provider, modelId);
+            if (costModel) costUsd = 0;
+          }
+          if (msg.usage) {
+            const turnCost = calculateTurnCost(costModel, msg.usage);
+            if (turnCost !== undefined) costUsd = (costUsd ?? 0) + turnCost;
+          }
+          if (msg.stopReason) stopReason = msg.stopReason;
+          if (msg.errorMessage) errorMessage = msg.errorMessage;
+        }
+        if (event.type === "tool_execution_start") {
+          toolCalls++;
+          activity = formatToolActivity(event.toolName, event.args);
+        }
+        const output = tracker.snapshot();
+        const now = Date.now();
+        if (event.type === "message_end" || event.type === "tool_execution_start" || now - lastProgressAt >= 50) {
+          lastProgressAt = now;
+          opts.onProgress?.({
+            contextTokens: usage.contextTokens,
+            turns: usage.turns,
+            toolCalls,
+            costUsd,
+            activity,
+            outputTokens: output.tokens,
+            outputRevision: output.revision,
+            provider,
+            model: modelId,
+          });
+        }
+      });
+
+      const abortListener = () => {
+        aborted = true;
+        session.abort();
+      };
+
+      if (opts.signal?.aborted) {
+        aborted = true;
+        unsubscribe();
+      } else {
+        opts.signal?.addEventListener("abort", abortListener, { once: true });
+        armIdleTimer();
+        try {
+          await session.prompt(task);
+        } catch (error) {
+          stopReason = "error";
+          errorMessage = error instanceof Error ? error.message : String(error);
+        } finally {
+          if (idleTimer) clearTimeout(idleTimer);
+          unsubscribe();
+          opts.signal?.removeEventListener("abort", abortListener);
+        }
+      }
+
+      if (idleTimedOut) {
+        stopReason = "error";
+        errorMessage = `killed after ${opts.idleTimeoutMs}ms with no output (hang detected)`;
+      }
+
+      const turnMessages = session.messages.slice(startIndex);
+      const finalText = getFinalAssistantText(turnMessages);
+      const allText = getAllAssistantText(turnMessages);
+      usage.outputTokens = tracker.snapshot().tokens;
+
+      return {
+        finalText,
+        allText,
+        aborted,
+        stopReason,
+        errorMessage,
+        usage,
+      };
+    },
+
+    dispose(): void {
+      if (disposed) return;
+      disposed = true;
+      session.abort();
+      session.dispose();
+    },
+  };
+}
+
 /** Never rejects; all failures land in the returned HeadlessResult. */
 export async function runAgentSession(opts: HeadlessOptions): Promise<HeadlessResult> {
-  let session: AgentSession;
-  let resolvedModel: Model<Api> | undefined;
+  let session: InteractiveAgentSession;
   try {
-    resolvedModel = resolveModelRef(opts.model, opts.modelRegistry);
-    const agentDir = getAgentDir();
-    const modelRuntime = await buildRuntimeWithExtensionProviders(opts.modelRegistry, agentDir);
-    const loader = createIsolatedResourceLoader(opts.cwd, agentDir, opts.systemPrompt);
-    await loader.reload();
-
-    const created = await createAgentSession({
-      cwd: opts.cwd,
-      agentDir,
-      modelRuntime,
-      model: resolvedModel,
-      // "max" isn't in the installed SDK's ThinkingLevel type yet; the picker can never produce it, so fall back to the session default.
-      thinkingLevel: opts.thinking === "max" ? undefined : opts.thinking,
-      tools: opts.tools,
-      resourceLoader: loader,
-      sessionManager: SessionManager.inMemory(opts.cwd),
-      settingsManager: SettingsManager.create(opts.cwd, agentDir),
-    });
-    session = created.session;
-    session.setSessionName(opts.agentName);
+    session = await createInteractiveAgentSession(opts);
   } catch (error) {
     return failedResult(error instanceof Error ? error.message : String(error));
   }
 
-  const tracker = new OutputActivityTracker();
-  const usage = emptyUsage();
-  let activity: string | undefined;
-  let toolCalls = 0;
-  let costModel = resolvedModel;
-  let costUsd: number | undefined = costModel ? 0 : undefined;
-  let lastProgressAt = 0;
-  let provider: string | undefined;
-  let modelId: string | undefined;
-  let stopReason: string | undefined;
-  let errorMessage: string | undefined;
-  let aborted = false;
-  let idleTimedOut = false;
-
-  let idleTimer: ReturnType<typeof setTimeout> | undefined;
-  let lastEventAt = Date.now();
-  const armIdleTimer = () => {
-    if (!opts.idleTimeoutMs || opts.idleTimeoutMs <= 0) return;
-    const idleTimeoutMs = opts.idleTimeoutMs;
-    if (idleTimer) clearTimeout(idleTimer);
-    const checkIdle = () => {
-      const elapsed = Date.now() - lastEventAt;
-      if (elapsed >= idleTimeoutMs) {
-        idleTimedOut = true;
-        session.abort();
-        return;
-      }
-      idleTimer = setTimeout(checkIdle, idleTimeoutMs - elapsed);
-    };
-    idleTimer = setTimeout(checkIdle, idleTimeoutMs);
-  };
-
-  const unsubscribe = session.subscribe((event: AgentSessionEvent) => {
-    lastEventAt = Date.now();
-    if (event.type === "message_start" && event.message.role === "assistant") {
-      tracker.messageStart(event.message);
-    }
-    if (event.type === "message_update" && event.message.role === "assistant") {
-      tracker.messageUpdate(event.assistantMessageEvent, event.message);
-      const liveTotal = event.message.usage?.totalTokens;
-      if (liveTotal && liveTotal > usage.contextTokens) usage.contextTokens = liveTotal;
-    }
-    if (event.type === "message_end" && event.message.role === "assistant") {
-      const msg = event.message;
-      tracker.messageEnd(msg);
-      usage.turns++;
-      if (msg.usage) usage.contextTokens = msg.usage.totalTokens || 0;
-      if (!provider && msg.provider) provider = msg.provider;
-      if (!modelId && msg.model) modelId = msg.model;
-      if (!costModel && provider && modelId) {
-        costModel = opts.modelRegistry.find(provider, modelId);
-        if (costModel) costUsd = 0;
-      }
-      if (msg.usage) {
-        const turnCost = calculateTurnCost(costModel, msg.usage);
-        if (turnCost !== undefined) costUsd = (costUsd ?? 0) + turnCost;
-      }
-      if (msg.stopReason) stopReason = msg.stopReason;
-      if (msg.errorMessage) errorMessage = msg.errorMessage;
-    }
-    if (event.type === "tool_execution_start") {
-      toolCalls++;
-      activity = formatToolActivity(event.toolName, event.args);
-    }
-    const output = tracker.snapshot();
-    const now = Date.now();
-    if (event.type === "message_end" || event.type === "tool_execution_start" || now - lastProgressAt >= 50) {
-      lastProgressAt = now;
-      opts.onProgress?.({
-        contextTokens: usage.contextTokens,
-        turns: usage.turns,
-        toolCalls,
-        costUsd,
-        activity,
-        outputTokens: output.tokens,
-        outputRevision: output.revision,
-        provider,
-        model: modelId,
-      });
-    }
-  });
-
-  const abortListener = () => {
-    aborted = true;
-    session.abort();
-  };
-  if (opts.signal?.aborted) {
-    // Already aborted before this task was scheduled (e.g. a queued
-    // mapWithConcurrencyLimit task whose turn came up after cancellation) —
-    // skip the LLM call entirely rather than starting a prompt only to abort it.
-    aborted = true;
-    unsubscribe();
-  } else {
-    opts.signal?.addEventListener("abort", abortListener, { once: true });
-    armIdleTimer();
-    try {
-      await session.prompt(opts.task);
-    } finally {
-      if (idleTimer) clearTimeout(idleTimer);
-      unsubscribe();
-      opts.signal?.removeEventListener("abort", abortListener);
-    }
+  try {
+    return await session.prompt(opts.task);
+  } finally {
+    session.dispose();
   }
-
-  if (idleTimedOut) {
-    stopReason = "error";
-    errorMessage = `killed after ${opts.idleTimeoutMs}ms with no output (hang detected)`;
-  }
-
-  const finalText = getFinalAssistantText(session.messages);
-  const allText = getAllAssistantText(session.messages);
-  usage.outputTokens = tracker.snapshot().tokens;
-  session.dispose();
-
-  return {
-    finalText,
-    allText,
-    aborted,
-    stopReason,
-    errorMessage,
-    usage,
-  };
 }
