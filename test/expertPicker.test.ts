@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { visibleWidth } from "@earendil-works/pi-tui";
-import { ExpertPicker, type ExpertPickerTheme } from "../src/components/ExpertPicker.ts";
+import { visibleWidth, type Component, type KeybindingsManager, type TUI } from "@earendil-works/pi-tui";
+import type { Theme } from "@earendil-works/pi-coding-agent";
+import { ExpertPicker, showExpertPicker, type ExpertPickerTheme } from "../src/components/ExpertPicker.ts";
+import { PROMPT_OVERLAY_OPTIONS } from "../src/components/menuChrome.ts";
 import { TIERS } from "../src/components/ReviewerData.ts";
 import { getPersonality } from "../src/skillContent.ts";
 import type { ReviewerSelection } from "../src/types.ts";
@@ -9,6 +11,8 @@ import type { ReviewerSelection } from "../src/types.ts";
 const HIGHLIGHT = "\x1b[48;5;236m";
 const WIDTH = 80;
 const ENTER = "\r";
+const ESCAPE = "\x1b";
+const CTRL_C = "\u0003";
 const DOWN = "\x1b[B";
 const SPACE = " ";
 const BACKSPACE = "\u007f";
@@ -112,4 +116,86 @@ test("every picker reviewer resolves to a personality", () => {
   const names = TIERS.flatMap((t) => t.reviewers).map((r) => r.name);
   assert.equal(names.length, 40);
   for (const name of names) assert.ok(getPersonality(name), name);
+});
+
+// ── Wrapper: showExpertPicker goes through a focused custom overlay ────────
+
+interface MountedOverlay {
+  picker(): ExpertPicker | undefined;
+  send(...keys: string[]): void;
+  render(width?: number): string[];
+  result: Promise<ReviewerSelection | null>;
+  options(): unknown;
+}
+
+/** Focused-overlay fake: Pi dispatches input straight to the component and settles on done. */
+function mountOverlay(terminalRows?: number): MountedOverlay {
+  let component: Component | undefined;
+  let capturedOptions: unknown;
+  const host = {
+    requestRender: () => {},
+    ...(terminalRows === undefined ? {} : { terminal: { rows: terminalRows } }),
+  };
+  const ctx = {
+    ui: {
+      custom: <T>(
+        factory: (tui: TUI, currentTheme: Theme, keybindings: KeybindingsManager, done: (result: T) => void) => Component,
+        options?: unknown,
+      ) => {
+        capturedOptions = options;
+        return new Promise<T>((resolve) => {
+          component = factory(host as unknown as TUI, theme as unknown as Theme, undefined as unknown as KeybindingsManager, resolve);
+        });
+      },
+    },
+  };
+
+  const result = showExpertPicker(ctx, 3);
+  return {
+    picker: () => component as ExpertPicker | undefined,
+    send: (...keys: string[]) => keys.forEach((key) => component?.handleInput?.(key)),
+    render: (width = WIDTH) => component?.render(width) ?? [],
+    result,
+    options: () => capturedOptions,
+  };
+}
+
+test("showExpertPicker opens a focused overlay with the shared prompt geometry", async () => {
+  const overlay = mountOverlay();
+  assert.deepEqual(overlay.options(), PROMPT_OVERLAY_OPTIONS);
+  overlay.send(ESCAPE);
+  assert.equal(await overlay.result, null);
+});
+
+test("Escape and Ctrl+C both cancel the picker overlay", async () => {
+  const escaped = mountOverlay();
+  escaped.send(ESCAPE);
+  assert.equal(await escaped.result, null);
+
+  const ctrlC = mountOverlay();
+  ctrlC.send(CTRL_C);
+  assert.equal(await ctrlC.result, null);
+});
+
+test("the shared 75% viewport stays scrollable and unclipped on a short terminal", () => {
+  const overlay = mountOverlay(20);
+  const initial = overlay.render().map(strip);
+
+  // 20 rows at the shared 75% budget leaves 15 rows; the 40-reviewer list
+  // must window with a scroll indicator instead of overflowing the viewport.
+  const indicator = /(\d+)–(\d+) of 40/;
+  const initialMatch = initial.map((line) => indicator.exec(line)).find(Boolean);
+  assert.ok(initialMatch, "expected a scroll indicator on a short terminal");
+  assert.ok(initial.length <= 15, `render must fit the viewport, got ${initial.length} lines`);
+
+  overlay.send(DOWN, DOWN, DOWN, DOWN, DOWN);
+  const scrolled = overlay.render().map(strip);
+  const scrolledMatch = scrolled.map((line) => indicator.exec(line)).find(Boolean);
+  assert.ok(scrolledMatch, "scroll indicator must survive scrolling");
+  assert.ok(Number(scrolledMatch[1]) > Number(initialMatch![1]), "window must advance with the cursor");
+  assert.ok(scrolled.length <= 15, `scrolled render must still fit the viewport, got ${scrolled.length} lines`);
+  // The cursor row is always inside the rendered window.
+  assert.equal(scrolled.filter((line) => line.includes("❯")).length, 1);
+
+  overlay.send(ESCAPE);
 });

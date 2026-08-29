@@ -22,13 +22,12 @@ import {
   type AuditProgressSnapshot,
 } from "./components/AuditProgress.ts";
 import { discoverAgents, mapWithConcurrencyLimit } from "./subprocess.ts";
-import { EXPERT_PICKER_WIDGET_KEY } from "./components/ExpertPicker.ts";
-import { showPhaseModelPicker, MODEL_PICKER_WIDGET_KEY } from "./components/ModelPicker.ts";
-import { showReviewerRetryPrompt, REVIEWER_RETRY_WIDGET_KEY } from "./components/ReviewerRetry.ts";
-import { showVerifierRetryPrompt, VERIFIER_RETRY_WIDGET_KEY } from "./components/VerifierRetry.ts";
+import { showPhaseModelPicker } from "./components/ModelPicker.ts";
+import { showReviewerRetryPrompt } from "./components/ReviewerRetry.ts";
+import { showVerifierRetryPrompt } from "./components/VerifierRetry.ts";
 import { showArtifactViewer, showReportViewer } from "./components/ReportViewer.ts";
-import { showSettingsMenu, SETTINGS_MENU_WIDGET_KEY } from "./components/SettingsMenu.ts";
-import { showPurgeMenu, PURGE_MENU_WIDGET_KEY } from "./components/PurgeMenu.ts";
+import { showSettingsMenu } from "./components/SettingsMenu.ts";
+import { showPurgeMenu } from "./components/PurgeMenu.ts";
 import {
   loadPersonaAuditConfig,
   modelRefLabel,
@@ -1047,14 +1046,10 @@ export default function (pi: ExtensionAPI): void {
   });
 
   // `session_start` is a secondary safety net: clear any stale widget
-  // state that may have survived a shutdown (e.g. if stop was skipped).
+  // state that may have survived a shutdown (e.g. if stop was skipped). The
+  // interactive prompts are focused overlays now, so Pi tears them down
+  // itself; only the non-focused widgets need clearing here.
   pi.on("session_start", (_event, ctx) => {
     ctx.ui.setWidget(AUDIT_PROGRESS_WIDGET_KEY, undefined);
-    ctx.ui.setWidget(EXPERT_PICKER_WIDGET_KEY, undefined);
-    ctx.ui.setWidget(MODEL_PICKER_WIDGET_KEY, undefined);
-    ctx.ui.setWidget(REVIEWER_RETRY_WIDGET_KEY, undefined);
-    ctx.ui.setWidget(VERIFIER_RETRY_WIDGET_KEY, undefined);
-    ctx.ui.setWidget(SETTINGS_MENU_WIDGET_KEY, undefined);
-    ctx.ui.setWidget(PURGE_MENU_WIDGET_KEY, undefined);
   });
 }

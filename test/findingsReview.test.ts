@@ -25,7 +25,7 @@ const ENTER = "\r";
 const WIDTH = 80;
 
 /** The height the overlay is shown with, and therefore the height the host clips at. */
-const clipBudget = (rows: number): number => Math.floor((rows * 85) / 100);
+const clipBudget = (rows: number): number => Math.floor((rows * 75) / 100);
 
 /** A finding whose rationale and suggested change both wrap, as real ones do. */
 function finding(n: number, overrides: Partial<Finding> = {}): Finding {
@@ -123,7 +123,7 @@ test("PageUp and PageDown move through one rendered page and clamp at both ends"
   assert.match(strip(ui.selected() ?? ""), /Reviewer 03/);
 
   ui.press(PAGE_UP);
-  assert.match(strip(ui.selected() ?? ""), /Reviewer 02/);
+  assert.match(strip(ui.selected() ?? ""), /Reviewer 01/);
 
   for (let i = 0; i < 100; i++) ui.press(PAGE_DOWN);
   assert.match(strip(ui.selected() ?? ""), /Reviewer 30/);

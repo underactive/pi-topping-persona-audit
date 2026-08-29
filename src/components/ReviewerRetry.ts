@@ -20,7 +20,7 @@ import {
   type ThinkingLevel,
 } from "../modelConfig.ts";
 import { RetryModelSubView } from "./ModelPicker.ts";
-import { MenuComponent, showWidgetPrompt, type ChoiceMenuItem, type MenuItem } from "./menuChrome.ts";
+import { MenuComponent, showOverlayPrompt, type ChoiceMenuItem, type MenuItem } from "./menuChrome.ts";
 
 /** A reviewer pass that failed, as shown in the checkpoint. */
 export interface ReviewerFailure {
@@ -54,8 +54,7 @@ const RETRY = "retry";
 const SKIP = "skip";
 const MODEL_ROW = "retry-model";
 
-export const REVIEWER_RETRY_WIDGET_KEY = "persona-audit-reviewer-retry";
-/** Failure rows shown at once; the rest scroll with the cursor so the widget stays a fixed height. */
+/** Failure rows shown at once; the rest scroll with the cursor so the overlay stays a bounded height. */
 const MAX_VISIBLE_FAILURES = 4;
 
 export class ReviewerRetryComponent implements Component {
@@ -177,8 +176,8 @@ export async function showReviewerRetryPrompt(
 
   const thinkingOverrides = { ...loadPersonaAuditConfig().thinkingOverrides };
 
-  const result = await showWidgetPrompt<ReviewerRetryDecision | undefined>(ctx, REVIEWER_RETRY_WIDGET_KEY, (tui, theme, finish) =>
+  const result = await showOverlayPrompt<ReviewerRetryDecision>(ctx, (tui, theme, finish) =>
     new ReviewerRetryComponent(tui, theme, ctx, failures, current, available, thinkingOverrides, currentThinking, finish));
 
-  return result ?? skipAll;
+  return result;
 }

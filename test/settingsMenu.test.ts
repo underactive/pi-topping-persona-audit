@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
 import type { Component, TUI } from "@earendil-works/pi-tui";
-import { showSettingsMenu, SETTINGS_MENU_WIDGET_KEY } from "../src/components/SettingsMenu.ts";
+import { showSettingsMenu } from "../src/components/SettingsMenu.ts";
+import { PROMPT_OVERLAY_OPTIONS } from "../src/components/menuChrome.ts";
 import {
   DEFAULT_METER_SETTINGS,
   DEFAULT_TEMPERAMENT,
@@ -24,8 +25,6 @@ const tui = { requestRender: () => {} } as unknown as TUI;
 const LEFT = "\x1b[D";
 const RIGHT = "\x1b[C";
 const DOWN = "\x1b[B";
-// Kitty keyboard protocol (flag 2) release event for the down arrow.
-const DOWN_RELEASE = "\x1b[1;1:3B";
 const TAB = "\t";
 const ENTER = "\r";
 const ESCAPE = "\x1b";
@@ -34,7 +33,8 @@ interface Mounted {
   send(...keys: string[]): void;
   render(width?: number): string;
   result: Promise<PersonaAuditConfig | undefined>;
-  widgetCleared(): boolean;
+  settled(): boolean;
+  overlayOptions(): unknown;
 }
 
 const config = (
@@ -51,21 +51,24 @@ const config = (
 
 function mount(initial: PersonaAuditConfig = config(DEFAULT_METER_SETTINGS)): Mounted {
   let component: Component | undefined;
-  let cleared = false;
-  let handler: ((data: string) => unknown) | undefined;
+  let settled = false;
+  let capturedOptions: unknown;
 
+  // Focused-overlay fake: Pi dispatches input straight to the component and
+  // settles the overlay when the component calls done.
   const ctx = {
     ui: {
-      onTerminalInput: (fn: (data: string) => unknown) => {
-        handler = fn;
-        return () => {
-          handler = undefined;
-        };
-      },
-      setWidget: (key: string, content?: (tui: TUI, theme: Theme) => Component) => {
-        assert.equal(key, SETTINGS_MENU_WIDGET_KEY);
-        if (content) component = content(tui, theme);
-        else cleared = true;
+      custom: (
+        factory: (host: TUI, currentTheme: Theme, keybindings: unknown, done: (value: PersonaAuditConfig | undefined) => void) => Component,
+        options?: unknown,
+      ) => {
+        capturedOptions = options;
+        return new Promise<PersonaAuditConfig | undefined>((resolve) => {
+          component = factory(tui, theme, undefined, (value) => {
+            settled = true;
+            resolve(value);
+          });
+        });
       },
     },
   } as unknown as ExtensionCommandContext;
@@ -73,11 +76,12 @@ function mount(initial: PersonaAuditConfig = config(DEFAULT_METER_SETTINGS)): Mo
   const result = showSettingsMenu(ctx, initial);
   return {
     send: (...keys: string[]) => {
-      for (const key of keys) handler?.(key);
+      for (const key of keys) component?.handleInput?.(key);
     },
     render: (width = 56) => (component?.render(width) ?? []).map(strip).join("\n"),
     result,
-    widgetCleared: () => cleared,
+    settled: () => settled,
+    overlayOptions: () => capturedOptions,
   };
 }
 
@@ -96,12 +100,13 @@ test("the menu shows one compact row per setting, seeded from the saved values",
   menu.send(TAB, ENTER);
 });
 
-test("Save resolves the cycled values and unmounts the widget", async () => {
+test("Save resolves the cycled values and settles the overlay", async () => {
   const menu = mount(config({ color: "accent", direction: "rtl" }));
+  assert.deepEqual(menu.overlayOptions(), PROMPT_OVERLAY_OPTIONS);
   menu.send(RIGHT, DOWN, LEFT, DOWN, RIGHT, TAB, ENTER);
 
   assert.deepEqual(await menu.result, config({ color: "border", direction: "ltr" }, "caustic"));
-  assert.ok(menu.widgetCleared());
+  assert.ok(menu.settled());
 });
 
 test("cycling wraps around every value list", async () => {
@@ -128,21 +133,6 @@ test("the max-rounds row renders the saved count and cycles to a new one on Save
   assert.deepEqual(await menu.result, config(DEFAULT_METER_SETTINGS, DEFAULT_TEMPERAMENT, 6));
 });
 
-test("a Kitty key-release event does not advance the cursor a second time", () => {
-  const menu = mount();
-  assert.match(menu.render(), /❯ Token activity monitor color/);
-
-  // A lone release must not move the cursor at all.
-  menu.send(DOWN_RELEASE);
-  assert.match(menu.render(), /❯ Token activity monitor color/);
-
-  // One physical keypress arrives as press then release; it must move by one row.
-  menu.send(DOWN, DOWN_RELEASE);
-  assert.match(menu.render(), /❯ Token activity monitor direction/);
-
-  menu.send(ESCAPE);
-});
-
 test("Cancel and Esc both discard the edits", async () => {
   const cancelled = mount();
   cancelled.send(RIGHT, TAB, RIGHT, ENTER);
@@ -151,5 +141,5 @@ test("Cancel and Esc both discard the edits", async () => {
   const escaped = mount();
   escaped.send(RIGHT, ESCAPE);
   assert.equal(await escaped.result, undefined);
-  assert.ok(escaped.widgetCleared());
+  assert.ok(escaped.settled());
 });

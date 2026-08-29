@@ -2,9 +2,7 @@ import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { homedir } from "node:os";
 import * as path from "node:path";
 import { formatAge, formatBytes, type ArtifactEntry, type ArtifactKind } from "../artifacts.ts";
-import { MenuComponent, showWidgetPrompt, type MenuSection, type ToggleMenuItem } from "./menuChrome.ts";
-
-export const PURGE_MENU_WIDGET_KEY = "persona-audit-purge";
+import { MenuComponent, showOverlayPrompt, type MenuSection, type ToggleMenuItem } from "./menuChrome.ts";
 
 export type PurgeMenuResult =
   | { action: "purge"; tagged: Set<string> }
@@ -66,7 +64,7 @@ export function showPurgeMenu(
     return [{ ...SECTION_INFO[kind], title: `${SECTION_INFO[kind].title} · ${displayDirectory(matching[0]!.absPath)}`, items }];
   });
 
-  return showWidgetPrompt<PurgeMenuResult>(ctx, PURGE_MENU_WIDGET_KEY, (tui, theme, finish) =>
+  return showOverlayPrompt<PurgeMenuResult>(ctx, (tui, theme, finish) =>
     new MenuComponent(
       {
         title: "Persona-audit: Purge artifacts",

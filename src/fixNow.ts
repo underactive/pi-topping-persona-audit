@@ -13,7 +13,7 @@ import { gitCommitFiles, gitDiff, gitRestoreFiles, gitStatusPorcelain, type File
 import type { ThinkingLevel } from "./modelConfig.ts";
 import { ADJUDICATOR_APPLY_DIRECTIVE, UNTRUSTED_DATA_RULE } from "./skillContent.ts";
 import { isFailedRun } from "./subprocess.ts";
-import type { Finding, FixedFinding, HeadlessOptions, HeadlessProgress, HeadlessResult, ReviewSessionState } from "./types.ts";
+import type { Finding, FixedFinding, HeadlessOptions, HeadlessResult, ReviewSessionState } from "./types.ts";
 
 const AGENT_IDLE_TIMEOUT_MS = 600_000;
 const MAX_FIX_ATTEMPTS = 5;
@@ -35,8 +35,6 @@ export interface FixNowDeps {
   implementModel: PhaseModel;
   verifyModel: PhaseModel;
   signal?: AbortSignal;
-  /** Mirrors agent telemetry into the background audit-progress table. */
-  onTelemetry?: (snapshot: HeadlessProgress) => void;
   /** Injectable for tests. */
   runSession?: (options: HeadlessOptions) => Promise<HeadlessResult>;
   /** Injectable for tests — defaults to a ctx.ui.select prompt. */
@@ -293,7 +291,6 @@ export async function runFixNow(
         idleTimeoutMs: AGENT_IDLE_TIMEOUT_MS,
         onProgress: (snapshot) => {
           controller.applyProgress(snapshot);
-          deps.onTelemetry?.(snapshot);
         },
       });
       if (abort.signal.aborted) {
@@ -334,7 +331,6 @@ export async function runFixNow(
           idleTimeoutMs: AGENT_IDLE_TIMEOUT_MS,
           onProgress: (snapshot) => {
             controller.applyProgress(snapshot);
-            deps.onTelemetry?.(snapshot);
           },
         });
         if (abort.signal.aborted) {
@@ -395,7 +391,6 @@ export async function runFixNow(
           idleTimeoutMs: AGENT_IDLE_TIMEOUT_MS,
           onProgress: (snapshot) => {
             controller.applyProgress(snapshot);
-            deps.onTelemetry?.(snapshot);
           },
         });
         if (!isFailedRun(summaryRun)) {

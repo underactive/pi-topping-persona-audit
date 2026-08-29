@@ -51,14 +51,12 @@ import {
   renderMenuSeparator,
   renderMenuTopBorder,
   SELECTOR,
-  showWidgetPrompt,
+  showOverlayPrompt,
   twoPaneWidths,
   wrapText,
   type MenuFooterContents,
   type MenuItem,
 } from "./menuChrome.ts";
-
-export const MODEL_PICKER_WIDGET_KEY = "persona-audit-model-picker";
 
 export type PhaseModelPickerResult =
   | { action: "start"; selections: PhaseModelSelection }
@@ -267,7 +265,9 @@ export class TwoPaneModelThinking {
   }
 
   handleInput(data: string): "confirm" | "back" | undefined {
-    if (matchesKey(data, Key.escape)) return "back";
+    // Ctrl+C is Escape here too: a focused overlay owns the keyboard, so the
+    // host's Ctrl+C handling is unreachable while a slot or retry view is open.
+    if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"))) return "back";
     if (matchesKey(data, Key.tab)) {
       // Tab cycles Models → Thinking → action buttons → Models;
       // left/right continue to switch between Models and Thinking (or
@@ -685,7 +685,7 @@ export async function showPhaseModelPicker(
     selections[slot] = { ref, thinking };
   }
 
-  const result = await showWidgetPrompt<PhaseModelPickerResult>(ctx, MODEL_PICKER_WIDGET_KEY, (tui, theme, finish) =>
+  const result = await showOverlayPrompt<PhaseModelPickerResult>(ctx, (tui, theme, finish) =>
     new PhaseModelPickerComponent(tui, theme, available, thinkingOverrides, currentThinking, ctx, selections, finish));
 
   if (result.action !== "start") return result;

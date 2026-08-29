@@ -19,7 +19,7 @@ import {
   type ProgressTheme,
 } from "../src/components/AuditProgress.ts";
 import { ACTIVITY_METER_WIDTH } from "../src/activityMeter.ts";
-import type { HeadlessProgress } from "../src/types.ts";
+import type { Finding, HeadlessProgress } from "../src/types.ts";
 
 const strip = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
 
@@ -824,4 +824,157 @@ test("total run time keeps running while mounted and freezes once the widget sto
   await new Promise((resolve) => setTimeout(resolve, 30));
   assert.equal(widget.totalMs(), frozen, "the clock is frozen after stop()");
   assert.ok((captured ?? 0) >= running, "the snapshot captures the run's duration");
+});
+
+// ── fix-now nested detail ──────────────────────────────────────────────────
+
+const fixNowFinding: Finding = {
+  reviewer: "Security Engineer",
+  file: "src/a.ts",
+  line: 12,
+  category: "security",
+  severity: "high",
+  rationale: "SQL string is concatenated from user input",
+  suggestedChange: "use a parameterized query",
+};
+
+/** A mounted widget with one working fix-now row carrying its nested detail. */
+function fixNowHarness(terminalRows = 40, finding: Finding = fixNowFinding) {
+  const { ctx, state } = fakeCtx(terminalRows);
+  const widget = new AuditProgressWidget(ctx);
+  widget.addRow("Implement", "fix", `fix now · ${finding.file}:${finding.line}`, { state: "working" });
+  widget.setFixNowDetail("fix", finding);
+  widget.mount();
+  return {
+    widget,
+    rendered: () => lines(state.table),
+    /** Line indexes of the row and its nested block, in render order. */
+    indexes: () => {
+      const rendered = lines(state.table);
+      const at = (needle: string) => rendered.findIndex((l) => l.includes(needle));
+      return { row: at("fix now ·"), meta: at("security/high"), status: at("implementing fix"), hint: at("Esc cancel fix") };
+    },
+  };
+}
+
+test("the fix-now detail nests meta, rationale, phase status, and cancel hint under its row", () => {
+  const h = fixNowHarness();
+  h.widget.updateFixNowPhase("fix", "fixing", "applying security fix", 1);
+
+  const rendered = h.rendered();
+  assert.ok(rendered.some((l) => l.includes("security/high")), "meta line");
+  assert.ok(rendered.some((l) => l.includes("SQL string is concatenated from user input")), "rationale line");
+  assert.ok(rendered.some((l) => l.includes("implementing fix · applying security fix")), "phase status line");
+  assert.ok(rendered.some((l) => l.includes("Esc cancel fix")), "cancel hint");
+
+  const idx = h.indexes();
+  assert.ok(idx.row >= 0 && idx.meta > idx.row && idx.status > idx.meta && idx.hint > idx.status, "nested lines sit under the row, in order");
+
+  h.widget.stop();
+});
+
+test("phase updates rewrite the status line and carry the attempt number", () => {
+  const h = fixNowHarness();
+  h.widget.updateFixNowPhase("fix", "verifying", "checking the fix", 2);
+
+  const rendered = h.rendered();
+  assert.ok(rendered.some((l) => l.includes("verifying fix · checking the fix")));
+  assert.ok(rendered.some((l) => l.includes("security/high · attempt 2")), "the meta line carries the attempt");
+
+  h.widget.stop();
+});
+
+test("arming the cancel gesture swaps the hint, disarming restores it", () => {
+  const h = fixNowHarness();
+  h.widget.setFixNowCancelArmed("fix", true);
+  assert.ok(h.rendered().some((l) => l.includes("Press Esc again to cancel this fix — clean edits will be reverted")));
+
+  h.widget.setFixNowCancelArmed("fix", false);
+  const rendered = h.rendered();
+  assert.ok(rendered.some((l) => l.includes("Esc cancel fix")));
+  assert.ok(!rendered.some((l) => l.includes("Press Esc again")), "the armed warning is gone");
+
+  h.widget.stop();
+});
+
+test("settling shows the decision's busy state and Please wait", () => {
+  const committing = fixNowHarness();
+  committing.widget.updateFixNowSettling("fix", "accept", true);
+  let rendered = committing.rendered();
+  assert.ok(rendered.some((l) => l.includes("accepting fix · committing changes")));
+  assert.ok(rendered.some((l) => l.includes("Please wait…")));
+  assert.ok(!rendered.some((l) => l.includes("Esc cancel fix")), "no cancel hint once decided");
+  committing.widget.stop();
+
+  const saving = fixNowHarness();
+  saving.widget.updateFixNowSettling("fix", "accept", false);
+  assert.ok(saving.rendered().some((l) => l.includes("accepting fix · saving accepted fix")));
+  saving.widget.stop();
+
+  const retrying = fixNowHarness();
+  retrying.widget.updateFixNowSettling("fix", "retry", true);
+  rendered = retrying.rendered();
+  assert.ok(rendered.some((l) => l.includes("preparing retry · reverting changes before retry")));
+  assert.ok(rendered.some((l) => l.includes("Please wait…")));
+  retrying.widget.stop();
+
+  const discarding = fixNowHarness();
+  discarding.widget.updateFixNowSettling("fix", "discard", true);
+  assert.ok(discarding.rendered().some((l) => l.includes("discarding fix · reverting changes")));
+  discarding.widget.stop();
+});
+
+test("a long rationale is capped at three wrapped lines with a trailing ellipsis", () => {
+  const long = fixNowHarness(40, {
+    ...fixNowFinding,
+    rationale: "word ".repeat(200).trim(),
+  });
+
+  const rationaleLines = long.rendered().filter((l) => l.includes("word"));
+  assert.equal(rationaleLines.length, 3, "the rationale never takes more than three lines");
+  assert.ok(rationaleLines[2]?.includes("…"), "the last kept line is marked truncated");
+
+  long.widget.stop();
+});
+
+test("the tool-activity sub-row still renders alongside the detail block", () => {
+  const h = fixNowHarness(40);
+  h.widget.updateFixNowPhase("fix", "fixing", "applying security fix", 1);
+  h.widget.applyProgress("fix", progressSnapshot({ activity: "edit  src/a.ts" }));
+
+  const rendered = h.rendered();
+  assert.ok(rendered.some((l) => l.includes("↳") && l.includes("edit  src/a.ts")), "activity sub-row");
+  assert.ok(rendered.some((l) => l.includes("implementing fix")), "detail block");
+
+  h.widget.stop();
+});
+
+test("settling the row clears its detail, and snapshots never carry it", () => {
+  const h = fixNowHarness();
+  h.widget.settleRow("fix", "done", "fixed");
+  assert.ok(!h.rendered().some((l) => l.includes("security/high") || l.includes("Esc cancel fix")), "a settled row renders no detail");
+
+  const withDetail = fixNowHarness();
+  const snap = withDetail.widget.snapshot();
+  assert.ok(snap.rows.every((row) => row.fixNowDetail === undefined), "the frozen transcript copy drops live detail");
+  withDetail.widget.stop();
+
+  h.widget.stop();
+});
+
+test("a short terminal sheds the rationale, then the meta line, before the status and hint", () => {
+  const tall = fixNowHarness(40);
+  const tallRendered = tall.rendered();
+  assert.ok(tallRendered.some((l) => l.includes("SQL string")), "tall terminal shows the rationale");
+  tall.widget.stop();
+
+  // 20 rows → budget leaves exactly 3 sub-rows: meta survives, rationale sheds.
+  const short = fixNowHarness(20);
+  const shortRendered = short.rendered();
+  assert.ok(!shortRendered.some((l) => l.includes("SQL string")), "rationale sheds first");
+  assert.ok(shortRendered.some((l) => l.includes("security/high")), "meta survives");
+  assert.ok(shortRendered.some((l) => l.includes("implementing fix")), "phase status is kept");
+  assert.ok(shortRendered.some((l) => l.includes("Esc cancel fix")), "cancel hint is kept");
+  assert.ok(shortRendered.some((l) => l.includes("fix now · src/a.ts:12")), "the agent row itself is untouched");
+  short.widget.stop();
 });

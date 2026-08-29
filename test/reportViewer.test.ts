@@ -12,7 +12,7 @@ const DOWN = "\x1b[B";
 const UP = "\x1b[A";
 const WIDTH = 80;
 const ROWS = 24;
-const CLIP_BUDGET = Math.floor((ROWS * 85) / 100);
+const CLIP_BUDGET = Math.floor((ROWS * 75) / 100);
 
 const theme: ReportViewerTheme = {
   fg: (_color, text) => text,
@@ -59,7 +59,7 @@ function harness(text = report(), rows = ROWS) {
     viewer,
     press: (key: string): void => viewer.handleInput(key),
     rendered: (width = WIDTH): string[] => viewer.render(width),
-    visible: (width = WIDTH): string[] => viewer.render(width).slice(0, Math.floor((rows * 85) / 100)),
+    visible: (width = WIDTH): string[] => viewer.render(width).slice(0, Math.floor((rows * 75) / 100)),
     footer: (width = WIDTH): string => viewer.render(width).at(-2) ?? "",
     renderRequests: (): number => renders,
     closes: (): number => closed,
@@ -73,7 +73,7 @@ test("renders report chrome, position, and no lines beyond the overlay clip budg
   assert.ok(lines.length <= CLIP_BUDGET);
   assert.match(lines[0] ?? "", /Audit Report — completed · 30 findings · verification passed/);
   assert.match(lines[1] ?? "", /audit\.md/);
-  assert.match(lines[lines.length - 2] ?? "", /↑↓ scroll.*u\/d page.*g\/G top\/bottom.*Esc close.*lines 1–14\/30/);
+  assert.match(lines[lines.length - 2] ?? "", /↑↓ scroll.*u\/d page.*g\/G top\/bottom.*Esc close.*lines 1–12\/30/);
   assert.match(lines[lines.length - 1] ?? "", /^╚═+╝$/);
 });
 
@@ -81,16 +81,16 @@ test("arrow keys scroll one rendered line and clamp at both ends", () => {
   const ui = harness();
   ui.rendered();
   ui.press(DOWN);
-  assert.match(ui.footer(), /lines 2–15\/30/);
+  assert.match(ui.footer(), /lines 2–13\/30/);
   assert.equal(ui.renderRequests(), 1);
 
   ui.press(UP);
-  assert.match(ui.footer(), /lines 1–14\/30/);
+  assert.match(ui.footer(), /lines 1–12\/30/);
 
   for (let index = 0; index < 100; index++) ui.press(DOWN);
-  assert.match(ui.footer(), /lines 17–30\/30/);
+  assert.match(ui.footer(), /lines 19–30\/30/);
   ui.press(DOWN);
-  assert.match(ui.footer(), /lines 17–30\/30/);
+  assert.match(ui.footer(), /lines 19–30\/30/);
 });
 
 test("page, top, and bottom keys navigate with two lines of overlap", () => {
@@ -98,14 +98,14 @@ test("page, top, and bottom keys navigate with two lines of overlap", () => {
   ui.rendered();
 
   ui.press("d");
-  assert.match(ui.footer(), /lines 13–26\/30/);
+  assert.match(ui.footer(), /lines 11–22\/30/);
   ui.press("u");
-  assert.match(ui.footer(), /lines 1–14\/30/);
+  assert.match(ui.footer(), /lines 1–12\/30/);
 
   ui.press("G");
-  assert.match(ui.footer(), /lines 17–30\/30/);
+  assert.match(ui.footer(), /lines 19–30\/30/);
   ui.press("g");
-  assert.match(ui.footer(), /lines 1–14\/30/);
+  assert.match(ui.footer(), /lines 1–12\/30/);
 });
 
 test("Esc closes without requesting another render", () => {

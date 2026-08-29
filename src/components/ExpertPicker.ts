@@ -1,9 +1,9 @@
 import type { Component } from "@earendil-works/pi-tui";
 import { Key, matchesKey } from "@earendil-works/pi-tui";
-import type { Theme, ThemeColor, WidgetPlacement } from "@earendil-works/pi-coding-agent";
+import type { ThemeColor } from "@earendil-works/pi-coding-agent";
 import type { ReviewerSelection, ReviewerInfo } from "../types.ts";
 import { TIERS } from "./ReviewerData.ts";
-import { renderMenuContentRow, renderMenuSectionDivider, renderMenuTopBorder, SELECTOR, showWidgetPrompt, wrapText } from "./menuChrome.ts";
+import { FALLBACK_TERMINAL_ROWS, OVERLAY_HEIGHT_PERCENT, type OverlayPromptUi, renderMenuContentRow, renderMenuSectionDivider, renderMenuTopBorder, SELECTOR, showOverlayPrompt, wrapText } from "./menuChrome.ts";
 
 /** Every reviewer in tier order, so the flat list still reads Holistic → Specialist → Persona. */
 const ALL_REVIEWERS: ReviewerInfo[] = TIERS.flatMap((tier) => tier.reviewers.map((reviewer) => ({ ...reviewer, tier: tier.tier })));
@@ -12,14 +12,6 @@ const TIER_LABELS = new Map(TIERS.map((tier) => [tier.tier, tier.label]));
 const COST_CONFIRM_RUN_THRESHOLD = 6;
 const REVIEWER_LIST_CHROME_ROWS = 9;
 
-export const EXPERT_PICKER_WIDGET_KEY = "persona-audit-expert-picker";
-/**
- * Share of the terminal the picker may claim. It sits above the editor rather
- * than over the transcript, so it has to leave the conversation readable.
- */
-const PICKER_HEIGHT_RATIO = 0.5;
-/** Viewport assumed when the host cannot report a terminal height. */
-const FALLBACK_VIEWPORT = 40;
 /** Width assumed for scroll math before the first render. */
 const FALLBACK_WIDTH = 80;
 
@@ -37,17 +29,17 @@ export interface ExpertPickerTheme {
 }
 
 /**
- * Expert picker, rendered as a sticky widget above the editor: one multi-select
- * list of all 40 reviewers, grouped under tier headers, so a selection can mix
+ * Expert picker, rendered as a focused custom overlay: one multi-select list
+ * of all 40 reviewers, grouped under tier headers, so a selection can mix
  * tiers freely. Each reviewer renders as a card — name header with pointer,
  * indented description and focus areas below, blank line between cards.
  *
- * Tier headers are render-only artifacts. The cursor indexes `filteredReviewers`
- * alone, so navigation never has to step over a non-selectable row.
+ * Tier headers are render-only artifacts. The cursor indexes
+ * `filteredReviewers` alone, so navigation never has to step over a
+ * non-selectable row.
  *
- * Widgets never take keyboard focus, so `showExpertPicker` feeds this component
- * from a raw terminal input listener and repaints via the host's
- * `requestRender` — nothing here is driven by the focus stack.
+ * The overlay takes keyboard focus, so Pi dispatches input straight to this
+ * component's `handleInput`; repaints go through the host's `requestRender`.
  */
 export class ExpertPicker implements Component {
   private selected = new Set<string>();
@@ -92,10 +84,10 @@ export class ExpertPicker implements Component {
     }
   }
 
-  /** Rows the picker may use. Falls back to the host's terminal when the widget slot reports no height. */
+  /** Rows the picker may use: the shared overlay-height budget of the terminal. */
   private viewportHeight(): number {
     const rows = this.host?.terminal?.rows ?? 0;
-    return Math.max(10, Math.floor((rows > 0 ? rows : FALLBACK_VIEWPORT) * PICKER_HEIGHT_RATIO));
+    return Math.max(10, Math.floor(((rows > 0 ? rows : FALLBACK_TERMINAL_ROWS) * OVERLAY_HEIGHT_PERCENT) / 100));
   }
 
   private needsCostConfirm(): boolean {
@@ -171,7 +163,9 @@ export class ExpertPicker implements Component {
   }
 
   handleInput(data: string): void {
-    if (matchesKey(data, Key.escape)) {
+    // Ctrl+C is Escape here: the overlay owns keyboard focus, so the host's
+    // usual Ctrl+C handling is out of reach while the picker is open.
+    if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"))) {
       if (this.awaitingCostConfirm) {
         this.awaitingCostConfirm = false;
         this.invalidate();
@@ -341,28 +335,16 @@ export class ExpertPicker implements Component {
   }
 }
 
-/** The slice of pi's extension context the picker needs. Structural so tests can supply a stub. */
-export interface ExpertPickerContext {
-  ui: {
-    setWidget(
-      key: string,
-      content: ((tui: ExpertPickerHost, theme: Theme) => Component) | undefined,
-      options?: { placement?: WidgetPlacement },
-    ): void;
-    onTerminalInput(handler: (data: string) => { consume?: boolean; data?: string } | undefined): () => void;
-  };
-}
-
 /**
- * Show the expert picker above the editor and return the selection result.
+ * Show the expert picker as a focused overlay and return the selection result.
  * `initial` reopens the picker with that selection restored and the cursor on
  * it, so stepping back from a later screen does not discard it.
  */
 export async function showExpertPicker(
-  ctx: ExpertPickerContext,
+  ctx: { ui: OverlayPromptUi },
   fileCount?: number,
   initial?: ReviewerSelection,
 ): Promise<ReviewerSelection | null> {
-  return showWidgetPrompt<ReviewerSelection | null, ExpertPickerHost>(ctx, EXPERT_PICKER_WIDGET_KEY, (tui, theme, finish) =>
+  return showOverlayPrompt<ReviewerSelection | null>(ctx, (tui, theme, finish) =>
     new ExpertPicker(theme, finish, fileCount, tui, initial));
 }

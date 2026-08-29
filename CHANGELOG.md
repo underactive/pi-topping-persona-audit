@@ -34,6 +34,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - **Headless progress table displays generated token counts** — instead of character counts, uses abbreviated formatting (e.g., "1.2K tokens") for easier reading in the ACTIVITY column.
 
+- **Interactive prompts are lifecycle-aware overlays** — the expert picker, per-phase model picker, reviewer and verifier retry checkpoints, settings menu, and purge menu moved from docked above-editor widgets (`setWidget` plus a raw terminal-input listener) to centered focused `ctx.ui.custom()` overlays, so Pi 0.84.4+ brackets each genuine prompt with its `ui_prompt_start`/`ui_prompt_end` lifecycle events instead of being unable to report the wait.
+
+- **Fix Now status nests inside the audit table** — the working, verifying, and settling phases (rationale, phase status, cancel hint) now render as nested sub-rows under the Implement phase's `fix now · …` row instead of a separate framed above-editor widget; agent telemetry already lived on that row, so the fix no longer doubles its footprint above the editor. The double-Escape cancel gesture is unchanged, and the accept/retry/discard gate remains a focused overlay.
+
 - **Findings review hotkeys** — `A`, `R`, and `D` now set the selected finding to apply, reject, or defer directly; `O` defer-override is removed while `Space` continues to cycle statuses.
 
 ### Fixed
@@ -41,6 +45,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **Findings review keeps complete summaries** — issue rationale text is no longer cut off at 100 characters before the TUI can wrap and display it.
 
 - **Findings review paging** — `PageUp` and `PageDown` now move through the findings by a rendered page while keeping the selected finding visible.
+
+- **Fix Now no longer reports agent work as a user wait** — fixing, verifying, and post-decision settling no longer take keyboard focus or open a prompt surface: they report through the audit table's `fix now · …` row while a raw input listener consumes only Escape (double-Escape still cancels; printable input and Ctrl+C pass through to the editor). The accept/retry/discard decision opens a fresh focused custom overlay per attempt that settles via its `done` callback the moment a key is pressed. Pi therefore reports a user wait only while that decision gate is open, not across the whole fix episode.
 
 ## [0.1.3] - 2026-08-21
 

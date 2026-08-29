@@ -702,7 +702,7 @@ export async function showFindingsReview(
       overlay: true,
       overlayOptions: {
         anchor: "center",
-        width: "80%",
+        width: "100%",
         maxHeight: OVERLAY_MAX_HEIGHT,
       },
     },

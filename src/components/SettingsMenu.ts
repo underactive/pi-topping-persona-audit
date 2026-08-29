@@ -8,7 +8,7 @@
  */
 
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { MenuComponent, showWidgetPrompt, type ChoiceMenuItem } from "./menuChrome.ts";
+import { MenuComponent, showOverlayPrompt, type ChoiceMenuItem } from "./menuChrome.ts";
 import {
   MAX_VERIFY_ROUNDS,
   METER_COLORS,
@@ -19,8 +19,6 @@ import {
   type PersonaAuditConfig,
   type Temperament,
 } from "../modelConfig.ts";
-
-export const SETTINGS_MENU_WIDGET_KEY = "persona-audit-settings";
 
 /** Direction labels, keyed by `MeterDirection` value. */
 const DIRECTION_LABELS: Record<MeterDirection, string> = {
@@ -41,7 +39,7 @@ const VERIFY_ROUND_VALUES: string[] = Array.from(
   (_, i) => String(i + MIN_VERIFY_ROUNDS),
 );
 
-/** Show the settings menu. Resolves the edited settings on Save, or undefined on Cancel/Esc. */
+/** Show the settings menu as a focused overlay. Resolves the edited settings on Save, or undefined on Cancel/Esc. */
 export function showSettingsMenu(
   ctx: ExtensionCommandContext,
   initial: PersonaAuditConfig,
@@ -92,7 +90,7 @@ export function showSettingsMenu(
     },
   ];
 
-  return showWidgetPrompt<PersonaAuditConfig | undefined>(ctx, SETTINGS_MENU_WIDGET_KEY, (tui, theme, finish) =>
+  return showOverlayPrompt<PersonaAuditConfig | undefined>(ctx, (tui, theme, finish) =>
     new MenuComponent(
       {
         title: "Persona-audit: Settings",

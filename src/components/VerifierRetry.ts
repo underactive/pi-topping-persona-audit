@@ -25,7 +25,7 @@ import {
   type ThinkingLevel,
 } from "../modelConfig.ts";
 import { RetryModelSubView } from "./ModelPicker.ts";
-import { MenuComponent, showWidgetPrompt } from "./menuChrome.ts";
+import { MenuComponent, showOverlayPrompt } from "./menuChrome.ts";
 
 /** What the user decided to do about the failed verifier run. */
 export interface VerifierRetryDecision {
@@ -45,8 +45,6 @@ export type VerifierFailurePrompt = (
 const DETAIL_MAX = 140;
 
 const MODEL_ROW = "verify-retry-model";
-
-export const VERIFIER_RETRY_WIDGET_KEY = "persona-audit-verifier-retry";
 
 export class VerifierRetryComponent implements Component {
   private readonly done: (result: VerifierRetryDecision) => void;
@@ -161,8 +159,8 @@ export async function showVerifierRetryPrompt(
 
   const thinkingOverrides = { ...loadPersonaAuditConfig().thinkingOverrides };
 
-  const result = await showWidgetPrompt<VerifierRetryDecision | undefined>(ctx, VERIFIER_RETRY_WIDGET_KEY, (tui, theme, finish) =>
+  const result = await showOverlayPrompt<VerifierRetryDecision>(ctx, (tui, theme, finish) =>
     new VerifierRetryComponent(tui, theme, ctx, detail, current, available, thinkingOverrides, currentThinking, finish));
 
-  return result ?? skip;
+  return result;
 }

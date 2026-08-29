@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
-import { visibleWidth, type TUI } from "@earendil-works/pi-tui";
+import { visibleWidth, type Component, type TUI } from "@earendil-works/pi-tui";
 import { showPhaseModelPicker, smartTruncateModelLabel, thinkingOffWarning, TwoPaneModelThinking, type PhaseModelPickerResult } from "../src/components/ModelPicker.ts";
-import { twoPaneWidths } from "../src/components/menuChrome.ts";
+import { PROMPT_OVERLAY_OPTIONS, twoPaneWidths } from "../src/components/menuChrome.ts";
 import { PHASE_SLOTS, type ThinkingLevel } from "../src/modelConfig.ts";
 
 const HIGHLIGHT = "\x1b[48;5;236m";
@@ -29,30 +29,37 @@ const TAB = "\t";
 const RIGHT = "\x1b[C";
 const ENTER = "\r";
 
-/** Drive the overview through a stubbed host, since widgets never take focus. */
-function runOverview(keys: string[]): Promise<PhaseModelPickerResult> {
-  let handler: ((data: string) => unknown) | undefined;
+/** Drive the overview through a focused-overlay fake: Pi dispatches input straight to the component. */
+function runOverview(keys: string[]): { result: Promise<PhaseModelPickerResult>; options: () => unknown } {
+  let component: Component | undefined;
+  let capturedOptions: unknown;
   const ctx = {
     mode: "tui",
     model: { provider: "test", id: "model" },
     modelRegistry: { getAvailable: () => [{ provider: "test", id: "model", reasoning: false }] },
     ui: {
       notify: () => {},
-      onTerminalInput: (h: (data: string) => unknown) => {
-        handler = h;
-        return () => { handler = undefined; };
+      custom: (
+        factory: (host: TUI, currentTheme: Theme, keybindings: unknown, done: (result: PhaseModelPickerResult) => void) => Component,
+        options?: unknown,
+      ) => {
+        capturedOptions = options;
+        return new Promise<PhaseModelPickerResult>((resolve) => {
+          component = factory(tui, theme, undefined, resolve);
+        });
       },
-      setWidget: (_key: string, content?: (tui: TUI, theme: Theme) => unknown) => { content?.(tui, theme); },
     },
   } as unknown as ExtensionCommandContext;
 
   const result = showPhaseModelPicker(ctx, currentThinking);
-  for (const key of keys) handler?.(key);
-  return result;
+  for (const key of keys) component?.handleInput?.(key);
+  return { result, options: () => capturedOptions };
 }
 
 test("esc on the phase overview steps back instead of cancelling the audit", async () => {
-  const result = await runOverview([ESCAPE]);
+  const overview = runOverview([ESCAPE]);
+  assert.deepEqual(overview.options(), PROMPT_OVERLAY_OPTIONS);
+  const result = await overview.result;
   assert.equal(result.action, "back");
   // Every phase rides along so stepping forward again does not revert them.
   assert.deepEqual(
@@ -61,8 +68,32 @@ test("esc on the phase overview steps back instead of cancelling the audit", asy
   );
 });
 
+test("ctrl+c on the phase overview steps back like esc", async () => {
+  const result = await runOverview(["\u0003"]).result;
+  assert.equal(result.action, "back");
+});
+
+test("ctrl+c inside a slot view returns to the overview instead of settling the picker", async () => {
+  // Enter opens the review slot view; ctrl+c must step back to the overview
+  // (not settle), so the overview's Cancel button still resolves afterwards.
+  const result = await runOverview([ENTER, "\u0003", TAB, RIGHT, ENTER]).result;
+  assert.deepEqual(result, { action: "cancel" });
+});
+
+test("TwoPaneModelThinking treats ctrl+c as back", () => {
+  const picker = new TwoPaneModelThinking(
+    tui,
+    theme,
+    [{ provider: "test", id: "model" }],
+    {},
+    currentThinking,
+    context,
+  );
+  assert.equal(picker.handleInput("\u0003"), "back");
+});
+
 test("the phase overview's Cancel button still aborts the audit", async () => {
-  assert.deepEqual(await runOverview([TAB, RIGHT, ENTER]), { action: "cancel" });
+  assert.deepEqual(await runOverview([TAB, RIGHT, ENTER]).result, { action: "cancel" });
 });
 
 test("model picker normalizes SelectList rows to the persona-audit marker and highlight", () => {

@@ -4,7 +4,8 @@ import * as path from "node:path";
 import { test } from "node:test";
 import type { ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
 import type { Component, TUI } from "@earendil-works/pi-tui";
-import { displayDirectory, showPurgeMenu, PURGE_MENU_WIDGET_KEY } from "../src/components/PurgeMenu.ts";
+import { displayDirectory, showPurgeMenu, type PurgeMenuResult } from "../src/components/PurgeMenu.ts";
+import { PROMPT_OVERLAY_OPTIONS } from "../src/components/menuChrome.ts";
 import type { ArtifactEntry } from "../src/artifacts.ts";
 
 const strip = (text: string) => text.replace(/\x1b\[[0-9;]*m/g, "");
@@ -21,16 +22,28 @@ const entries: ArtifactEntry[] = [
 
 function mount(preTagged = new Set<string>(), preserveCacheTags = false) {
   let component: Component | undefined;
-  let handler: ((data: string) => unknown) | undefined;
+  let capturedOptions: unknown;
+  // Focused-overlay fake: Pi dispatches input straight to the component.
   const ctx = { ui: {
-    onTerminalInput: (fn: (data: string) => unknown) => { handler = fn; return () => { handler = undefined; }; },
-    setWidget: (key: string, content?: (host: TUI, currentTheme: Theme) => Component) => { assert.equal(key, PURGE_MENU_WIDGET_KEY); if (content) component = content(tui, theme); },
+    custom: (
+      factory: (host: TUI, currentTheme: Theme, keybindings: unknown, done: (value: PurgeMenuResult) => void) => Component,
+      options?: unknown,
+    ) => {
+      capturedOptions = options;
+      return new Promise<PurgeMenuResult>((resolve) => { component = factory(tui, theme, undefined, resolve); });
+    },
   } } as unknown as ExtensionCommandContext;
-  return { result: showPurgeMenu(ctx, entries, preTagged, preserveCacheTags), send: (...keys: string[]) => keys.forEach((key) => handler?.(key)), render: () => (component?.render(100) ?? []).map(strip).join("\n") };
+  return {
+    result: showPurgeMenu(ctx, entries, preTagged, preserveCacheTags),
+    send: (...keys: string[]) => keys.forEach((key) => component?.handleInput?.(key)),
+    render: () => (component?.render(100) ?? []).map(strip).join("\n"),
+    overlayOptions: () => capturedOptions,
+  };
 }
 
 test("purge menu renders categorized tagged rows and keeps cache untagged", () => {
   const menu = mount(new Set(["report", "cache"]));
+  assert.deepEqual(menu.overlayOptions(), PROMPT_OVERLAY_OPTIONS);
   const rendered = menu.render();
   assert.match(rendered, /Audit reports · \//);
   assert.match(rendered, /Progress snapshots · \//);

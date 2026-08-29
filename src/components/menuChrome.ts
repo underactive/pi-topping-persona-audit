@@ -9,8 +9,8 @@
  * two-pane model/thinking view instead.
  */
 
-import type { Theme, ThemeColor, WidgetPlacement } from "@earendil-works/pi-coding-agent";
-import { type Component, isKeyRelease, Key, matchesKey, truncateToWidth, type TUI, visibleWidth } from "@earendil-works/pi-tui";
+import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
+import { type Component, Key, type KeybindingsManager, matchesKey, type OverlayOptions, truncateToWidth, type TUI, visibleWidth } from "@earendil-works/pi-tui";
 
 /** A boolean setting that can be changed with Space. */
 export interface ToggleMenuItem {
@@ -69,7 +69,7 @@ export interface MenuConfig {
   hints?: string[];
   /**
    * Cap the item rows a section renders at once, scrolling the rest with the
-   * cursor. Needed for widgets, which get no host-side height clipping.
+   * cursor, so a tall menu stays inside the overlay's height budget.
    */
   maxItemsPerSection?: number;
   /** Handle a key against the selected item before standard menu navigation. */
@@ -89,7 +89,7 @@ export const SELECTOR = "❯";
 const UNSELECTED_SELECTOR = " ".repeat(SELECTOR.length);
 
 /** Shared overlay sizing constants for focus-taking overlays. */
-export const OVERLAY_HEIGHT_PERCENT = 85;
+export const OVERLAY_HEIGHT_PERCENT = 75;
 export const OVERLAY_MAX_HEIGHT = `${OVERLAY_HEIGHT_PERCENT}%` as const;
 export const FALLBACK_TERMINAL_ROWS = 40;
 
@@ -482,65 +482,54 @@ export class MenuComponent implements Component {
   }
 }
 
-// ── Shared widget mount/dismiss handshake ──────────────────────────────────
-// Every persona-audit picker/prompt (ExpertPicker, the phase model picker,
-// the reviewer/verifier retry checkpoints, the settings menu) mounts above
-// the editor the same way: subscribe to terminal input, forward everything
-// but Ctrl+C to the mounted component, and settle exactly once by
-// unsubscribing, clearing the widget, then resolving. showWidgetPrompt is
-// that handshake, factored out so each site only supplies its widget key and
-// how to construct its own component.
+// ── Shared custom-overlay prompt handshake ───────────────────────────────
+// Every persona-audit interactive prompt (ExpertPicker, the phase model
+// picker, the reviewer/verifier retry checkpoints, the settings menu, the
+// purge menu) is a genuine user wait, so each one goes through
+// ctx.ui.custom(..., { overlay: true }) — the API Pi brackets with
+// ui_prompt_start / ui_prompt_end lifecycle events. showOverlayPrompt is that
+// handshake, factored out so each site only supplies how to construct its own
+// component.
+//
+// Pi owns everything the retired widget handshake did manually: keyboard
+// focus, settle-once behavior, component disposal, keyboard dispatch, and
+// Kitty key-release filtering for focused overlays.
+
+/** Shared geometry for every persona-audit prompt overlay: centered, full width, capped at 75% of the terminal height. */
+export const PROMPT_OVERLAY_OPTIONS: {
+  overlay: true;
+  overlayOptions: OverlayOptions;
+} = {
+  overlay: true,
+  overlayOptions: {
+    anchor: "center",
+    width: "100%",
+    maxHeight: OVERLAY_MAX_HEIGHT,
+  },
+};
 
 /**
- * The slice of pi's extension `ui` every show* prompt needs to mount above
- * the editor. Structural so tests can supply a stub. Generic over the host
- * type so a caller with its own narrowed TUI slice (e.g. ExpertPicker's
- * ExpertPickerHost, kept narrow for its own lighter-weight render tests)
- * still matches exactly rather than fighting TUI's full shape.
+ * The slice of pi's extension `ui` every show* prompt needs to open a focused
+ * custom overlay. Structural so tests can supply a stub.
  */
-export interface WidgetPromptUi<Host = TUI> {
-  setWidget(
-    key: string,
-    content: ((host: Host, theme: Theme) => Component) | undefined,
-    options?: { placement?: WidgetPlacement },
-  ): void;
-  onTerminalInput(handler: (data: string) => { consume?: boolean; data?: string } | undefined): () => void;
+export interface OverlayPromptUi {
+  custom<T>(
+    factory: (tui: TUI, theme: Theme, keybindings: KeybindingsManager, done: (result: T) => void) => Component,
+    options?: {
+      overlay?: boolean;
+      overlayOptions?: OverlayOptions;
+    },
+  ): Promise<T>;
 }
 
 /**
- * Mount a widget above the editor, forward terminal input to it (Ctrl+C stays
- * with the host so a prompt can never trap an abort), and settle exactly once
- * via `done`: unsubscribe, clear the widget, then resolve.
+ * Open a focused custom overlay with the shared prompt geometry and resolve
+ * with whatever the component hands to `done`. Pi brackets the whole call as
+ * one user-prompt lifecycle span.
  */
-export function showWidgetPrompt<T, Host = TUI>(
-  ctx: { ui: WidgetPromptUi<Host> },
-  widgetKey: string,
-  create: (host: Host, theme: Theme, done: (value: T) => void) => Component,
+export function showOverlayPrompt<T>(
+  ctx: { ui: OverlayPromptUi },
+  create: (tui: TUI, theme: Theme, done: (value: T) => void) => Component,
 ): Promise<T> {
-  return new Promise<T>((resolve) => {
-    let component: Component | undefined;
-    let settled = false;
-
-    const unsubscribe = ctx.ui.onTerminalInput((data) => {
-      if (!component || data === "\u0003") return undefined;
-      // Under the Kitty keyboard protocol (flag 2) one physical keypress arrives
-      // as separate press, repeat, and release sequences, and matchesKey matches
-      // all three. Forwarding the release too would advance navigation twice per
-      // keypress. Swallow releases but keep press and repeat so holding a key
-      // still moves.
-      if (isKeyRelease(data)) return { consume: true };
-      component.handleInput?.(data);
-      return { consume: true };
-    });
-
-    const finish = (result: T): void => {
-      if (settled) return;
-      settled = true;
-      unsubscribe();
-      ctx.ui.setWidget(widgetKey, undefined);
-      resolve(result);
-    };
-
-    ctx.ui.setWidget(widgetKey, (tui, theme) => (component ??= create(tui, theme, finish)), { placement: "aboveEditor" });
-  });
+  return ctx.ui.custom<T>((tui, theme, _keybindings, done) => create(tui, theme, done), PROMPT_OVERLAY_OPTIONS);
 }

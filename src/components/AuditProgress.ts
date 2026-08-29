@@ -16,7 +16,8 @@ import {
 import { normalizeFindingText } from "../dedup.ts";
 import { DEFAULT_METER_SETTINGS, type MeterSettings } from "../modelConfig.ts";
 import { shimmerString, type ShimmerTheme } from "../shimmer.ts";
-import type { HeadlessProgress } from "../types.ts";
+import type { Finding, HeadlessProgress } from "../types.ts";
+import { wrapText } from "./menuChrome.ts";
 
 export const AUDIT_PROGRESS_WIDGET_KEY = "persona-audit-progress";
 const SPINNER_INTERVAL_MS = 100;
@@ -26,6 +27,26 @@ export const AUDIT_PHASES = ["Review", "Triage", "Implement", "Verify"] as const
 export type AuditPhase = (typeof AUDIT_PHASES)[number];
 
 export type RowState = "queued" | "working" | "done" | "error" | "cancelled";
+
+/** Highest wrapped line count the fix-now rationale may claim under its row. */
+const FIX_NOW_RATIONALE_MAX_LINES = 3;
+
+/**
+ * Nested Fix Now status rendered as sub-rows under the `fix now · …` row while
+ * it is active: what is being fixed, which phase the flow is in, and the
+ * cancel gesture. Telemetry stays on the row itself; this block carries only
+ * what the row cannot. JSON-safe so it can ride `AuditProgressRow`.
+ */
+export interface FixNowDetail {
+  category: string;
+  severity: string;
+  rationale: string;
+  phase: "fixing" | "verifying" | "accepting" | "retrying" | "discarding";
+  statusText: string;
+  attempt: number;
+  commitPlanned: boolean;
+  awaitingCancelConfirm: boolean;
+}
 
 const TABLE_TITLE = "Persona-audit";
 /** Shortest rule run allowed between the title and the right-side run metadata before that side is dropped. */
@@ -161,6 +182,8 @@ export interface AuditProgressRow {
   outputRevision: number;
   /** First row of its phase group; used by the render-only phase heading. */
   firstOfPhase: boolean;
+  /** Nested Fix Now detail, present only on an active `fix now · …` row. */
+  fixNowDetail?: FixNowDetail;
 }
 
 /** What the table component reads from. */
@@ -244,6 +267,7 @@ interface RowRecord {
   outputRevision?: number;
   startedAt?: number;
   endedAt?: number;
+  fixNowDetail?: FixNowDetail;
 }
 
 export class AuditProgressWidget implements AuditProgressView {
@@ -382,6 +406,7 @@ export class AuditProgressWidget implements AuditProgressView {
     row.state = state;
     row.statusText = statusText ? normalizeFindingText(statusText) : undefined;
     row.activity = undefined;
+    row.fixNowDetail = undefined;
     row.endedAt ??= Date.now();
     if (wasWorking) this.activeRowCount--;
   }
@@ -394,6 +419,59 @@ export class AuditProgressWidget implements AuditProgressView {
     for (const row of this.rows.values()) {
       if (row.state === "queued" || row.state === "working") this.settleRow(row.key, state, statusText);
     }
+  }
+
+  /** Attach the nested Fix Now detail block to a `fix now · …` row. */
+  setFixNowDetail(key: string, finding: Finding): void {
+    const row = this.rows.get(key);
+    if (!row) return;
+    row.fixNowDetail = {
+      category: finding.category,
+      severity: finding.severity,
+      rationale: finding.rationale,
+      phase: "fixing",
+      statusText: "starting…",
+      attempt: 1,
+      commitPlanned: true,
+      awaitingCancelConfirm: false,
+    };
+  }
+
+  /** Move the nested detail into a working phase (also re-entry after a retry). */
+  updateFixNowPhase(key: string, phase: "fixing" | "verifying", statusText: string, attempt: number): void {
+    const detail = this.rows.get(key)?.fixNowDetail;
+    if (!detail) return;
+    detail.phase = phase;
+    detail.statusText = statusText;
+    detail.attempt = attempt;
+    detail.awaitingCancelConfirm = false;
+  }
+
+  /** Move the nested detail into its post-decision settling state. */
+  updateFixNowSettling(key: string, decision: "accept" | "retry" | "discard", commitPlanned: boolean): void {
+    const detail = this.rows.get(key)?.fixNowDetail;
+    if (!detail) return;
+    detail.phase = decision === "accept" ? "accepting" : decision === "retry" ? "retrying" : "discarding";
+    detail.commitPlanned = commitPlanned;
+    detail.statusText = decision === "accept"
+      ? commitPlanned ? "committing changes" : "saving accepted fix"
+      : decision === "retry"
+        ? "reverting changes before retry"
+        : "reverting changes";
+    detail.awaitingCancelConfirm = false;
+  }
+
+  /** Arm or disarm the double-Escape cancel hint in the nested detail. */
+  setFixNowCancelArmed(key: string, armed: boolean): void {
+    const detail = this.rows.get(key)?.fixNowDetail;
+    if (!detail) return;
+    detail.awaitingCancelConfirm = armed;
+  }
+
+  /** Remove the nested detail (the fix episode ended; the row settles right after). */
+  clearFixNowDetail(key: string): void {
+    const row = this.rows.get(key);
+    if (row) row.fixNowDetail = undefined;
   }
 
   /** Replace the compact run summary rendered in the footer. */
@@ -444,7 +522,9 @@ export class AuditProgressWidget implements AuditProgressView {
       summary: this.summary,
       totalMs: this.totalMs(),
       phaseModels: this.models,
-      rows: this.progressRows(),
+      // Live fix-now detail (cancel hints, settling states) is transient UI
+      // state, not run history — never freeze it into the transcript.
+      rows: this.progressRows().map((row) => ({ ...row, fixNowDetail: undefined })),
       meterLevels: this.table?.meterLevels() ?? {},
     };
   }
@@ -478,6 +558,7 @@ export class AuditProgressWidget implements AuditProgressView {
       outputTokens: row.outputTokens ?? 0,
       outputRevision: row.outputRevision ?? 0,
       firstOfPhase: ordered[index - 1]?.phase !== row.phase,
+      fixNowDetail: row.fixNowDetail ? { ...row.fixNowDetail } : undefined,
     }));
   }
 }
@@ -798,7 +879,7 @@ export class AuditProgressTable implements Component {
       }),
     );
 
-    const free = Math.max(
+    const freeBeforeDetail = Math.max(
       0,
       this.rowBudget() -
         TABLE_CHROME_ROWS -
@@ -807,6 +888,27 @@ export class AuditProgressTable implements Component {
         phaseSectionRows(rows) -
         (band.length > 0 ? PHASE_BAND_ROWS : 0),
     );
+    // Nested fix-now detail consumes the same sub-row budget as tool activity.
+    // Shed order on a short terminal: rationale lines first, then the meta
+    // line, then activity sub-rows — the phase status and its cancel hint are
+    // the last lines standing, and agent rows are never touched.
+    let free = freeBeforeDetail;
+    const detailBlocks = new Map<string, string[]>();
+    for (const r of rows) {
+      const detail = isActive(r.state) ? r.fixNowDetail : undefined;
+      if (!detail) continue;
+      const block = this.fixNowDetailBlock(detail, bodyWidth);
+      const tail = [block.status, block.hint];
+      const head: string[] = [];
+      let room = free - tail.length;
+      if (room >= 1) {
+        head.push(block.meta);
+        room -= 1;
+      }
+      head.push(...block.rationale.slice(0, Math.max(0, room)));
+      free = Math.max(0, free - head.length - tail.length);
+      detailBlocks.set(r.key, [...head, ...tail]);
+    }
     const activeRows = rows.filter((r) => isActive(r.state));
     let subRowBudget = Math.min(free, activeRows.filter((r) => r.activity).length);
     // Reserve one line under every active row before it reports activity. When
@@ -855,6 +957,10 @@ export class AuditProgressTable implements Component {
       } else if (active && reservedActivitySlots) {
         lines.push(row(""));
       }
+      const detailBlock = detailBlocks.get(r.key);
+      if (detailBlock) {
+        for (const detailLine of detailBlock) lines.push(row(detailLine));
+      }
     }
 
     lines.push(border("─".repeat(innerWidth)));
@@ -888,6 +994,49 @@ export class AuditProgressTable implements Component {
     const indent = STATUS_COL_WIDTH;
     const room = Math.max(0, bodyWidth - indent);
     return `${" ".repeat(indent)}${this.theme.fg("dim", cell(`↳ ${activity}`, room))}`;
+  }
+
+  /**
+   * The nested fix-now block under a `fix now · …` row: meta, wrapped
+   * rationale (capped, with a trailing ellipsis when cut), phase status, and
+   * the cancel/settling hint. Indented like the activity sub-row; the caller
+   * decides how much of it fits the height budget.
+   */
+  private fixNowDetailBlock(
+    detail: FixNowDetail,
+    bodyWidth: number,
+  ): { meta: string; rationale: string[]; status: string; hint: string } {
+    const indent = " ".repeat(STATUS_COL_WIDTH);
+    const room = Math.max(2, bodyWidth - STATUS_COL_WIDTH);
+    const th = this.theme;
+    const settling = detail.phase === "accepting" || detail.phase === "retrying" || detail.phase === "discarding";
+
+    const meta = indent + th.fg("dim", `${sanitizeTerminalText(detail.category)}/${sanitizeTerminalText(detail.severity)}${detail.attempt > 1 ? ` · attempt ${detail.attempt}` : ""}`);
+
+    const wrapped = wrapText(sanitizeTerminalText(detail.rationale), room);
+    const truncated = wrapped.length > FIX_NOW_RATIONALE_MAX_LINES;
+    const rationale = wrapped.slice(0, FIX_NOW_RATIONALE_MAX_LINES).map((line, index) =>
+      indent + th.fg("dim", truncated && index === FIX_NOW_RATIONALE_MAX_LINES - 1 ? `${line} …` : line),
+    );
+
+    const phaseLabel = detail.phase === "fixing"
+      ? "implementing fix"
+      : detail.phase === "verifying"
+        ? "verifying fix"
+        : detail.phase === "accepting"
+          ? "accepting fix"
+          : detail.phase === "retrying"
+            ? "preparing retry"
+            : "discarding fix";
+    const status = indent + th.fg("accent", `${phaseLabel} · ${sanitizeTerminalText(detail.statusText)}`);
+
+    const hint = settling
+      ? indent + th.fg("dim", "Please wait…")
+      : detail.awaitingCancelConfirm
+        ? indent + th.fg("warning", "Press Esc again to cancel this fix — clean edits will be reverted")
+        : indent + th.fg("dim", "Esc cancel fix");
+
+    return { meta, rationale, status, hint };
   }
 
   private topBorder(innerWidth: number, border: (s: string) => string): string {

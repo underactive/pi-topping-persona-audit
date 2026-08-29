@@ -1737,6 +1737,7 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
     refreshSummary();
     const { showFindingsReview } = await import("./components/FindingsReview.ts");
     const { runFixNow } = await import("./fixNow.ts");
+    const { openFixProgress } = await import("./components/FixProgress.ts");
     // The overlay resolves early with a fixNow outcome, the interactive fix
     // flow runs, and the overlay reopens with its state restored — looping
     // until the user finalizes or cancels.
@@ -1788,7 +1789,11 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
           implementModel: { model: implementModel.model, thinking: implementModel.thinking },
           verifyModel: { model: verifyModel.model, thinking: verifyModel.thinking },
           signal: input.signal,
-          onTelemetry: (snapshot) => progress?.applyProgress(fixNowRowKey, snapshot),
+          // Working/settling status and telemetry land as nested detail on the
+          // fix-now row — the controller is the single telemetry path, so no
+          // onTelemetry mirror is needed here.
+          openProgress: (progressCtx, progressFinding, onCancel) =>
+            openFixProgress(progressCtx, progressFinding, onCancel, progress ? { key: fixNowRowKey, progress } : undefined),
         },
         target,
         outcome.index,

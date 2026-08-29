@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
-import type { TUI } from "@earendil-works/pi-tui";
-import { VerifierRetryComponent, type VerifierRetryDecision } from "../src/components/VerifierRetry.ts";
+import type { Component, TUI } from "@earendil-works/pi-tui";
+import { VerifierRetryComponent, showVerifierRetryPrompt, type VerifierRetryDecision } from "../src/components/VerifierRetry.ts";
+import { PROMPT_OVERLAY_OPTIONS } from "../src/components/menuChrome.ts";
 import type { ThinkingLevel } from "../src/modelConfig.ts";
 
 const strip = (text: string): string => text.replace(/\x1b\[[0-9;]*m/g, "");
@@ -93,4 +94,54 @@ test("choosing a retry model records it and shows it on the overview", () => {
   const decision = result();
   assert.equal(decision?.retry, true);
   assert.deepEqual(decision?.model?.ref, { provider: "test", id: "model" });
+});
+
+// ── Wrapper: showVerifierRetryPrompt goes through a focused custom overlay ──
+
+const CTRL_C = "\u0003";
+
+/** Focused-overlay fake: Pi dispatches input straight to the component and settles on done. */
+function mountPrompt(): { send(...keys: string[]): void; result: Promise<VerifierRetryDecision>; options(): unknown } {
+  let component: Component | undefined;
+  let capturedOptions: unknown;
+  const ctx = {
+    mode: "tui",
+    modelRegistry: { getAvailable: () => [{ provider: "test", id: "model", reasoning: false }] },
+    ui: {
+      custom: (
+        factory: (host: TUI, currentTheme: Theme, keybindings: unknown, done: (value: VerifierRetryDecision) => void) => Component,
+        options?: unknown,
+      ) => {
+        capturedOptions = options;
+        return new Promise<VerifierRetryDecision>((resolve) => {
+          component = factory(tui, theme, undefined, resolve);
+        });
+      },
+    },
+  } as unknown as ExtensionCommandContext;
+
+  const result = showVerifierRetryPrompt(
+    ctx,
+    DETAIL,
+    { label: "test/model", ref: { provider: "test", id: "model" } },
+    currentThinking,
+  );
+  return {
+    send: (...keys: string[]) => keys.forEach((key) => component?.handleInput?.(key)),
+    result,
+    options: () => capturedOptions,
+  };
+}
+
+test("the checkpoint opens as a focused overlay with the shared prompt geometry", async () => {
+  const prompt = mountPrompt();
+  assert.deepEqual(prompt.options(), PROMPT_OVERLAY_OPTIONS);
+  prompt.send(ESCAPE);
+  assert.deepEqual(await prompt.result, { retry: false });
+});
+
+test("Ctrl+C settles the checkpoint like Escape", async () => {
+  const prompt = mountPrompt();
+  prompt.send(CTRL_C);
+  assert.deepEqual(await prompt.result, { retry: false });
 });

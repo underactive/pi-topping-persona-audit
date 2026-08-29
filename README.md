@@ -106,7 +106,7 @@ picker uses, leaving that picker's saved choices untouched.
 
 ## Requirements
 
-- **Pi** 0.84.2 (`@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` are pinned to this exact version in package.json) — agent tasks run in-process via the public `createAgentSession()` SDK; no `pi` CLI on PATH is required.
+- **Pi** 0.84.4 or later recommended — that is the version the development dependencies (`@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent`, `@earendil-works/pi-tui`) are pinned to and tested against, and the first whose focused `ctx.ui.custom()` overlays emit the `ui_prompt_start`/`ui_prompt_end` lifecycle events this extension's prompts rely on for accurate user-wait reporting. The published peer dependencies stay `*`, so older hosts still install and run, but cannot emit those lifecycle events. Agent tasks run in-process via the public `createAgentSession()` SDK; no `pi` CLI on PATH is required.
 - **Node.js** ≥ 22.x (uses `--experimental-strip-types` or erasable syntax)
 - A configured Pi provider/model (providers registered by extensions are replayed onto a fresh runtime by `buildRuntimeWithExtensionProviders`)
 
@@ -434,8 +434,17 @@ the frozen copy is a custom session entry (`pi.appendEntry`) rather than a chat
 message, so it stays visible for the user to scroll back to but is excluded
 from the model's context on later turns.
 
-The widget never takes keyboard focus — the ExpertPicker and FindingsReview
-overlays remain the only input surfaces.
+The widget never takes keyboard focus — the focused custom overlays (expert
+picker, per-phase model picker, findings review, reviewer/verifier retry
+checkpoints, settings and purge menus, report viewer) remain the input
+surfaces, so Pi can bracket each genuine user wait with its prompt lifecycle
+events. Fix Now follows the same split: fixing, verifying, and post-decision
+settling render as nested detail under the Implement phase's `fix now · …`
+row in the audit table itself (telemetry already lives on that row), while a
+raw input listener consuming only Escape provides the double-Escape cancel
+gesture (everything else, including Ctrl+C, passes through to the editor).
+Only the accept/retry/discard decision opens a fresh focused overlay per
+attempt — so only that gate counts as a user wait.
 
 ## Architecture
 
@@ -530,13 +539,15 @@ pi-topping-persona-audit/
 │       ├── AuditProgress.ts  # Live phased progress table (aboveEditor widget)
 │       ├── ExpertPicker.ts   # TUI overlay for reviewer selection
 │       ├── FindingsReview.ts # TUI overlay for findings triage
+│       ├── FixProgress.ts    # Fix Now controller (nested table detail + Escape listener) + per-attempt gate overlay
 │       ├── ModelPicker.ts    # Per-phase model + thinking picker
+│       ├── PurgeMenu.ts      # /persona-audit-purge tag-and-confirm overlay
 │       ├── ReviewerRetry.ts  # TUI checkpoint to retry or skip failed reviewer passes
 │       ├── ReportViewer.ts   # Scrollable report overlay opened after a completed audit
 │       ├── ReviewerData.ts   # Condensed reviewer data for the picker
 │       ├── SettingsMenu.ts   # /persona-audit-settings menu for the monitor + reviewer temperament
 │       ├── VerifierRetry.ts  # TUI checkpoint to re-model or skip a failed verifier run
-│       └── menuChrome.ts     # Box-drawing chrome + settings-menu component
+│       └── menuChrome.ts     # Box-drawing chrome, settings-menu component, shared overlay prompt helper
 ├── agents/                   # Bundled agent definitions — tools/model frontmatter + base prompts
 │   ├── persona-audit-reviewer.md
 │   ├── persona-audit-adjudicator.md
