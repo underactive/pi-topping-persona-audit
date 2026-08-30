@@ -132,10 +132,12 @@ function buildFixFollowUpTask(userMessage: string): string {
 
 /** Parse the verifier's trailing VERDICT/EVIDENCE lines. Undefined when unparsable. */
 export function parseFixVerdict(text: string): { verdict: string; evidence: string } | undefined {
-  const verdictMatch = /^VERDICT:\s*(fixed|partial|not-fixed|cannot-verify)\s*$/im.exec(text);
-  if (!verdictMatch) return undefined;
-  const evidenceMatch = /^EVIDENCE:\s*(.+)$/im.exec(text);
-  return { verdict: verdictMatch[1]!.toLowerCase(), evidence: evidenceMatch?.[1]?.trim() ?? "" };
+  const matches = [
+    ...text.matchAll(/^[ \t]*VERDICT:\s*(fixed|partial|not-fixed|cannot-verify)\s*$(?:\r?\n(?:[ \t]*\r?\n)*[ \t]*EVIDENCE:\s*(.*)$)?/gim),
+  ];
+  const last = matches[matches.length - 1];
+  if (!last) return undefined;
+  return { verdict: last[1]!.toLowerCase(), evidence: last[2]?.trim() ?? "" };
 }
 
 /** Hard cap on the rendered commit subject, prefix included. */
