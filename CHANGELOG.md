@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Fix Now rejects out-of-root targets before edits** — the dirty-target check now shares the existing `resolveTargetPath` guard and returns an error notification instead of starting an agent session for a file outside the project root.
+
+- **Fix Now validates targets against the file manifest** — selecting a finding whose file is not in `input.fileManifest` is refused with a warning before creating the Fix Now row or session.
+
+- **Fix Now cleans up partial file edits on rejection** — when the fix session rejects, all edits are rolled back before the listener and controller teardown, preventing stale edits from leaking into the tree.
+
+- **Verdict parsing picks the last pair** — the verifier now collects the last matching verdict/evidence pair from the response instead of the first global match, matching ordering in the system prompt.
+
+- **Tracker snapshot moved into throttled branch** — `tracker.snapshot()` is now called inside the progress-emission branch instead of unconditionally every render tick, reducing overhead when no output is due.
+
+- **Removed unused `createInteractiveSession` injection** — dead code path and type removed from `FixNowDeps`; the `if` ladder collapses to a single `runSession` branch with no behavior change.
+
+### Changed
+
+- **Progress ticker pauses when no rows are active** — the render loop yields while every row is completed, so a finished audit no longer burns CPU on pointless refreshes.
+
+- **Fix Now toasts truncate agent-session errors** — large error payloads (e.g., the full model catalog in a Model-not-found error) are capped at the first line, 200 characters, preventing transcript flooding.
+
+- **Hardened audit progress rendering** — edge-case title overflow in the progress table and refresh-race conditions in the fix-now sub-rows are handled more robustly.
+
+## [0.1.4] - 2026-08-29
+
 ### Added
 
 - **Fix Now inline conversation and requested modifications** — press `C` in the Fix Now gate to chat directly with the fix agent. Users can ask impact and caller questions without touching the diff, or request targeted modifications to refine the fix; diffs and verifier verdicts automatically refresh when code changes, and prior conversation context persists across turns within the attempt.
