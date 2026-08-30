@@ -39,6 +39,7 @@ import {
   type Temperament,
 } from "./modelConfig.ts";
 import { additionalContextFingerprint, describeAdditionalContext, hasAdditionalContext, type AdditionalContext } from "./additionalContext.ts";
+import { parsePersonaAuditArgs, type AuditExclusions } from "./args.ts";
 import type { AuditMode, Finding, ReviewerSelection } from "./types.ts";
 
 const execFileAsync = promisify(execFile);
@@ -94,12 +95,6 @@ function normalizeRelativePath(filePath: string): string {
   return filePath.replace(/\\/g, "/");
 }
 
-function pathHasExcludedSegment(relativePath: string, excludedNames: Set<string>): boolean {
-  return normalizeRelativePath(relativePath)
-    .split("/")
-    .some((segment) => excludedNames.has(segment));
-}
-
 function pathHasEnvSegment(relativePath: string): boolean {
   return normalizeRelativePath(relativePath)
     .split("/")
@@ -129,13 +124,12 @@ async function collectFiles(
   rootDir: string,
   cwd: string,
   includeFile: (relativePath: string) => boolean,
-  excludedNames: Set<string>,
+  excludeDirectory: (relativePath: string, name: string) => boolean,
 ): Promise<string[]> {
   const cwdPath = path.resolve(cwd);
   const rootPath = path.resolve(rootDir);
   const results: string[] = [];
   const rootRelative = normalizeRelativePath(path.relative(cwdPath, rootPath));
-  if (pathHasExcludedSegment(rootRelative, excludedNames)) return results;
 
   const rootStat = await lstat(rootPath);
   if (rootStat.isFile()) {
@@ -143,6 +137,7 @@ async function collectFiles(
     return results;
   }
   if (!rootStat.isDirectory()) return results;
+  if (excludeDirectory(rootRelative, path.basename(rootPath))) return results;
 
   const walk = async (dir: string): Promise<void> => {
     let entries: Dirent[];
@@ -155,9 +150,8 @@ async function collectFiles(
     for (const entry of entries) {
       const absPath = path.join(dir, entry.name);
       const relativePath = normalizeRelativePath(path.relative(cwdPath, absPath));
-      if (excludedNames.has(entry.name)) continue;
       if (entry.isDirectory()) {
-        subdirs.push(absPath);
+        if (!excludeDirectory(relativePath, entry.name)) subdirs.push(absPath);
         continue;
       }
       if (!entry.isFile()) continue;
@@ -340,7 +334,7 @@ export async function scanImportGraph(
             !LOCKFILE_RE.test(relativePath) &&
             !SECRET_FILE_RE.test(relativePath) &&
             !pathHasEnvSegment(relativePath),
-          DIFF_SKIP_DIRS,
+          (_relativePath, name) => DIFF_SKIP_DIRS.has(name),
         );
 
     const candidateToSource = new Map<string, string>();
@@ -448,7 +442,11 @@ export function capFileList(
  * manifest source for non-git / non-diff audits, not just JS/TS import
  * resolution.
  */
-async function getFullTreeManifest(cwd: string, scope: string): Promise<string[]> {
+export async function getFullTreeManifest(
+  cwd: string,
+  scope: string,
+  exclusions: AuditExclusions = { names: new Set(), paths: new Set() },
+): Promise<string[]> {
   const root = path.resolve(cwd, scope && scope !== "." ? scope : ".");
   const rel = path.relative(path.resolve(cwd), root);
   if (rel.startsWith("..") || path.isAbsolute(rel)) throw new Error(`Scope escapes the project root: ${scope}`);
@@ -463,7 +461,15 @@ async function getFullTreeManifest(cwd: string, scope: string): Promise<string[]
         !LOCKFILE_RE.test(relativePath) &&
         !SECRET_FILE_RE.test(relativePath) &&
         !pathHasEnvSegment(relativePath),
-      FULL_TREE_SKIP_DIRS,
+      (relativePath) => {
+        const segments = normalizeRelativePath(relativePath).split("/");
+        return (
+          segments.some((segment) => FULL_TREE_SKIP_DIRS.has(segment) || exclusions.names.has(segment)) ||
+          [...exclusions.paths].some(
+            (excludedPath) => relativePath === excludedPath || relativePath.startsWith(`${excludedPath}/`),
+          )
+        );
+      },
     );
   } catch (error) {
     throw new Error(`Failed to scan full tree: ${error instanceof Error ? error.message : String(error)}`);
@@ -502,41 +508,22 @@ export default function (pi: ExtensionAPI): void {
 
   // ── /persona-audit command ─────────────────────────────────────
   pi.registerCommand("persona-audit", {
-    description: "Run a multi-persona code audit on a deterministic file manifest (--diff, --full, or --handoff <path>)",
+    description: "Run a multi-persona code audit (--diff, --full [path] [--exclude <dir-or-path>]..., or --handoff <path>)",
     handler: async (args, ctx) => {
-      const argsList = args.trim().split(/\s+/);
-      let useDiff = false;
-      let useFull = false;
-      let baseCommit: string | undefined;
-      let handoffPath: string | undefined;
-      let scope = ".";
-      let scopeGiven = false;
-
-      for (let i = 0; i < argsList.length; i++) {
-        const arg = argsList[i];
-        if (arg === "--diff") {
-          useDiff = true;
-        } else if (arg === "--full") {
-          useFull = true;
-        } else if (arg === "--base") {
-          const next = argsList[++i];
-          if (!next || next.startsWith("-")) {
-            ctx.ui.notify("Error: --base requires a commit.", "error");
-            return;
-          }
-          baseCommit = next;
-        } else if (arg === "--handoff") {
-          const next = argsList[++i];
-          if (!next || next.startsWith("-")) {
-            ctx.ui.notify("Error: --handoff requires a path to a deferred-findings handoff file.", "error");
-            return;
-          }
-          handoffPath = next;
-        } else if (arg && !arg.startsWith("-")) {
-          scope = arg;
-          scopeGiven = true;
-        }
+      const parsed = parsePersonaAuditArgs(args);
+      if (!parsed.ok) {
+        ctx.ui.notify(parsed.error, "error");
+        return;
       }
+      const {
+        useDiff,
+        useFull,
+        baseCommit,
+        handoffPath,
+        scopeGiven,
+        exclusions,
+      } = parsed.value;
+      let { scope } = parsed.value;
 
       if (handoffPath !== undefined) {
         if (useDiff || useFull || baseCommit !== undefined || scopeGiven) {
@@ -551,7 +538,7 @@ export default function (pi: ExtensionAPI): void {
         ctx.ui.notify(
           "Error: exactly one of --diff or --full is required. " +
             "--diff (git-based, requires a git repository): /persona-audit --diff [--base <commit>] [path]. " +
-            "--full (whole-tree scan, no git required): /persona-audit --full [path].",
+            "--full (whole-tree scan, no git required): /persona-audit --full [path] [--exclude <dir-or-path>]...",
           "error",
         );
         return;
@@ -669,7 +656,7 @@ export default function (pi: ExtensionAPI): void {
         }
       } else {
         try {
-          const found = await getFullTreeManifest(ctx.cwd, scope);
+          const found = await getFullTreeManifest(ctx.cwd, scope, exclusions);
           const capped = capFileList(found, FULL_TREE_FILE_CAP);
           blastFanIn = (await scanImportGraph(ctx.cwd, [], found)).fanIn;
 

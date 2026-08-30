@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Per-command full-tree exclusions** — `/persona-audit --full` accepts repeatable `--exclude <dir-or-path>` values with quote-aware parsing, global directory-name matching, and exact project-root-relative path matching while retaining mandatory built-in exclusions.
+
 - **Pre-audit reviewer context** — normal audits now show a final summary where shared text and up to five existing PNG, JPG, JPEG, GIF, or WebP files (5 MiB each) can be attached to every reviewer pass. Context is reviewer-only, included in cache identity, and represented in reports by counts rather than raw content.
 
 ### Fixed

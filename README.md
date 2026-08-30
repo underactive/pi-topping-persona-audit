@@ -39,7 +39,7 @@ The extension registers itself automatically via `package.json` — Pi discovers
 
 ```
 /persona-audit --diff [--base <commit>] [path]
-/persona-audit --full [path]
+/persona-audit --full [path] [--exclude <dir-or-path>]...
 /persona-audit-purge [--older-than <days>]
 ```
 
@@ -53,7 +53,8 @@ Exactly one of `--diff` or `--full` is required.
 - `--diff` — Enable diff-based mode (mutually exclusive with `--full`)
 - `--full` — Enable full-tree mode, no git required (mutually exclusive with `--diff`)
 - `--base <commit>` — Base commit to diff against, `--diff` only (default: merge-base with main)
-- `[path]` — Optional path filter (default: ".")
+- `--exclude <dir-or-path>` — Exclude a directory from `--full`; repeat the flag for multiple exclusions. A value without a path separator matches that exact directory name at any depth. A value with a separator matches one exact project-root-relative directory path. Values are literal, not globs or comma-separated lists.
+- `[path]` — Optional path filter (default: "."). Quote paths and exclusions containing spaces. Exclusions outside the selected scope or paths that do not exist are harmless no-ops; built-in vendor/build/cache exclusions always remain active.
 - `/persona-audit-purge [--older-than <days>]` — tag and permanently delete recognized audit artifacts. `--older-than` pre-tags old audit artifacts only; reviewer-cache entries always require explicit tagging. Press `P` on a Markdown or JSON row for a read-only preview.
 
 #### Examples
@@ -74,8 +75,14 @@ Exactly one of `--diff` or `--full` is required.
 # Audit an entire project that isn't a git repo
 /persona-audit --full
 
-# Audit only a subdirectory of a non-git (or git) project
-/persona-audit --full src/components
+# Audit a subdirectory but omit every directory named tests
+/persona-audit --full src/components --exclude tests
+
+# Omit multiple directories, including one exact project-root-relative path
+/persona-audit --full src --exclude tests --exclude src/generated
+
+# Quote scope and exclusion values containing spaces
+/persona-audit --full "src/my components" --exclude "my tests"
 ```
 
 ### Settings
@@ -164,7 +171,7 @@ The extension includes 40 reviewer personalities. Tiers group them under headers
 ## Scan Modes
 
 - **Diff mode (`--diff`)** — scans changed files from a git diff, then heuristically includes direct importers of changed JS/TS modules.
-- **Full-tree mode (`--full [path]`)** — scans a sorted, language-agnostic directory manifest without requiring git, excludes common vendor/build/cache directories, and caps the scan at 500 files with a warning when extra files are excluded.
+- **Full-tree mode (`--full [path] [--exclude <dir-or-path>]...`)** — scans a sorted, language-agnostic directory manifest without requiring git, excludes common vendor/build/cache directories plus repeatable command-specific directory exclusions, and caps the scan at 500 files with a warning when extra files are excluded.
 
 ## Workflow
 
@@ -512,7 +519,7 @@ This ensures that when you change a module, all files that depend on it are also
 - **No git required** — works on any directory, including plain-filesystem projects, extracted archives, or generated exports that were never git-initialized
 - **Language-agnostic scan** — unlike the diff-mode heuristic JS/TS importer scan, the full-tree manifest uses a broad extension allowlist covering many common languages and config formats
 - **Deterministic, capped, never sampled** — the manifest is sorted and capped at 500 files; if the scan finds more, the excess is excluded (not randomly sampled) and a warning is surfaced in chat and in the report so you can narrow `[path]`
-- **Same excludes as diff mode, plus more** — skips `node_modules`, `.git`, build/output directories, virtualenvs, and common lockfiles across ecosystems
+- **Built-in and per-command exclusions** — always skips `node_modules`, `.git`, build/output directories, virtualenvs, and common lockfiles across ecosystems. Repeat `--exclude <value>` to add literal directory exclusions for one full-tree run: names match globally at any depth, while paths match one exact directory relative to the project root. Exclusions prune before recursion, do not affect same-named files, and are unavailable in diff or handoff mode.
 - **Security note: the verify gate runs the audited tree's scripts** — after fixes are applied, the verify gate runs whatever `check`/`lint`/`test` scripts the audited directory's own `package.json` declares (`npm run <script>`, from the project root), and the authored regression tests execute against the tree. Auditing an untrusted directory — an extracted archive or downloaded export — is therefore arbitrary code execution on your machine: audit only trees you trust, or review `package.json` scripts before accepting fixes.
 
 ## Project structure
@@ -522,6 +529,7 @@ pi-topping-persona-audit/
 ├── index.ts                  # Extension entry point registered by package.json — re-exports src/index.ts
 ├── src/
 │   ├── index.ts              # Extension shell: /persona-audit command, git/full-tree scan, cache key
+│   ├── args.ts               # Quote-aware command parsing and full-tree exclusion validation
 │   ├── orchestrator.ts       # Deterministic audit state machine
 │   ├── agentRunner.ts        # In-process agent-session runner (createAgentSession)
 │   ├── additionalContext.ts  # Reviewer guidance parsing, image limits, metadata + cache fingerprint
