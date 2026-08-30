@@ -318,10 +318,9 @@ export async function createInteractiveAgentSession(
           toolCalls++;
           activity = formatToolActivity(event.toolName, event.args);
         }
-        const output = tracker.snapshot();
-        const now = Date.now();
-        if (event.type === "message_end" || event.type === "tool_execution_start" || now - lastProgressAt >= 50) {
-          lastProgressAt = now;
+        if (event.type === "message_end" || event.type === "tool_execution_start" || lastEventAt - lastProgressAt >= 50) {
+          lastProgressAt = lastEventAt;
+          const output = tracker.snapshot();
           opts.onProgress?.({
             contextTokens: usage.contextTokens,
             turns: usage.turns,
