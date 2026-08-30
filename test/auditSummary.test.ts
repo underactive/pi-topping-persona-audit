@@ -41,6 +41,14 @@ test("summary renders reviewers, run details, and context action", () => {
   assert.match(text, /Additional context.*\(none\)/);
 });
 
+test("summary and additional context views keep the same height", () => {
+  const component = new AuditSummaryComponent(tui, theme, config, () => {});
+  const summaryHeight = component.render(100).length;
+  for (let index = 0; index < 5; index++) component.handleInput(DOWN);
+  component.handleInput(ENTER);
+  assert.equal(component.render(100).length, summaryHeight);
+});
+
 test("embedded editor preserves its draft when returning to and reopening the summary", async () => {
   const component = new AuditSummaryComponent(tui, theme, config, () => {});
   for (let index = 0; index < 5; index++) component.handleInput(DOWN);
@@ -70,21 +78,26 @@ test("escape returns Back with the current draft", async () => {
   const result = showAuditSummary(ctx, { ...config, draft: "remember me" });
   component?.handleInput?.(ESCAPE);
   assert.deepEqual(await result, { action: "back", draft: "remember me" });
-  assert.deepEqual(options, PROMPT_OVERLAY_OPTIONS);
+  assert.deepEqual(options, {
+    ...PROMPT_OVERLAY_OPTIONS,
+    overlayOptions: { ...PROMPT_OVERLAY_OPTIONS.overlayOptions, anchor: "bottom-center" },
+  });
 });
 
 test("Start and Cancel buttons return distinct outcomes", async () => {
-  const results: AuditSummaryResult[] = [];
-  const start = new AuditSummaryComponent(tui, theme, { ...config, draft: "notes" }, (value) => { results.push(value); });
-  start.handleInput(TAB);
-  start.handleInput(ENTER);
-  await settle();
-  assert.equal(results[0]?.action, "start");
+  const startResult = await new Promise<AuditSummaryResult>((resolve) => {
+    const start = new AuditSummaryComponent(tui, theme, { ...config, draft: "notes" }, resolve);
+    start.handleInput(TAB);
+    start.handleInput(ENTER);
+  });
+  assert.equal(startResult.action, "start");
 
-  const cancel = new AuditSummaryComponent(tui, theme, config, (value) => { results.push(value); });
-  cancel.handleInput(TAB);
-  cancel.handleInput("\x1b[C");
-  cancel.handleInput("\x1b[C");
-  cancel.handleInput(ENTER);
-  assert.equal(results[1]?.action, "cancel");
+  const cancelResult = await new Promise<AuditSummaryResult>((resolve) => {
+    const cancel = new AuditSummaryComponent(tui, theme, config, resolve);
+    cancel.handleInput(TAB);
+    cancel.handleInput("\x1b[C");
+    cancel.handleInput("\x1b[C");
+    cancel.handleInput(ENTER);
+  });
+  assert.equal(cancelResult.action, "cancel");
 });

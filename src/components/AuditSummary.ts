@@ -1,9 +1,9 @@
 import type { ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
-import { Editor, Key, matchesKey, type Component, type EditorTheme, type TUI } from "@earendil-works/pi-tui";
+import { Editor, Key, matchesKey, type Component, type EditorTheme, type OverlayOptions, type TUI } from "@earendil-works/pi-tui";
 import { describeAdditionalContext, parseAdditionalContext, type AdditionalContext } from "../additionalContext.ts";
 import { phaseModelChoiceLabel, type PhaseModelSelection } from "../modelConfig.ts";
 import type { AuditMode, ReviewerSelection } from "../types.ts";
-import { MenuComponent, renderMenuBottomBorder, renderMenuContentRow, renderMenuSeparator, renderMenuTopBorder, showOverlayPrompt, wrapText } from "./menuChrome.ts";
+import { MenuComponent, PROMPT_OVERLAY_OPTIONS, renderMenuBottomBorder, renderMenuContentRow, renderMenuSeparator, renderMenuTopBorder, showOverlayPrompt, wrapText } from "./menuChrome.ts";
 import { TIERS } from "./ReviewerData.ts";
 
 export type AuditSummaryResult =
@@ -22,6 +22,17 @@ export interface AuditSummaryConfig {
 }
 
 const reviewerByName = new Map(TIERS.flatMap((tier) => tier.reviewers.map((reviewer) => [reviewer.name, { ...reviewer, tier: tier.label }] as const)));
+
+const AUDIT_SUMMARY_OVERLAY_OPTIONS: {
+  overlay: true;
+  overlayOptions: OverlayOptions;
+} = {
+  overlay: true,
+  overlayOptions: {
+    ...PROMPT_OVERLAY_OPTIONS.overlayOptions,
+    anchor: "bottom-center",
+  },
+};
 
 export class AuditSummaryComponent implements Component {
   private readonly tui: TUI;
@@ -138,16 +149,16 @@ export class AuditSummaryComponent implements Component {
     this.tui.requestRender();
   }
 
-  render(width: number): string[] {
-    if (this.view === "summary") {
-      const lines = this.menu.render(width);
-      if (this.warnings.length === 0) return lines;
-      const insertAt = Math.max(1, lines.length - 2);
-      const warningLines = this.warnings.flatMap((warning) => wrapText(`Warning: ${warning}`, Math.max(10, width - 4)))
-        .map((line) => renderMenuContentRow(this.theme, width, this.theme.fg("warning", `  ${line}`)));
-      return [...lines.slice(0, insertAt), ...warningLines, ...lines.slice(insertAt)];
-    }
+  private renderSummary(width: number): string[] {
+    const lines = this.menu.render(width);
+    if (this.warnings.length === 0) return lines;
+    const insertAt = Math.max(1, lines.length - 2);
+    const warningLines = this.warnings.flatMap((warning) => wrapText(`Warning: ${warning}`, Math.max(10, width - 4)))
+      .map((line) => renderMenuContentRow(this.theme, width, this.theme.fg("warning", `  ${line}`)));
+    return [...lines.slice(0, insertAt), ...warningLines, ...lines.slice(insertAt)];
+  }
 
+  private renderEditor(width: number): string[] {
     const innerWidth = Math.max(20, width);
     const bodyWidth = Math.max(10, innerWidth - 2);
     return [
@@ -162,6 +173,26 @@ export class AuditSummaryComponent implements Component {
     ];
   }
 
+  private padBeforeBottomBorder(lines: string[], targetHeight: number, width: number): string[] {
+    const missing = targetHeight - lines.length;
+    const bottomBorder = lines[lines.length - 1];
+    if (missing <= 0 || bottomBorder === undefined) return lines;
+    return [
+      ...lines.slice(0, -1),
+      ...Array.from({ length: missing }, () => renderMenuContentRow(this.theme, width, "")),
+      bottomBorder,
+    ];
+  }
+
+  render(width: number): string[] {
+    const summaryLines = this.renderSummary(width);
+    const editorLines = this.renderEditor(width);
+    const targetHeight = Math.max(summaryLines.length, editorLines.length);
+    return this.view === "summary"
+      ? this.padBeforeBottomBorder(summaryLines, targetHeight, width)
+      : this.padBeforeBottomBorder(editorLines, targetHeight, Math.max(20, width));
+  }
+
   invalidate(): void {
     this.menu.invalidate();
     this.editor.invalidate();
@@ -169,5 +200,9 @@ export class AuditSummaryComponent implements Component {
 }
 
 export function showAuditSummary(ctx: ExtensionCommandContext, config: Omit<AuditSummaryConfig, "cwd">): Promise<AuditSummaryResult> {
-  return showOverlayPrompt(ctx, (tui, theme, done) => new AuditSummaryComponent(tui, theme, { ...config, cwd: ctx.cwd }, done));
+  return showOverlayPrompt(
+    ctx,
+    (tui, theme, done) => new AuditSummaryComponent(tui, theme, { ...config, cwd: ctx.cwd }, done),
+    AUDIT_SUMMARY_OVERLAY_OPTIONS,
+  );
 }
