@@ -1777,6 +1777,10 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
       sessionState = outcome.state;
       const target = annotatedFindings[outcome.index];
       if (!target) continue;
+      if (!input.fileManifest.includes(target.file)) {
+        ctx.ui.notify(`persona-audit: ${target.file} is outside the audited scope — cannot fix now`, "warning");
+        continue;
+      }
       const fixNowRowKey = `implement:fixnow:${outcome.index}:${fixNowCount++}`;
       progress?.addRow("Implement", fixNowRowKey, `fix now · ${findingLabel(target)}`, { state: "working" });
       await runFixNow(
