@@ -216,6 +216,15 @@ test("handoff mode overview names the source handoff and resume notes", () => {
 
 // ── Compact report ──────────────────────────────────────────────────────
 
+test("report renders only additional-context metadata", () => {
+  const report = renderCompactReport(
+    { ...ctx, additionalContext: "214 chars · 2 images" },
+    { reason: "no-findings", deferred: [], rejected: [], diagnostics },
+  );
+  assert.match(report, /Additional context: 214 chars · 2 images/);
+  assert.doesNotMatch(report, /raw secret guidance|base64/);
+});
+
 test("compact report covers both no-findings and none-accepted reasons", () => {
   const noFindings = renderCompactReport(ctx, { reason: "no-findings", deferred: [], rejected: [], diagnostics });
   assert.ok(noFindings.startsWith("---\ndate: 2026-07-01T10:00:00Z"));

@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Pre-audit reviewer context** — normal audits now show a final summary where shared text and up to five existing PNG, JPG, JPEG, GIF, or WebP files (5 MiB each) can be attached to every reviewer pass. Context is reviewer-only, included in cache identity, and represented in reports by counts rather than raw content.
+
 ### Fixed
 
 - **Fix Now rejects out-of-root targets before edits** — the dirty-target check now shares the existing `resolveTargetPath` guard and returns an error notification instead of starting an agent session for a file outside the project root.

@@ -585,7 +585,7 @@ class PhaseModelPickerComponent implements Component {
         buttons: [
           {
             id: "start",
-            label: "Start audit",
+            label: "Continue",
             primary: true,
             onSelect: () => this.done({ action: "start", selections: { ...this.selections } }),
           },

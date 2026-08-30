@@ -44,6 +44,8 @@ export interface ReportContext {
   passes: number;
   cacheHits: number;
   freshRuns: number;
+  /** Metadata-only description of reviewer guidance; raw notes and images are never reported. */
+  additionalContext?: string;
   /** Per-phase model + thinking labels from the post-ExpertPicker picker, keyed by phase display name. */
   phaseModels?: Partial<Record<string, string>>;
   /** Wall-clock duration of the run at the moment the report is rendered. */
@@ -243,6 +245,7 @@ function overviewSection(ctx: ReportContext, opts: { inProgress?: boolean } = {}
       : [
           `- Passes per reviewer: ${ctx.passes}`,
           `- Reviewer runs: ${ctx.cacheHits} from cache, ${ctx.freshRuns} fresh`,
+          ...(ctx.additionalContext ? [`- Additional context: ${ctx.additionalContext}`] : []),
         ]),
   ];
   for (const note of ctx.resumeNotes ?? []) {

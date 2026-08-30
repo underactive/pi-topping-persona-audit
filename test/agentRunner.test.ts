@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
+import { calculateCost, InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import { DefaultResourceLoader, getAgentDir, ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import {
   buildRuntimeWithExtensionProviders,
@@ -12,6 +12,7 @@ import {
   createIsolatedResourceLoader,
   getAllAssistantText,
   getFinalAssistantText,
+  promptAgentSession,
   resolveModelRef,
   type SessionMessage,
 } from "../src/agentRunner.ts";
@@ -53,6 +54,16 @@ async function testRegistry(): Promise<ModelRegistry> {
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
         contextWindow: 400_000,
         maxTokens: 8000,
+      },
+      {
+        id: "zzz-rt-test-auto-router",
+        name: "ZZZ RT Test Auto Router",
+        api: "openai-completions",
+        reasoning: true,
+        input: ["text"],
+        cost: { input: -1_000_000, output: -1_000_000, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 2_000_000,
+        maxTokens: 4096,
       },
     ],
   });
@@ -129,6 +140,33 @@ test("calculateTurnCost uses registry rates, including long-cache writes", async
   );
 });
 
+test("OpenRouter auto-router sentinel rates reproduce the negative Pi footer cost", async () => {
+  const registry = await testRegistry();
+  const autoRouter = registry.find("zzz-rt-test-provider", "zzz-rt-test-auto-router");
+  assert.ok(autoRouter);
+
+  // Aggregate from the transcript at the point the footer showed:
+  // ↑160k ↓9.8k R629k CH0.0% $-169522.000. OpenRouter returned
+  // deepseek/deepseek-v4-flash, but cost calculation retained auto-beta's
+  // -1,000,000 input/output sentinel rates.
+  const transcriptUsage = {
+    input: 159_762,
+    output: 9_760,
+    cacheRead: 628_992,
+    cacheWrite: 0,
+    totalTokens: 798_514,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  };
+  const cost = calculateCost(autoRouter, transcriptUsage);
+
+  assert.equal(cost.input, -159_762);
+  assert.equal(cost.output, -9_760);
+  assert.equal(cost.cacheRead, 0);
+  assert.equal(cost.total, -169_522);
+  assert.equal(`$${cost.total.toFixed(3)}`, "$-169522.000");
+  assert.equal(calculateTurnCost(autoRouter, transcriptUsage), undefined, "persona-audit must reject sentinel costs");
+});
+
 test("calculateTurnCost applies each tier to its own assistant turn", async () => {
   const registry = await testRegistry();
   const model = registry.find("zzz-rt-test-provider", "zzz-rt-test-alpha-4-5");
@@ -185,6 +223,15 @@ test("getAllAssistantText concatenates all assistant text blocks in order, skipp
 test("getAllAssistantText skips blank assistant text blocks", () => {
   const messages = [assistantMsg("   "), assistantMsg("real content")];
   assert.equal(getAllAssistantText(messages), "real content");
+});
+
+test("promptAgentSession supplies image options only when attachments exist", async () => {
+  const calls: unknown[][] = [];
+  const session = { prompt: async (...args: unknown[]) => { calls.push(args); } };
+  await promptAgentSession(session as never, "plain");
+  const images = [{ type: "image" as const, mimeType: "image/png", data: "YQ==" }];
+  await promptAgentSession(session as never, "pictured", images);
+  assert.deepEqual(calls, [["plain"], ["pictured", { images }]]);
 });
 
 // ── Self-recursion guard ───────────────────────────────────────────────────────────────

@@ -11,6 +11,7 @@ A [Pi coding agent](https://github.com/earendil-works/pi) extension that impleme
 - **Multi-persona reviews** — Runs parallel reviewer agents with distinct personalities (security, correctness, style, performance, etc.)
 - **Deterministic orchestration** — The entire audit is driven by TypeScript, not by an LLM following instructions; LLMs run only where judgment is required (reviewer passes, adjudication, fix application), each in an isolated in-process agent session
 - **TUI expert picker** — Interactive terminal UI to select which reviewer personas to include: one multi-select list of all 40 reviewers, grouped under tier headers with type-to-filter, so a run can mix tiers freely — `Space` toggles a reviewer, `←`/`→` set the pass count (1-5), `Enter` confirms
+- **Pre-audit context summary** — Before a normal audit starts, review the selected personas and run settings, then optionally enter shared reviewer guidance. Put an existing `.png`, `.jpg`, `.jpeg`, `.gif`, or `.webp` path on its own line to attach it to every reviewer pass (maximum 5 images, 5 MiB each). Raw guidance and image data never reach later phases or reports.
 - **Live progress table** — One compact table above the editor tracks every reviewer pass, adjudicator run, and verification script with live context usage, an output-activity meter (e.g., "1.2K tokens"), the tool call in flight, turn count, and elapsed time; a phase/model band shows which model is assigned to each phase and highlights the one in progress, and a frozen copy is left in the transcript on completion, visible but excluded from the model's context on later turns
 - **Findings review** — Accept, reject, or defer individual findings before applying fixes (press Esc twice to cancel — the first press arms the confirmation, any other key resumes; press `H` during review to write deferred findings to a handoff file under `.pi/persona-audit/handoffs/`; `↑`/`↓` navigate, `PageUp`/`PageDown` move by a page, `S` cycles file/priority/reviewer/blast-radius sorting, `A`, `R`, and `D` set a finding to apply, reject, or defer, `Space` cycles apply → reject → defer, `F` fixes the selected finding now, and `Enter` confirms). Blast radius is a deterministic 0–100 risk score from direct importer fan-in, sensitive code surfaces, test coverage, and the reviewer's change-kind classification; the overlay shows its Low/Medium/High/Critical bucket and leading reasons.
 - **Auto-fix** — Accepted findings are partitioned by file and applied by parallel edit-capable adjudicator agent sessions, then verified against the project's own `check`/`lint`/`test` scripts
@@ -173,7 +174,8 @@ flowchart TD
   B --> C[Importer scanning, diff-only]
   C --> D[Expert picker TUI]
   D --> D2[Model + thinking picker]
-  D2 --> E[Incremental cache check]
+  D2 --> D3[Pre-audit summary + optional reviewer context]
+  D3 --> E[Incremental cache check]
   E --> F[Reviewer agent sessions × passes]
   F --> G[Deterministic collection + dedup]
   G --> H[Adjudicator reconcile agent session]
@@ -188,8 +190,8 @@ flowchart TD
 
 1. **File scan** — `--diff` detects changed files using git diff against a base commit; `--full` instead does a deterministic whole-tree directory scan (sorted, capped, no git required).
 2. **Importer scanning** — heuristic JS/TS relative-path matching finds direct importers of changed modules in `--diff` mode and computes per-module fan-in for blast-radius scoring.
-3. **Reviewer selection** — choose personas and passes in the TUI picker — one cross-tier list, `Space` toggles, typing filters by name, description, or focus area — then assign a model and thinking level per phase in the follow-up picker.
-4. **Parallel review** — spawn isolated in-process agent sessions per reviewer×pass (cache-aware, concurrency 5). If any reviewer pass fails, the ReviewerRetry checkpoint lets you retry failed passes (optionally on a different model) or skip them before triage begins.
+3. **Reviewer selection and summary** — choose personas and passes in the TUI picker — one cross-tier list, `Space` toggles, typing filters by name, description, or focus area — then assign a model and thinking level per phase. A final summary lists the run and accepts optional shared reviewer guidance. A line containing an existing image path attaches that image; relative paths resolve from the audited working directory. Missing, unsupported, oversized, and over-limit files remain visible as text with a warning. Back returns to the model picker without losing the draft. Handoff resumes skip this reviewer-only step.
+4. **Parallel review** — spawn isolated in-process agent sessions per reviewer×pass (cache-aware, concurrency 5). Shared context guides reviewer priorities but cannot override audit scope, safety rules, or the output contract. Context changes invalidate reviewer cache entries; context-free audits retain their prior keys. If any reviewer pass fails, the ReviewerRetry checkpoint lets you retry failed passes (optionally on a different model) or skip them before triage begins.
 5. **Collection & adjudication** — parse/dedup findings deterministically, then a read-only adjudicator agent session adds recommendations.
 6. **Findings review** — accept, reject, or defer findings in the TUI; `↑`/`↓` navigate, `PageUp`/`PageDown` move by a page, `S` cycles sorting by file, severity priority, reviewer, and blast radius, `A`, `R`, and `D` set the selected status directly, `Space` cycles statuses, `F` fixes the selected finding now, and `H` writes current deferred findings to `.pi/persona-audit/handoffs/`. Blast-radius mode orders by the computed 0–100 risk score and shows its bucket plus the top reasons inline.
 7. **Fix & verify** — accepted fixes are partitioned by file and applied by up to 3 edit-capable adjudicator agent sessions running in parallel (see [Parallel fix application](#parallel-fix-application)); the extension then verifies each fix individually and runs the project's verification scripts. If the verifier run itself fails, the VerifierRetry checkpoint lets you re-run it on a different model or skip verification.
@@ -522,6 +524,7 @@ pi-topping-persona-audit/
 │   ├── index.ts              # Extension shell: /persona-audit command, git/full-tree scan, cache key
 │   ├── orchestrator.ts       # Deterministic audit state machine
 │   ├── agentRunner.ts        # In-process agent-session runner (createAgentSession)
+│   ├── additionalContext.ts  # Reviewer guidance parsing, image limits, metadata + cache fingerprint
 │   ├── subprocess.ts         # Agent discovery + shared telemetry
 │   ├── modelConfig.ts        # Per-phase model/thinking, monitor + temperament settings, persisted
 │   ├── modelCatalogue.ts     # Model registry catalogue for the picker
@@ -537,6 +540,7 @@ pi-topping-persona-audit/
 │   ├── types.ts              # Shared types
 │   └── components/
 │       ├── AuditProgress.ts  # Live phased progress table (aboveEditor widget)
+│       ├── AuditSummary.ts   # Pre-audit summary and embedded reviewer-context editor
 │       ├── ExpertPicker.ts   # TUI overlay for reviewer selection
 │       ├── FindingsReview.ts # TUI overlay for findings triage
 │       ├── FixProgress.ts    # Fix Now controller (nested table detail + Escape listener) + per-attempt gate overlay

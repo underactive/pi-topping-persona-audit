@@ -7,7 +7,7 @@
  */
 
 import { join } from "node:path";
-import { calculateCost, type Api, type Model, type Usage } from "@earendil-works/pi-ai";
+import { calculateCost, type Api, type ImageContent, type Model, type Usage } from "@earendil-works/pi-ai";
 import {
   createAgentSession,
   DefaultResourceLoader,
@@ -209,8 +209,13 @@ async function buildRuntime(source: ModelRegistry, agentDir: string): Promise<Mo
   return runtime;
 }
 
+export async function promptAgentSession(session: Pick<AgentSession, "prompt">, task: string, images?: ImageContent[]): Promise<void> {
+  if (images && images.length > 0) await session.prompt(task, { images });
+  else await session.prompt(task);
+}
+
 export interface InteractiveAgentSession {
-  prompt(task: string): Promise<HeadlessResult>;
+  prompt(task: string, images?: ImageContent[]): Promise<HeadlessResult>;
   dispose(): void;
 }
 
@@ -248,7 +253,7 @@ export async function createInteractiveAgentSession(
   let disposed = false;
 
   return {
-    async prompt(task: string): Promise<HeadlessResult> {
+    async prompt(task: string, images?: ImageContent[]): Promise<HeadlessResult> {
       if (disposed) {
         return failedResult("session is disposed");
       }
@@ -347,7 +352,7 @@ export async function createInteractiveAgentSession(
         opts.signal?.addEventListener("abort", abortListener, { once: true });
         armIdleTimer();
         try {
-          await session.prompt(task);
+          await promptAgentSession(session, task, images);
         } catch (error) {
           stopReason = "error";
           errorMessage = error instanceof Error ? error.message : String(error);
@@ -397,7 +402,7 @@ export async function runAgentSession(opts: HeadlessOptions): Promise<HeadlessRe
   }
 
   try {
-    return await session.prompt(opts.task);
+    return await session.prompt(opts.task, opts.images);
   } finally {
     session.dispose();
   }

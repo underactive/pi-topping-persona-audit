@@ -39,6 +39,7 @@ import {
   registerEnforcement,
 } from "./skillContent.ts";
 import { runAgentSession } from "./agentRunner.ts";
+import { describeAdditionalContext, formatAdditionalContextPrompt, type AdditionalContext } from "./additionalContext.ts";
 import {
   type AgentConfig,
   discoverAgents,
@@ -164,6 +165,8 @@ export interface AuditInput {
   progress?: AuditProgressWidget;
   /** Per-phase model + thinking overrides from the post-ExpertPicker picker, if confirmed. */
   phaseModels?: Partial<Record<PhaseSlot, PhaseModelChoice>>;
+  /** Shared user guidance attached only to reviewer passes. */
+  additionalContext?: AdditionalContext;
   /** Reviewer register from `/persona-audit-settings`; omitted means the default level. */
   temperament?: Temperament;
   /**
@@ -678,7 +681,7 @@ function scopeDescriptionLines(input: AuditInput, baseLabel: string): string[] {
   ];
 }
 
-function buildReviewerTask(input: AuditInput, cwd: string, baseLabel: string, reviewer: string): string {
+export function buildReviewerTask(input: AuditInput, cwd: string, baseLabel: string, reviewer: string): string {
   const personality = getPersonality(reviewer, input.temperament);
   if (!personality) {
     throw new Error(`Unknown reviewer personality: "${reviewer}"`);
@@ -709,6 +712,9 @@ function buildReviewerTask(input: AuditInput, cwd: string, baseLabel: string, re
     "Audit the following files (JSON array of relative paths):",
     "",
     JSON.stringify(input.fileManifest),
+    ...(formatAdditionalContextPrompt(input.additionalContext)
+      ? ["", formatAdditionalContextPrompt(input.additionalContext)!]
+      : []),
     "",
     REVIEWER_OUTPUT_CONTRACT,
     ...(enforcement ? ["", enforcement] : []),
@@ -1213,6 +1219,7 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
     passes: selection.passes,
     cacheHits: 0,
     freshRuns: 0,
+    ...(input.additionalContext ? { additionalContext: describeAdditionalContext(input.additionalContext) } : {}),
   };
   if (input.resume) {
     reportCtx.handoffSource = input.resume.handoffPath;
@@ -1446,6 +1453,7 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
           model: model.model,
           thinking: model.thinking,
           task: buildReviewerTask(input, ctx.cwd, baseLabel, task.reviewer),
+          images: input.additionalContext?.images,
           cwd: ctx.cwd,
           modelRegistry: ctx.modelRegistry,
           signal: input.signal,

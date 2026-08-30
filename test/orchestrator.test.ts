@@ -4,6 +4,7 @@ import {
   actionableFingerprint,
   annotateFindings,
   buildRepairTask,
+  buildReviewerTask,
   extractJsonArray,
   parseContestedVerdicts,
   parseFixVerdicts,
@@ -12,6 +13,7 @@ import {
   partitionApplyBatches,
   recordFingerprint,
   scopeAcceptedFindings,
+  type AuditInput,
 } from "../src/orchestrator.ts";
 import type { FileSnapshot } from "../src/snapshot.ts";
 import type {
@@ -33,10 +35,36 @@ const finding = (overrides: Partial<Finding> = {}): Finding => ({
   ...overrides,
 });
 
+const reviewerInput = (additionalContext?: AuditInput["additionalContext"]): AuditInput => ({
+  scope: ".",
+  mode: "full",
+  changedFiles: [],
+  importers: [],
+  fileManifest: ["src/a.ts"],
+  fileCount: 1,
+  selection: { reviewers: ["Security Engineer"], passes: 1 },
+  additionalContext,
+});
+
 const annotated = (rec: string, reason?: string, overrides: Partial<Finding> = {}) => ({
   ...finding(overrides),
   recommendation: rec,
   ...(reason ? { recommendationReason: reason } : {}),
+});
+
+test("reviewer task adds delimited additional context before the output contract", () => {
+  const task = buildReviewerTask(reviewerInput({
+    text: "Prioritize the login flow",
+    images: [{ type: "image", mimeType: "image/png", data: "YQ==" }],
+  }), "/repo", "base", "Security Engineer");
+  assert.match(task, /## Additional User Context/);
+  assert.match(task, /Prioritize the login flow/);
+  assert.match(task, /1 attached image/);
+  assert.ok(task.indexOf("## Additional User Context") < task.indexOf("## Output Requirements"));
+});
+
+test("reviewer task omits the additional-context section when empty", () => {
+  assert.doesNotMatch(buildReviewerTask(reviewerInput(), "/repo", "base", "Security Engineer"), /Additional User Context/);
 });
 
 // ── extractJsonArray ───────────────────────────────────────────────────────

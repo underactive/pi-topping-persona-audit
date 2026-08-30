@@ -22,7 +22,9 @@ import {
   type AuditProgressSnapshot,
 } from "./components/AuditProgress.ts";
 import { discoverAgents, mapWithConcurrencyLimit } from "./subprocess.ts";
+import { showExpertPicker } from "./components/ExpertPicker.ts";
 import { showPhaseModelPicker } from "./components/ModelPicker.ts";
+import { showAuditSummary } from "./components/AuditSummary.ts";
 import { showReviewerRetryPrompt } from "./components/ReviewerRetry.ts";
 import { showVerifierRetryPrompt } from "./components/VerifierRetry.ts";
 import { showArtifactViewer, showReportViewer } from "./components/ReportViewer.ts";
@@ -36,6 +38,7 @@ import {
   type PhaseModelSelection,
   type Temperament,
 } from "./modelConfig.ts";
+import { additionalContextFingerprint, describeAdditionalContext, hasAdditionalContext, type AdditionalContext } from "./additionalContext.ts";
 import type { AuditMode, Finding, ReviewerSelection } from "./types.ts";
 
 const execFileAsync = promisify(execFile);
@@ -256,7 +259,7 @@ const CACHE_KEY_READ_CONCURRENCY = 8;
  * Build the incremental-cache key from the manifest file contents, reviewer
  * prompt fingerprint, selected reviewers, and pass count.
  */
-async function buildReviewerCacheKey(
+export async function buildReviewerCacheKey(
   cwd: string,
   files: string[],
   reviewers: string[],
@@ -264,6 +267,7 @@ async function buildReviewerCacheKey(
   mode: "diff" | "full",
   temperament: Temperament,
   reviewModel?: PhaseModelChoice,
+  additionalContext?: AdditionalContext,
 ): Promise<string> {
   const sortedFiles = files.slice().sort();
   const hashes = await mapWithConcurrencyLimit(sortedFiles, CACHE_KEY_READ_CONCURRENCY, async (file) =>
@@ -302,6 +306,10 @@ async function buildReviewerCacheKey(
     promptHash.update("\0");
     promptHash.update(getPersonality(reviewer, temperament) ?? "");
     promptHash.update("\0");
+  }
+  if (additionalContext && hasAdditionalContext(additionalContext)) {
+    promptHash.update("additional-context\0");
+    promptHash.update(additionalContextFingerprint(additionalContext));
   }
 
   const cacheInput = JSON.stringify({
@@ -706,6 +714,7 @@ export default function (pi: ExtensionAPI): void {
       //    picker (the Implement/Verify and Fix Now models matter).
       let selection: ReviewerSelection;
       let phaseModels: PhaseModelSelection;
+      let additionalContext: AdditionalContext | undefined;
       if (mode === "handoff") {
         const models = await showPhaseModelPicker(ctx, pi.getThinkingLevel());
         if (models.action !== "start") {
@@ -715,27 +724,50 @@ export default function (pi: ExtensionAPI): void {
         selection = { reviewers: handoffPayload!.reviewers, passes: 0 };
         phaseModels = models.selections;
       } else {
-        const { showExpertPicker } = await import("./components/ExpertPicker.ts");
         let restoredReviewers: ReviewerSelection | undefined;
         let restoredModels: PhaseModelSelection | undefined;
-        for (;;) {
+        let contextDraft = "";
+        selectionLoop: for (;;) {
           const reviewers = await showExpertPicker(ctx, fileCount, restoredReviewers);
           if (!reviewers) {
             ctx.ui.notify("Audit cancelled.", "info");
             return;
           }
-          const models = await showPhaseModelPicker(ctx, pi.getThinkingLevel(), restoredModels);
-          if (models.action === "cancel") {
-            ctx.ui.notify("Audit cancelled.", "info");
-            return;
-          }
-          if (models.action === "start") {
+          for (;;) {
+            const models = await showPhaseModelPicker(ctx, pi.getThinkingLevel(), restoredModels);
+            if (models.action === "cancel") {
+              ctx.ui.notify("Audit cancelled.", "info");
+              return;
+            }
+            if (models.action === "back") {
+              restoredReviewers = reviewers;
+              restoredModels = models.selections;
+              continue selectionLoop;
+            }
+
+            restoredModels = models.selections;
+            const reviewRef = models.selections.review.ref;
+            const reviewModel = ctx.modelRegistry.find(reviewRef.provider, reviewRef.id);
+            const summary = await showAuditSummary(ctx, {
+              mode,
+              fileCount,
+              selection: reviewers,
+              phaseModels: models.selections,
+              draft: contextDraft,
+              reviewModelSupportsImages: reviewModel?.input.includes("image") === true,
+            });
+            contextDraft = summary.draft;
+            if (summary.action === "cancel") {
+              ctx.ui.notify("Audit cancelled.", "info");
+              return;
+            }
+            if (summary.action === "back") continue;
+
             selection = reviewers;
             phaseModels = models.selections;
-            break;
+            additionalContext = summary.context;
+            break selectionLoop;
           }
-          restoredReviewers = reviewers;
-          restoredModels = models.selections;
         }
       }
 
@@ -752,6 +784,7 @@ export default function (pi: ExtensionAPI): void {
             mode,
             settings.temperament,
             phaseModels.review,
+            additionalContext,
           );
         } catch (error) {
           ctx.ui.notify(
@@ -770,7 +803,7 @@ export default function (pi: ExtensionAPI): void {
           ? `Resuming ${resume!.findings.length} deferred finding${resume!.findings.length === 1 ? "" : "s"} across ${fileCount} file${fileCount === 1 ? "" : "s"} from ${handoffPath}`
           : mode === "diff"
             ? `Found ${fileCount} files (${changedFiles.length} changed, ${importers.length} importers) · ${selection.reviewers.length} reviewers selected · ${selection.passes} pass${selection.passes === 1 ? "" : "es"} each`
-            : `Found ${fileCount} files (full-tree scan${truncated ? `, truncated from ${totalFilesFound}` : ""}) · ${selection.reviewers.length} reviewers selected · ${selection.passes} pass${selection.passes === 1 ? "" : "es"} each`) + modelsNote,
+            : `Found ${fileCount} files (full-tree scan${truncated ? `, truncated from ${totalFilesFound}` : ""}) · ${selection.reviewers.length} reviewers selected · ${selection.passes} pass${selection.passes === 1 ? "" : "es"} each`) + modelsNote + (hasAdditionalContext(additionalContext) ? ` · Context ${describeAdditionalContext(additionalContext)}` : ""),
         "info",
       );
 
@@ -804,6 +837,7 @@ export default function (pi: ExtensionAPI): void {
           cacheKey,
           progress,
           phaseModels,
+          additionalContext,
           temperament: settings.temperament,
           maxVerifyRounds: settings.maxVerifyRounds,
           signal: auditController.signal,

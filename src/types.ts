@@ -1,3 +1,4 @@
+import type { ImageContent } from "@earendil-works/pi-ai";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { ThinkingLevel } from "./modelConfig.ts";
 
@@ -213,6 +214,8 @@ export interface HeadlessOptions {
   thinking?: ThinkingLevel;
   /** Positional prompt (manifest / findings / apply directive). */
   task: string;
+  /** Image attachments supplied with the prompt. */
+  images?: ImageContent[];
   cwd: string;
   /** Shared registry used to resolve models in-process, including bridge/extension-registered providers. */
   modelRegistry: ModelRegistry;
