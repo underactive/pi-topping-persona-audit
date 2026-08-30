@@ -10,7 +10,6 @@ import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import {
   createInteractiveAgentSession,
   runAgentSession,
-  type CreateInteractiveSessionOptions,
   type InteractiveAgentSession,
 } from "./agentRunner.ts";
 import { openFixProgress, type FixChatMessage, type FixProgressController } from "./components/FixProgress.ts";
@@ -43,8 +42,6 @@ export interface FixNowDeps {
   signal?: AbortSignal;
   /** Injectable for tests. */
   runSession?: (options: HeadlessOptions) => Promise<HeadlessResult>;
-  /** Injectable for tests — creates persistent interactive session. */
-  createInteractiveSession?: (options: CreateInteractiveSessionOptions) => Promise<InteractiveAgentSession>;
   /** Injectable for tests — defaults to a ctx.ui.select prompt. */
   promptDirtyChoice?: (files: string[]) => Promise<DirtyFileChoice>;
   /** Injectable for tests — defaults to openFixProgress. */
@@ -310,22 +307,7 @@ export async function runFixNow(
       let session: InteractiveAgentSession | undefined;
       const chatHistory: FixChatMessage[] = [];
       try {
-        if (deps.createInteractiveSession) {
-          session = await deps.createInteractiveSession({
-            agentName: "fix now implement",
-            systemPrompt: deps.adjudicatorSystemPrompt,
-            tools: deps.adjudicatorTools.filter((t) => t !== "bash"),
-            model: deps.implementModel.model,
-            thinking: deps.implementModel.thinking,
-            cwd: ctx.cwd,
-            modelRegistry: ctx.modelRegistry,
-            signal: abort.signal,
-            idleTimeoutMs: AGENT_IDLE_TIMEOUT_MS,
-            onProgress: (snapshot) => {
-              controller.applyProgress(snapshot);
-            },
-          });
-        } else if (deps.runSession) {
+        if (deps.runSession) {
           let disposed = false;
           session = {
             async prompt(task: string): Promise<HeadlessResult> {
