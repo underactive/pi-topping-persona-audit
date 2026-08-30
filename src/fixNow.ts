@@ -551,6 +551,10 @@ export async function runFixNow(
     }
     notify(`giving up after ${MAX_FIX_ATTEMPTS} attempts — finding left unfixed`, "warning");
     await cleanup();
+  } catch (error) {
+    await computeTouched();
+    await cleanup();
+    throw error;
   } finally {
     deps.signal?.removeEventListener("abort", onUpstreamAbort);
     await controller.close();
