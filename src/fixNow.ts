@@ -17,6 +17,7 @@ import { openFixProgress, type FixChatMessage, type FixProgressController } from
 import { gitCommitFiles, gitDiff, gitRestoreFiles, gitStatusPorcelain, type FileGitStatus } from "./git.ts";
 import type { ThinkingLevel } from "./modelConfig.ts";
 import { ADJUDICATOR_APPLY_DIRECTIVE, UNTRUSTED_DATA_RULE } from "./skillContent.ts";
+import { resolveTargetPath } from "./snapshot.ts";
 import { isFailedRun } from "./subprocess.ts";
 import type { Finding, FixedFinding, HeadlessOptions, HeadlessResult, ReviewSessionState } from "./types.ts";
 
@@ -245,6 +246,11 @@ export async function runFixNow(
     const firstLine = (message ?? "").split("\n", 1)[0]!.trim();
     return firstLine.length > 200 ? `${firstLine.slice(0, 199)}…` : firstLine || "unknown error";
   };
+
+  if (resolveTargetPath(ctx.cwd, finding.file) === undefined) {
+    notify(`fix now unavailable — target path escapes project root: ${finding.file}`, "error");
+    return;
+  }
 
   // ── Dirty-target check ───────────────────────────────────────────────────
   let autoCommit = true;
