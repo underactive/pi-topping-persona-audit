@@ -74,6 +74,8 @@ export interface MenuConfig {
   maxItemsPerSection?: number;
   /** Handle a key against the selected item before standard menu navigation. */
   onItemKey?: (item: MenuItem, data: string) => boolean;
+  /** Initially focused item, used when reopening sequential overlays. */
+  initialItemId?: string;
 }
 
 export interface MenuResult<T> {
@@ -272,6 +274,10 @@ export class MenuComponent implements Component {
       }
     }
     this.initialValues = { ...this.values };
+    const initialCursor = config.initialItemId
+      ? this.items.findIndex((item) => item.id === config.initialItemId)
+      : -1;
+    if (initialCursor >= 0) this.cursor = initialCursor;
   }
 
   /** Update an action row in place without rebuilding the menu. */

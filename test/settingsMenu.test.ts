@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
 import type { Component, TUI } from "@earendil-works/pi-tui";
-import { showSettingsMenu } from "../src/components/SettingsMenu.ts";
+import { showSettingsMenu, type SettingsMenuResult } from "../src/components/SettingsMenu.ts";
 import { PROMPT_OVERLAY_OPTIONS } from "../src/components/menuChrome.ts";
 import {
   DEFAULT_METER_SETTINGS,
@@ -32,7 +32,7 @@ const ESCAPE = "\x1b";
 interface Mounted {
   send(...keys: string[]): void;
   render(width?: number): string;
-  result: Promise<PersonaAuditConfig | undefined>;
+  result: Promise<SettingsMenuResult>;
   settled(): boolean;
   overlayOptions(): unknown;
 }
@@ -47,6 +47,7 @@ const config = (
   meter,
   temperament,
   maxVerifyRounds,
+  rosters: [],
 });
 
 function mount(initial: PersonaAuditConfig = config(DEFAULT_METER_SETTINGS)): Mounted {
@@ -59,11 +60,11 @@ function mount(initial: PersonaAuditConfig = config(DEFAULT_METER_SETTINGS)): Mo
   const ctx = {
     ui: {
       custom: (
-        factory: (host: TUI, currentTheme: Theme, keybindings: unknown, done: (value: PersonaAuditConfig | undefined) => void) => Component,
+        factory: (host: TUI, currentTheme: Theme, keybindings: unknown, done: (value: SettingsMenuResult) => void) => Component,
         options?: unknown,
       ) => {
         capturedOptions = options;
-        return new Promise<PersonaAuditConfig | undefined>((resolve) => {
+        return new Promise<SettingsMenuResult>((resolve) => {
           component = factory(tui, theme, undefined, (value) => {
             settled = true;
             resolve(value);
@@ -105,7 +106,7 @@ test("Save resolves the cycled values and settles the overlay", async () => {
   assert.deepEqual(menu.overlayOptions(), PROMPT_OVERLAY_OPTIONS);
   menu.send(RIGHT, DOWN, LEFT, DOWN, RIGHT, TAB, ENTER);
 
-  assert.deepEqual(await menu.result, config({ color: "border", direction: "ltr" }, "caustic"));
+  assert.deepEqual(await menu.result, { action: "save", draft: config({ color: "border", direction: "ltr" }, "caustic") });
   assert.ok(menu.settled());
 });
 
@@ -118,7 +119,7 @@ test("cycling wraps around every value list", async () => {
   assert.match(menu.render(), /‹ LKML \(max\) ›/);
 
   menu.send(TAB, ENTER);
-  assert.deepEqual(await menu.result, config({ color: "warning", direction: "ltr" }, "lkml"));
+  assert.deepEqual(await menu.result, { action: "save", draft: config({ color: "warning", direction: "ltr" }, "lkml") });
 });
 
 test("the max-rounds row renders the saved count and cycles to a new one on Save", async () => {
@@ -130,16 +131,29 @@ test("the max-rounds row renders the saved count and cycles to a new one on Save
   assert.match(menu.render(), /Max fix \+ verify rounds\s+‹ 6 ›/);
 
   menu.send(TAB, ENTER);
-  assert.deepEqual(await menu.result, config(DEFAULT_METER_SETTINGS, DEFAULT_TEMPERAMENT, 6));
+  assert.deepEqual(await menu.result, { action: "save", draft: config(DEFAULT_METER_SETTINGS, DEFAULT_TEMPERAMENT, 6) });
+});
+
+test("Reviewer rosters action carries the complete staged draft", async () => {
+  const initial = config(DEFAULT_METER_SETTINGS);
+  initial.rosters = [{ name: "Core5", reviewers: ["Principal Engineer"] }];
+  const menu = mount(initial);
+  assert.match(menu.render(), /Reviewer rosters\s+1 configured/);
+
+  menu.send(RIGHT, DOWN, DOWN, DOWN, DOWN, ENTER);
+  assert.deepEqual(await menu.result, {
+    action: "rosters",
+    draft: { ...initial, meter: { color: "border", direction: "rtl" } },
+  });
 });
 
 test("Cancel and Esc both discard the edits", async () => {
   const cancelled = mount();
   cancelled.send(RIGHT, TAB, RIGHT, ENTER);
-  assert.equal(await cancelled.result, undefined);
+  assert.deepEqual(await cancelled.result, { action: "cancel" });
 
   const escaped = mount();
   escaped.send(RIGHT, ESCAPE);
-  assert.equal(await escaped.result, undefined);
+  assert.deepEqual(await escaped.result, { action: "cancel" });
   assert.ok(escaped.settled());
 });

@@ -112,6 +112,45 @@ test("expert picker confirms a selection spanning every tier", () => {
   });
 });
 
+test("rosters render alphabetically above reviewers and filter by roster or member name", () => {
+  const rosters = [
+    { name: "Zulu", reviewers: ["Security Engineer", "Missing Reviewer"] },
+    { name: "Alpha", reviewers: ["Principal Engineer"] },
+    { name: "Stale", reviewers: ["Missing Reviewer"] },
+  ];
+  const picker = new ExpertPicker(theme, () => {}, undefined, undefined, undefined, rosters);
+  const rendered = picker.render(WIDTH).map(strip).join("\n");
+  assert.ok(rendered.indexOf("─ Rosters") < rendered.indexOf("─ Holistic"));
+  assert.ok(rendered.indexOf("Alpha") < rendered.indexOf("Zulu"));
+  assert.doesNotMatch(rendered, /Missing Reviewer|Stale/);
+  assert.match(rendered, /Alpha.*\n\s+Principal Engineer/);
+
+  for (const char of "security") picker.handleInput(char);
+  const filtered = picker.render(WIDTH).map(strip).join("\n");
+  assert.match(filtered, /Zulu/);
+  assert.match(filtered, /Security Engineer/);
+});
+
+test("Enter on a roster returns one pass, ignores manual controls, and keeps the cost confirmation gate", () => {
+  const names = TIERS.flatMap((tier) => tier.reviewers).slice(0, 7).map((reviewer) => reviewer.name);
+  let confirmed: ReviewerSelection | null | undefined;
+  const picker = new ExpertPicker(
+    theme,
+    (result) => { confirmed = result; },
+    undefined,
+    undefined,
+    undefined,
+    [{ name: "Large", reviewers: names }],
+  );
+
+  picker.handleInput(SPACE);
+  picker.handleInput("\x1b[C");
+  picker.handleInput(ENTER);
+  assert.equal(confirmed, undefined, "large roster requires the existing second Enter warning");
+  picker.handleInput(ENTER);
+  assert.deepEqual(confirmed, { reviewers: names, passes: 1 });
+});
+
 test("every picker reviewer resolves to a personality", () => {
   const names = TIERS.flatMap((t) => t.reviewers).map((r) => r.name);
   assert.equal(names.length, 40);

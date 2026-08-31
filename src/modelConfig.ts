@@ -75,6 +75,17 @@ export const MIN_VERIFY_ROUNDS = 1;
 export const MAX_VERIFY_ROUNDS = 10;
 export const DEFAULT_VERIFY_ROUNDS = 3;
 
+export const MIN_ROSTER_SIZE = 1;
+export const MAX_ROSTER_SIZE = 10;
+export const MAX_ROSTER_NAME_LENGTH = 24;
+export const MAX_ROSTER_COUNT = 20;
+export const ROSTER_NAME_PATTERN = /^[A-Za-z0-9]+$/;
+
+export interface Roster {
+  name: string;
+  reviewers: string[];
+}
+
 export interface PersonaAuditConfig {
   phases: Partial<PhaseModelSelection>;
   /** Last thinking level chosen for a model in the picker, keyed by `modelRefLabel(ref)`. */
@@ -83,6 +94,7 @@ export interface PersonaAuditConfig {
   temperament: Temperament;
   /** Total fix→verify rounds allowed, clamped to [MIN_VERIFY_ROUNDS, MAX_VERIFY_ROUNDS]. */
   maxVerifyRounds: number;
+  rosters: Roster[];
 }
 
 function emptyConfig(): PersonaAuditConfig {
@@ -92,6 +104,7 @@ function emptyConfig(): PersonaAuditConfig {
     meter: { ...DEFAULT_METER_SETTINGS },
     temperament: DEFAULT_TEMPERAMENT,
     maxVerifyRounds: DEFAULT_VERIFY_ROUNDS,
+    rosters: [],
   };
 }
 
@@ -163,7 +176,40 @@ export function parsePersonaAuditSettings(raw: string): PersonaAuditConfig {
     const temperament = isTemperament(parsed.temperament) ? parsed.temperament : DEFAULT_TEMPERAMENT;
     const maxVerifyRounds = clampVerifyRounds(parsed.maxVerifyRounds);
 
-    return { phases, thinkingOverrides, meter, temperament, maxVerifyRounds };
+    const rosters: Roster[] = [];
+    const rosterNames = new Set<string>();
+    if (Array.isArray(parsed.rosters)) {
+      for (const value of parsed.rosters) {
+        if (rosters.length >= MAX_ROSTER_COUNT) break;
+        if (!value || typeof value !== "object") continue;
+        const candidate = value as Partial<Roster>;
+        if (typeof candidate.name !== "string" || !Array.isArray(candidate.reviewers)) continue;
+        const name = candidate.name.trim();
+        const normalizedName = name.toLowerCase();
+        if (
+          name.length < 1
+          || name.length > MAX_ROSTER_NAME_LENGTH
+          || !ROSTER_NAME_PATTERN.test(name)
+          || rosterNames.has(normalizedName)
+        ) continue;
+
+        const reviewers: string[] = [];
+        const reviewerNames = new Set<string>();
+        for (const reviewer of candidate.reviewers) {
+          if (typeof reviewer !== "string") continue;
+          const trimmed = reviewer.trim();
+          if (!trimmed || reviewerNames.has(trimmed)) continue;
+          reviewerNames.add(trimmed);
+          reviewers.push(trimmed);
+          if (reviewers.length >= MAX_ROSTER_SIZE) break;
+        }
+        if (reviewers.length < MIN_ROSTER_SIZE) continue;
+        rosterNames.add(normalizedName);
+        rosters.push({ name, reviewers });
+      }
+    }
+
+    return { phases, thinkingOverrides, meter, temperament, maxVerifyRounds, rosters };
   } catch {
     return emptyConfig();
   }

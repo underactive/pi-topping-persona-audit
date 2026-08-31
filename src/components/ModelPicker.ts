@@ -71,7 +71,7 @@ const SELECTED_ROW_SENTINEL = "\u0000";
  * hard-codes a different marker and only foreground-colors the active item.
  * Keep that behavior isolated here while matching the persona-audit overlays.
  */
-class ConsistentSelectList extends SelectList {
+export class ConsistentSelectList extends SelectList {
   private readonly pickerTheme: Theme;
 
   constructor(items: SelectItem[], maxVisible: number, theme: Theme, layout?: SelectListLayoutOptions) {

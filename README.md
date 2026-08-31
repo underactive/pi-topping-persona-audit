@@ -10,7 +10,7 @@ A [Pi coding agent](https://github.com/earendil-works/pi) extension that impleme
 
 - **Multi-persona reviews** — Runs parallel reviewer agents with distinct personalities (security, correctness, style, performance, etc.)
 - **Deterministic orchestration** — The entire audit is driven by TypeScript, not by an LLM following instructions; LLMs run only where judgment is required (reviewer passes, adjudication, fix application), each in an isolated in-process agent session
-- **TUI expert picker** — Interactive terminal UI to select which reviewer personas to include: one multi-select list of all 40 reviewers, grouped under tier headers with type-to-filter, so a run can mix tiers freely — `Space` toggles a reviewer, `←`/`→` set the pass count (1-5), `Enter` confirms
+- **TUI expert picker** — Interactive terminal UI to select a reusable reviewer roster or individual personas. Rosters appear alphabetically first; individual reviewers remain one cross-tier multi-select list with type-to-filter, `Space` to toggle, `←`/`→` to set 1–5 passes, and `Enter` to confirm.
 - **Pre-audit context summary** — Before a normal audit starts, review the selected personas and run settings, then optionally enter shared reviewer guidance. Put an existing `.png`, `.jpg`, `.jpeg`, `.gif`, or `.webp` path on its own line to attach it to every reviewer pass (maximum 5 images, 5 MiB each). Raw guidance and image data never reach later phases or reports.
 - **Live progress table** — One compact table above the editor tracks every reviewer pass, adjudicator run, and verification script with live context usage, an output-activity meter (e.g., "1.2K tokens"), the tool call in flight, turn count, and elapsed time; a phase/model band shows which model is assigned to each phase and highlights the one in progress, and a frozen copy is left in the transcript on completion, visible but excluded from the model's context on later turns
 - **Findings review** — Accept, reject, or defer individual findings before applying fixes. Each finding has a simplified-technical-English Summary, its authoritative Rationale, and a Suggested Change; summaries also persist in reports and deferred handoffs. Press Esc twice to cancel — the first press arms the confirmation, any other key resumes; press `H` during review to write deferred findings to a handoff file under `.pi/persona-audit/handoffs/`; `↑`/`↓` navigate, `PageUp`/`PageDown` move by a page, `S` cycles file/priority/reviewer/blast-radius sorting, `A`, `R`, and `D` set a finding to apply, reject, or defer, `Space` cycles apply → reject → defer, `F` fixes the selected finding now, and `Enter` confirms. Blast radius is a deterministic 0–100 risk score from direct importer fan-in, sensitive code surfaces, test coverage, and the reviewer's change-kind classification; the overlay shows its Low/Medium/High/Critical bucket and leading reasons.
@@ -20,7 +20,7 @@ A [Pi coding agent](https://github.com/earendil-works/pi) extension that impleme
 - **Durable progress** — A partial report is updated after every reviewer pass; cancellation or failure never loses completed work
 - **Audit report viewer** — Opens the completed report in a scrollable Markdown overlay; use arrows to scroll, `u`/`d` to page, `g`/`G` for top/bottom, and `Esc` to close. Cancelled audits do not open the viewer.
 - **Audit report** — Generates a structured report in `.pi/persona-audit/audits/`
-- **Settings menu** — `/persona-audit-settings` configures the progress table's activity monitor (color and scroll direction), the Linus Torvalds reviewer's temperament, and the fix + verify round cap
+- **Settings menu** — `/persona-audit-settings` configures reusable reviewer rosters, the progress table's activity monitor (color and scroll direction), the Linus Torvalds reviewer's temperament, and the fix + verify round cap
 - **Artifact purge** — `/persona-audit-purge [--older-than <days>]` lists audit reports, progress snapshots, handoffs, pre-fix snapshots, and this repo's reviewer cache for explicit tagging and permanent deletion. Each section explains its retention purpose and parent folder; press `P` to preview Markdown or pretty-printed JSON before deleting. Unknown files and `settings.json` are never touched; deleting cache entries forces fresh reviewer passes.
 
 ## Install
@@ -98,6 +98,11 @@ Exactly one of `--diff` or `--full` is required.
 | Token activity monitor direction | Left to Right, Right to Left | Right to Left |
 | Linus Torvalds temperament | neutral (min), caustic, LKML (max) | neutral (min) |
 | Max fix + verify rounds | `1`–`10` | `3` |
+| Reviewer rosters | Up to 20 named reviewer combinations | None |
+
+Reviewer roster names are 1–24 alphanumeric characters and are unique without regard to case. Each roster contains 1–10 unique reviewers. Open **Reviewer rosters** to create, edit, rename, clear slots with `Backspace`/`Delete`, or delete with confirmation. The editor always shows ten slots and filters already-used reviewers out of later slot pickers. Roster and other setting changes are staged together: only the top-level **Save** writes them; **Cancel** or `Esc` discards the whole settings draft.
+
+In `/persona-audit`, valid rosters are listed alphabetically above the individual reviewer tiers. Filtering matches roster and member names. `Enter` expands a roster directly into its current valid reviewers at one pass each; roster rows do not respond to `Space` or pass controls, and rosters above the normal run threshold use the same second-`Enter` cost confirmation. Reviewer names that no longer exist remain in settings but are omitted at use time; a roster with no current reviewers is hidden.
 
 The first two control the progress table's MONITOR column (see [Progress table](#progress-table)).
 Max fix + verify rounds caps the automatic gate-repair loop (see [Fix + verify rounds](#fix--verify-rounds)):
@@ -108,7 +113,7 @@ focus areas and severity grading are identical at every level, and no level perm
 of the author. `caustic` and `LKML (max)` produce deliberately hostile-reading prose in a report
 humans have to triage; `LKML (max)` is the register of a vintage kernel-list mail.
 
-All of these take effect on the next audit, and changing temperament invalidates the reviewer cache.
+All saved changes take effect on the next audit, and changing temperament invalidates the reviewer cache.
 Saving writes to `<pi agent dir>/persona-audit/settings.json`, the same file the per-phase model
 picker uses, leaving that picker's saved choices untouched.
 
@@ -557,7 +562,8 @@ pi-topping-persona-audit/
 │       ├── ReviewerRetry.ts  # TUI checkpoint to retry or skip failed reviewer passes
 │       ├── ReportViewer.ts   # Scrollable report overlay opened after a completed audit
 │       ├── ReviewerData.ts   # Condensed reviewer data for the picker
-│       ├── SettingsMenu.ts   # /persona-audit-settings menu for the monitor + reviewer temperament
+│       ├── RosterEditor.ts   # Sequential reusable-reviewer roster manager
+│       ├── SettingsMenu.ts   # /persona-audit-settings menu and staged roster entry point
 │       ├── VerifierRetry.ts  # TUI checkpoint to re-model or skip a failed verifier run
 │       └── menuChrome.ts     # Box-drawing chrome, settings-menu component, shared overlay prompt helper
 ├── agents/                   # Bundled agent definitions — tools/model frontmatter + base prompts

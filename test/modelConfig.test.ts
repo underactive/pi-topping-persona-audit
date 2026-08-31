@@ -5,6 +5,9 @@ import {
   DEFAULT_METER_SETTINGS,
   DEFAULT_TEMPERAMENT,
   DEFAULT_VERIFY_ROUNDS,
+  MAX_ROSTER_COUNT,
+  MAX_ROSTER_NAME_LENGTH,
+  MAX_ROSTER_SIZE,
   MAX_VERIFY_ROUNDS,
   MIN_VERIFY_ROUNDS,
   parsePersonaAuditSettings,
@@ -22,6 +25,7 @@ test("parsePersonaAuditSettings round-trips a well-formed settings file", () => 
     meter: { color: "warning", direction: "ltr" },
     temperament: "lkml",
     maxVerifyRounds: 5,
+    rosters: [{ name: "Core5", reviewers: ["Architecture", "Security"] }],
   };
   const parsed = parsePersonaAuditSettings(JSON.stringify(config));
   assert.deepEqual(parsed, config);
@@ -34,6 +38,7 @@ test("parsePersonaAuditSettings falls back to an empty config on malformed JSON"
     meter: DEFAULT_METER_SETTINGS,
     temperament: DEFAULT_TEMPERAMENT,
     maxVerifyRounds: DEFAULT_VERIFY_ROUNDS,
+    rosters: [],
   };
   assert.deepEqual(parsePersonaAuditSettings("not json"), empty);
   assert.deepEqual(parsePersonaAuditSettings(""), empty);
@@ -100,6 +105,44 @@ test("parsePersonaAuditSettings drops unknown thinking levels and malformed phas
     implement: { ref: { provider: "openai", id: "gpt-5" }, thinking: "low" },
   });
   assert.deepEqual(parsed.thinkingOverrides, { "openai/gpt-5": "low" });
+});
+
+test("parsePersonaAuditSettings sanitizes rosters while preserving unknown reviewers", () => {
+  const tooLong = "A".repeat(MAX_ROSTER_NAME_LENGTH + 1);
+  const reviewers = Array.from({ length: MAX_ROSTER_SIZE + 2 }, (_, index) => `Reviewer${index}`);
+  const excessRosters = Array.from({ length: MAX_ROSTER_COUNT + 2 }, (_, index) => ({
+    name: `Roster${index}`,
+    reviewers: [`Unknown${index}`],
+  }));
+  const parsed = parsePersonaAuditSettings(JSON.stringify({
+    rosters: [
+      { name: " Core5 ", reviewers: [" Architecture ", "Architecture", "Unknown reviewer", ""] },
+      { name: "core5", reviewers: ["Security"] },
+      { name: "bad-name", reviewers: ["Security"] },
+      { name: tooLong, reviewers: ["Security"] },
+      { name: "Empty", reviewers: [" ", 42] },
+      { name: "Capped", reviewers },
+      ...excessRosters,
+    ],
+  }));
+
+  assert.deepEqual(parsed.rosters[0], {
+    name: "Core5",
+    reviewers: ["Architecture", "Unknown reviewer"],
+  });
+  assert.equal(parsed.rosters[1]?.name, "Capped");
+  assert.equal(parsed.rosters[1]?.reviewers.length, MAX_ROSTER_SIZE);
+  assert.equal(parsed.rosters.length, MAX_ROSTER_COUNT);
+  assert.equal(parsed.rosters.some((roster) => roster.name === "core5"), false);
+  assert.equal(parsed.rosters.some((roster) => roster.name === "bad-name"), false);
+  assert.equal(parsed.rosters.some((roster) => roster.name === tooLong), false);
+  assert.equal(parsed.rosters.some((roster) => roster.name === "Empty"), false);
+});
+
+test("parsePersonaAuditSettings defaults malformed roster collections", () => {
+  assert.deepEqual(parsePersonaAuditSettings("{}").rosters, []);
+  assert.deepEqual(parsePersonaAuditSettings(JSON.stringify({ rosters: {} })).rosters, []);
+  assert.deepEqual(parsePersonaAuditSettings(JSON.stringify({ rosters: [null, "bad", { name: "Valid" }] })).rosters, []);
 });
 
 test("thinkingOptionsForModel filters to the registry's declared levels in canonical order", () => {

@@ -1,56 +1,52 @@
-import type { Component } from "@earendil-works/pi-tui";
-import { Key, matchesKey } from "@earendil-works/pi-tui";
 import type { ThemeColor } from "@earendil-works/pi-coding-agent";
-import type { ReviewerSelection, ReviewerInfo } from "../types.ts";
+import { Key, matchesKey, type Component } from "@earendil-works/pi-tui";
+import type { Roster } from "../modelConfig.ts";
+import type { ReviewerInfo, ReviewerSelection } from "../types.ts";
 import { TIERS } from "./ReviewerData.ts";
-import { FALLBACK_TERMINAL_ROWS, OVERLAY_HEIGHT_PERCENT, type OverlayPromptUi, renderMenuContentRow, renderMenuSectionDivider, renderMenuTopBorder, SELECTOR, showOverlayPrompt, wrapText } from "./menuChrome.ts";
+import {
+  FALLBACK_TERMINAL_ROWS,
+  OVERLAY_HEIGHT_PERCENT,
+  type OverlayPromptUi,
+  renderMenuContentRow,
+  renderMenuSectionDivider,
+  renderMenuTopBorder,
+  SELECTOR,
+  showOverlayPrompt,
+  wrapText,
+} from "./menuChrome.ts";
 
-/** Every reviewer in tier order, so the flat list still reads Holistic → Specialist → Persona. */
 const ALL_REVIEWERS: ReviewerInfo[] = TIERS.flatMap((tier) => tier.reviewers.map((reviewer) => ({ ...reviewer, tier: tier.tier })));
+const REVIEWER_NAMES = new Set(ALL_REVIEWERS.map((reviewer) => reviewer.name));
 const TIER_LABELS = new Map(TIERS.map((tier) => [tier.tier, tier.label]));
-
 const COST_CONFIRM_RUN_THRESHOLD = 6;
-const REVIEWER_LIST_CHROME_ROWS = 9;
-
-/** Width assumed for scroll math before the first render. */
+const LIST_CHROME_ROWS = 9;
 const FALLBACK_WIDTH = 80;
 
-/** The slice of pi's `TUI` the picker needs. Structural so tests can supply a stub. */
+type PickerEntry =
+  | { kind: "roster"; roster: Roster }
+  | { kind: "reviewer"; reviewer: ReviewerInfo };
+
 export interface ExpertPickerHost {
   requestRender(force?: boolean): void;
   terminal?: { rows?: number };
 }
 
-/** The slice of pi's theme used by the picker, kept structural for render tests. */
 export interface ExpertPickerTheme {
   fg(color: ThemeColor, text: string): string;
   bg(color: "selectedBg", text: string): string;
   bold(text: string): string;
 }
 
-/**
- * Expert picker, rendered as a focused custom overlay: one multi-select list
- * of all 40 reviewers, grouped under tier headers, so a selection can mix
- * tiers freely. Each reviewer renders as a card — name header with pointer,
- * indented description and focus areas below, blank line between cards.
- *
- * Tier headers are render-only artifacts. The cursor indexes
- * `filteredReviewers` alone, so navigation never has to step over a
- * non-selectable row.
- *
- * The overlay takes keyboard focus, so Pi dispatches input straight to this
- * component's `handleInput`; repaints go through the host's `requestRender`.
- */
+/** Reviewer picker with optional roster shortcuts followed by the unchanged tiered reviewer list. */
 export class ExpertPicker implements Component {
   private selected = new Set<string>();
   private passes = 1;
   private query = "";
   private awaitingCostConfirm = false;
-
-  private reviewerIndex = 0;
-  private reviewerScrollOffset = 0;
-  private filteredReviewers: ReviewerInfo[] = [];
-
+  private entryIndex = 0;
+  private scrollOffset = 0;
+  private entries: PickerEntry[] = [];
+  private readonly rosters: Roster[];
   private readonly theme: ExpertPickerTheme;
   private readonly done: (result: ReviewerSelection | null) => void;
   private readonly fileCount: number | undefined;
@@ -65,96 +61,117 @@ export class ExpertPicker implements Component {
     fileCount?: number,
     host?: ExpertPickerHost,
     initial?: ReviewerSelection,
+    rosters: Roster[] = [],
   ) {
     this.theme = theme;
     this.done = done;
     this.fileCount = fileCount;
     this.host = host;
+    this.rosters = rosters
+      .map((roster) => ({ ...roster, reviewers: roster.reviewers.filter((name) => REVIEWER_NAMES.has(name)) }))
+      .filter((roster) => roster.reviewers.length > 0)
+      .sort((a, b) => a.name.localeCompare(b.name));
     if (initial) {
       this.selected = new Set(initial.reviewers);
       this.passes = initial.passes;
     }
-    this.rebuildFilteredReviewers();
-    // A restored selection can sit well past the first viewport, so open on it
-    // rather than at the top where it would look like nothing is selected.
-    const firstSelected = this.filteredReviewers.findIndex((r) => this.selected.has(r.name));
+    this.rebuildEntries();
+    const firstSelected = this.entries.findIndex(
+      (entry) => entry.kind === "reviewer" && this.selected.has(entry.reviewer.name),
+    );
     if (firstSelected > 0) {
-      this.reviewerIndex = firstSelected;
-      this.adjustReviewerScroll();
+      this.entryIndex = firstSelected;
+      this.adjustScroll();
     }
   }
 
-  /** Rows the picker may use: the internal 75% viewport budget of the terminal. */
   private viewportHeight(): number {
     const rows = this.host?.terminal?.rows ?? 0;
     return Math.max(10, Math.floor(((rows > 0 ? rows : FALLBACK_TERMINAL_ROWS) * OVERLAY_HEIGHT_PERCENT) / 100));
   }
 
+  private currentRoster(): Roster | undefined {
+    const entry = this.entries[this.entryIndex];
+    return entry?.kind === "roster" ? entry.roster : undefined;
+  }
+
+  private effectiveSelection(): ReviewerSelection {
+    const roster = this.currentRoster();
+    if (roster) return { reviewers: [...roster.reviewers], passes: 1 };
+    return {
+      reviewers: ALL_REVIEWERS.filter((reviewer) => this.selected.has(reviewer.name)).map((reviewer) => reviewer.name),
+      passes: this.passes,
+    };
+  }
+
   private needsCostConfirm(): boolean {
-    return this.passes > 1 || this.selected.size * this.passes > COST_CONFIRM_RUN_THRESHOLD;
+    const selection = this.effectiveSelection();
+    return selection.passes > 1 || selection.reviewers.length * selection.passes > COST_CONFIRM_RUN_THRESHOLD;
   }
 
-  private rebuildFilteredReviewers(): void {
-    if (this.query.length === 0) {
-      this.filteredReviewers = ALL_REVIEWERS;
-    } else {
-      const q = this.query.toLowerCase().replace(/\s+/g, "");
-      const norm = (text: string) => text.toLowerCase().replace(/\s+/g, "");
-      this.filteredReviewers = ALL_REVIEWERS.filter(
-        (r) =>
-          norm(r.name).includes(q) ||
-          norm(r.description).includes(q) ||
-          norm(r.focusAreas.join(" ")).includes(q),
-      );
-    }
-    if (this.reviewerIndex >= this.filteredReviewers.length) {
-      this.reviewerIndex = Math.max(0, this.filteredReviewers.length - 1);
-    }
-    this.adjustReviewerScroll();
+  private rebuildEntries(): void {
+    const norm = (text: string) => text.toLowerCase().replace(/\s+/g, "");
+    const query = norm(this.query);
+    const rosters = this.rosters.filter((roster) =>
+      !query || norm(roster.name).includes(query) || roster.reviewers.some((name) => norm(name).includes(query)));
+    const reviewers = ALL_REVIEWERS.filter((reviewer) =>
+      !query
+      || norm(reviewer.name).includes(query)
+      || norm(reviewer.description).includes(query)
+      || norm(reviewer.focusAreas.join(" ")).includes(query));
+    this.entries = [
+      ...rosters.map((roster): PickerEntry => ({ kind: "roster", roster })),
+      ...reviewers.map((reviewer): PickerEntry => ({ kind: "reviewer", reviewer })),
+    ];
+    this.entryIndex = Math.min(this.entryIndex, Math.max(0, this.entries.length - 1));
+    this.adjustScroll();
   }
 
-  private getVisibleReviewerCount(viewportHeight: number, width: number): number {
-    // Fixed overhead: title border(1) + blank(1) + keybinds(1) + filter(1)
-    //                 + blank(1) + cost preview(1) + scroll indicator(1)
-    //                 + confirm hint(1) + footer(1) = 9. Card rows below are
-    //                 sized from their wrapped text, plus one row per tier header.
-    const budget = Math.max(viewportHeight - REVIEWER_LIST_CHROME_ROWS, 3);
+  private section(entry: PickerEntry): string {
+    return entry.kind === "roster" ? "Rosters" : TIER_LABELS.get(entry.reviewer.tier) ?? entry.reviewer.tier;
+  }
+
+  private entryRows(entry: PickerEntry, width: number): number {
+    return entry.kind === "roster"
+      ? 2 + wrapText(entry.roster.reviewers.join(", "), width - 8).length
+      : 2 + wrapText(entry.reviewer.description, width - 8).length
+        + wrapText(entry.reviewer.focusAreas.join(" · "), width - 8).length;
+  }
+
+  private visibleEnd(offset: number, width: number): number {
+    const budget = Math.max(this.viewportHeight() - LIST_CHROME_ROWS, 3);
     let rows = 0;
-    let count = 0;
-    let headedTier: string | undefined;
-    for (let i = this.reviewerScrollOffset; i < this.filteredReviewers.length; i++) {
-      const reviewer = this.filteredReviewers[i];
-      if (!reviewer) continue;
-      if (reviewer.tier !== headedTier) {
-        headedTier = reviewer.tier;
-        rows += 1;
-      }
-      rows += 2 + wrapText(reviewer.description, width - 8).length + wrapText(reviewer.focusAreas.join(" · "), width - 8).length;
-      if (rows > budget) break;
-      count += 1;
+    let priorSection: string | undefined;
+    let end = offset;
+    while (end < this.entries.length) {
+      const entry = this.entries[end]!;
+      const section = this.section(entry);
+      const needed = this.entryRows(entry, width) + (section === priorSection ? 0 : 1);
+      if (end > offset && rows + needed > budget) break;
+      rows += needed;
+      priorSection = section;
+      end++;
+      if (rows >= budget) break;
     }
-    return Math.max(count, 1);
+    return Math.max(offset + 1, end);
   }
 
-  private adjustReviewerScroll(): void {
-    const visibleCount = this.getVisibleReviewerCount(this.viewportHeight(), this.cachedWidth ?? FALLBACK_WIDTH);
-    if (this.reviewerIndex < this.reviewerScrollOffset) {
-      this.reviewerScrollOffset = this.reviewerIndex;
-    } else if (this.reviewerIndex >= this.reviewerScrollOffset + visibleCount) {
-      this.reviewerScrollOffset = this.reviewerIndex - visibleCount + 1;
+  private adjustScroll(): void {
+    if (this.entryIndex < this.scrollOffset) this.scrollOffset = this.entryIndex;
+    const width = this.cachedWidth ?? FALLBACK_WIDTH;
+    while (this.entryIndex >= this.visibleEnd(this.scrollOffset, width) && this.scrollOffset < this.entryIndex) {
+      this.scrollOffset++;
     }
-    const maxScroll = Math.max(0, this.filteredReviewers.length - visibleCount);
-    if (this.reviewerScrollOffset > maxScroll) this.reviewerScrollOffset = maxScroll;
+    this.scrollOffset = Math.min(this.scrollOffset, Math.max(0, this.entries.length - 1));
   }
 
   private renderCostPreview(): string {
-    const reviewerCount = this.selected.size;
-    const runCount = reviewerCount * this.passes;
+    const selection = this.effectiveSelection();
+    const count = selection.reviewers.length;
+    const runs = count * selection.passes;
     const fileText = this.fileCount === undefined ? "selected files" : `${this.fileCount} file${this.fileCount === 1 ? "" : "s"}`;
-    return `${reviewerCount} reviewer${reviewerCount === 1 ? "" : "s"} × ${this.passes} pass${this.passes === 1 ? "" : "es"} = ${runCount} reviewer run${runCount === 1 ? "" : "s"} · ${fileText} each`;
+    return `${count} reviewer${count === 1 ? "" : "s"} × ${selection.passes} pass${selection.passes === 1 ? "" : "es"} = ${runs} reviewer run${runs === 1 ? "" : "s"} · ${fileText} each`;
   }
-
-  // ── Component interface ─────────────────────────────────────────────────
 
   invalidate(): void {
     this.cachedWidth = undefined;
@@ -163,188 +180,140 @@ export class ExpertPicker implements Component {
   }
 
   handleInput(data: string): void {
-    // Ctrl+C is Escape here: the overlay owns keyboard focus, so the host's
-    // usual Ctrl+C handling is out of reach while the picker is open.
     if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"))) {
       if (this.awaitingCostConfirm) {
         this.awaitingCostConfirm = false;
         this.invalidate();
+      } else this.done(null);
+      return;
+    }
+    if (matchesKey(data, Key.enter)) {
+      const selection = this.effectiveSelection();
+      if (selection.reviewers.length === 0) return;
+      if (this.needsCostConfirm() && !this.awaitingCostConfirm) {
+        this.awaitingCostConfirm = true;
+        this.invalidate();
         return;
       }
-      this.done(null);
+      this.done(selection);
       return;
     }
-
-    if (matchesKey(data, Key.enter)) {
-      // Confirm selection. Multi-pass or large runs require a second Enter so
-      // users cannot accidentally launch expensive reviewer batches.
-      if (this.selected.size > 0) {
-        if (this.needsCostConfirm() && !this.awaitingCostConfirm) {
-          this.awaitingCostConfirm = true;
-          this.invalidate();
-          return;
-        }
-        this.done({ reviewers: ALL_REVIEWERS.filter((r) => this.selected.has(r.name)).map((r) => r.name), passes: this.passes });
-      }
-      return;
-    }
-
     if (matchesKey(data, Key.space)) {
-      const current = this.filteredReviewers[this.reviewerIndex];
-      if (current) {
-        if (this.selected.has(current.name)) {
-          this.selected.delete(current.name);
-        } else {
-          this.selected.add(current.name);
-        }
+      const entry = this.entries[this.entryIndex];
+      if (entry?.kind !== "reviewer") return;
+      const name = entry.reviewer.name;
+      if (this.selected.has(name)) this.selected.delete(name);
+      else this.selected.add(name);
+      this.awaitingCostConfirm = false;
+      this.invalidate();
+      return;
+    }
+    if (matchesKey(data, Key.up) || matchesKey(data, Key.down)) {
+      const delta = matchesKey(data, Key.up) ? -1 : 1;
+      const next = Math.min(this.entries.length - 1, Math.max(0, this.entryIndex + delta));
+      if (next !== this.entryIndex) {
+        this.entryIndex = next;
         this.awaitingCostConfirm = false;
+        this.adjustScroll();
         this.invalidate();
       }
       return;
     }
-
-    if (matchesKey(data, Key.up)) {
-      if (this.reviewerIndex > 0) {
-        this.reviewerIndex--;
-        this.adjustReviewerScroll();
-        this.invalidate();
-      }
-      return;
-    }
-
-    if (matchesKey(data, Key.down)) {
-      if (this.reviewerIndex < this.filteredReviewers.length - 1) {
-        this.reviewerIndex++;
-        this.adjustReviewerScroll();
-        this.invalidate();
-      }
-      return;
-    }
-
     if (matchesKey(data, Key.left) || matchesKey(data, Key.right)) {
+      if (this.currentRoster()) return;
       const delta = matchesKey(data, Key.left) ? -1 : 1;
       this.passes = Math.min(5, Math.max(1, this.passes + delta));
       this.awaitingCostConfirm = false;
       this.invalidate();
       return;
     }
-
-    // Backspace for filter editing
     if (data === "\u0008" || data === "\u007f") {
-      if (this.query.length > 0) {
+      if (this.query) {
         this.query = this.query.slice(0, -1);
-        this.rebuildFilteredReviewers();
+        this.rebuildEntries();
         this.invalidate();
       }
       return;
     }
-
-    // Printable chars for filtering
     if (data.length === 1 && data.charCodeAt(0) >= 0x20 && data.charCodeAt(0) < 0x7f) {
       this.query += data;
-      this.rebuildFilteredReviewers();
+      this.rebuildEntries();
       this.invalidate();
-      return;
     }
   }
 
   render(width: number): string[] {
     if (this.cachedLines && this.cachedWidth === width && this.cachedViewport === this.viewportHeight()) return this.cachedLines;
-
-    const lines: string[] = [];
+    this.cachedWidth = width;
+    this.adjustScroll();
     const t = this.theme;
-
-    lines.push(renderMenuTopBorder(t, width, `Select reviewers (${this.selected.size} selected)`));
-    lines.push("");
-    lines.push(" " + t.fg("dim", `↑↓ navigate · Space toggle · ←→ passes (${this.passes}) · Enter confirm · Esc cancel`));
-
-    if (this.query.length > 0) {
-      lines.push(" " + t.fg("accent", `Filter: ${this.query}`));
+    const roster = this.currentRoster();
+    const effective = this.effectiveSelection();
+    const lines = [
+      renderMenuTopBorder(t, width, `Select reviewers (${roster ? `${roster.name} roster` : `${this.selected.size} selected`})`),
+      "",
+      " " + t.fg("dim", `↑↓ navigate · Space toggle · ←→ passes (${roster ? 1 : this.passes}) · Enter confirm · Esc cancel`),
+      " " + (this.query ? t.fg("accent", `Filter: ${this.query}`) : t.fg("dim", "Type to filter…")),
+      "",
+    ];
+    if (this.entries.length === 0) {
+      lines.push("  " + t.fg("warning", this.rosters.length > 0
+        ? "No reviewers or rosters match filter."
+        : "No reviewers match filter."));
     } else {
-      lines.push(" " + t.fg("dim", "Type to filter…"));
-    }
-    lines.push("");
-
-    if (this.filteredReviewers.length === 0) {
-      lines.push("  " + t.fg("warning", "No reviewers match filter."));
-    } else {
-      const visibleCount = this.getVisibleReviewerCount(this.viewportHeight(), width);
-      const endIdx = Math.min(this.reviewerScrollOffset + visibleCount, this.filteredReviewers.length);
-      // Tracks the last header drawn so a tier scrolled into mid-list still gets labelled.
-      let headedTier: string | undefined;
-
-      for (let i = this.reviewerScrollOffset; i < endIdx; i++) {
-        const reviewer = this.filteredReviewers[i];
-        if (!reviewer) continue;
-
-        if (reviewer.tier !== headedTier) {
-          headedTier = reviewer.tier;
-          // Total lookup: both the map and every `reviewer.tier` are derived from TIERS.
-          lines.push(" " + renderMenuSectionDivider(t, width - 1, TIER_LABELS.get(reviewer.tier)!));
+      const end = Math.min(this.visibleEnd(this.scrollOffset, width), this.entries.length);
+      let section: string | undefined;
+      for (let index = this.scrollOffset; index < end; index++) {
+        const entry = this.entries[index]!;
+        const nextSection = this.section(entry);
+        if (nextSection !== section) {
+          section = nextSection;
+          lines.push(" " + renderMenuSectionDivider(t, width - 1, section));
         }
-
-        const isCurrent = i === this.reviewerIndex;
-        const isSelected = this.selected.has(reviewer.name);
-
-        const checkbox = isSelected ? t.fg("success", "✓") : t.fg("dim", "○");
-        const pointer = isCurrent ? t.bold(t.fg("accent", SELECTOR)) : " ";
-        const nameText = isSelected
-          ? t.fg("success", t.bold(reviewer.name))
-          : isCurrent
-            ? t.bold(t.fg("accent", reviewer.name))
-            : t.bold(reviewer.name);
-        lines.push(renderMenuContentRow(t, width, `  ${pointer} ${checkbox} ${nameText}`, isCurrent));
-
-        const descWrapped = wrapText(reviewer.description, width - 8);
-        for (const dl of descWrapped) {
-          lines.push(`      ${t.fg("muted", dl)}`);
+        const current = index === this.entryIndex;
+        const pointer = current ? t.bold(t.fg("accent", SELECTOR)) : " ";
+        if (entry.kind === "roster") {
+          const name = current ? t.bold(t.fg("accent", entry.roster.name)) : t.bold(entry.roster.name);
+          lines.push(renderMenuContentRow(t, width, `  ${pointer} ◇ ${name}`, current));
+          for (const memberLine of wrapText(entry.roster.reviewers.join(", "), width - 8)) {
+            lines.push(`      ${t.fg("muted", memberLine)}`);
+          }
+        } else {
+          const reviewer = entry.reviewer;
+          const checked = this.selected.has(reviewer.name);
+          const checkbox = checked ? t.fg("success", "✓") : t.fg("dim", "○");
+          const name = checked
+            ? t.fg("success", t.bold(reviewer.name))
+            : current ? t.bold(t.fg("accent", reviewer.name)) : t.bold(reviewer.name);
+          lines.push(renderMenuContentRow(t, width, `  ${pointer} ${checkbox} ${name}`, current));
+          for (const text of wrapText(reviewer.description, width - 8)) lines.push(`      ${t.fg("muted", text)}`);
+          for (const text of wrapText(reviewer.focusAreas.join(" · "), width - 8)) lines.push(`      ${t.fg("dim", text)}`);
         }
-
-        const focusText = reviewer.focusAreas.join(" · ");
-        const focusWrapped = wrapText(focusText, width - 8);
-        for (const fl of focusWrapped) {
-          lines.push(`      ${t.fg("dim", fl)}`);
-        }
-
         lines.push("");
       }
-
-      const total = this.filteredReviewers.length;
-      if (total > visibleCount) {
-        lines.push(" " + t.fg("dim", `  ${this.reviewerScrollOffset + 1}–${endIdx} of ${total}`));
+      if (this.entries.length > end - this.scrollOffset) {
+        lines.push(" " + t.fg("dim", `  ${this.scrollOffset + 1}–${end} of ${this.entries.length}`));
       }
     }
-
-    lines.push(" " + t.fg(this.selected.size > 0 ? "accent" : "dim", this.renderCostPreview()));
-
+    lines.push(" " + t.fg(effective.reviewers.length ? "accent" : "dim", this.renderCostPreview()));
     if (this.awaitingCostConfirm) {
       lines.push(" " + t.fg("warning", "Press Enter again to launch this higher-cost run · Esc to revise"));
-    } else if (this.selected.size > 0) {
-      const suffix = this.needsCostConfirm() ? " (confirmation required)" : "";
-      lines.push(
-        " " + t.fg("success", `✓ ${this.selected.size} selected — press Enter to confirm${suffix}`),
-      );
+    } else if (effective.reviewers.length > 0) {
+      lines.push(" " + t.fg("success", `✓ ${effective.reviewers.length} selected — press Enter to confirm${this.needsCostConfirm() ? " (confirmation required)" : ""}`));
     }
-
     lines.push(t.fg("border", "═".repeat(width)));
-
-    this.cachedWidth = width;
     this.cachedViewport = this.viewportHeight();
     this.cachedLines = lines;
     return lines;
   }
 }
 
-/**
- * Show the expert picker as a focused overlay and return the selection result.
- * `initial` reopens the picker with that selection restored and the cursor on
- * it, so stepping back from a later screen does not discard it.
- */
 export async function showExpertPicker(
   ctx: { ui: OverlayPromptUi },
   fileCount?: number,
   initial?: ReviewerSelection,
+  rosters: Roster[] = [],
 ): Promise<ReviewerSelection | null> {
   return showOverlayPrompt<ReviewerSelection | null>(ctx, (tui, theme, finish) =>
-    new ExpertPicker(theme, finish, fileCount, tui, initial));
+    new ExpertPicker(theme, finish, fileCount, tui, initial, rosters));
 }

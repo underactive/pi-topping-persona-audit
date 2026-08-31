@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Reusable reviewer rosters** — `/persona-audit-settings` can stage and save up to 20 named 1–10-reviewer combinations. Valid rosters appear alphabetically above individual reviewers in `/persona-audit`, filter by roster or member name, and expand to one pass per reviewer with the existing high-cost confirmation gate.
+
 - **Labeled finding summaries** — Findings Review, audit reports, and deferred handoffs now preserve an authoritative rationale alongside a simplified-technical-English summary and suggested change. Reconciliation generates summaries when available; older handoffs and degraded runs receive a conservative fallback.
 
 ### Fixed

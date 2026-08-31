@@ -29,6 +29,7 @@ import { showReviewerRetryPrompt } from "./components/ReviewerRetry.ts";
 import { showVerifierRetryPrompt } from "./components/VerifierRetry.ts";
 import { showArtifactViewer, showReportViewer } from "./components/ReportViewer.ts";
 import { showSettingsMenu } from "./components/SettingsMenu.ts";
+import { showRosterManager } from "./components/RosterEditor.ts";
 import { showPurgeMenu } from "./components/PurgeMenu.ts";
 import {
   loadPersonaAuditConfig,
@@ -714,8 +715,9 @@ export default function (pi: ExtensionAPI): void {
         let restoredReviewers: ReviewerSelection | undefined;
         let restoredModels: PhaseModelSelection | undefined;
         let contextDraft = "";
+        const pickerRosters = loadPersonaAuditConfig().rosters;
         selectionLoop: for (;;) {
-          const reviewers = await showExpertPicker(ctx, fileCount, restoredReviewers);
+          const reviewers = await showExpertPicker(ctx, fileCount, restoredReviewers, pickerRosters);
           if (!reviewers) {
             ctx.ui.notify("Audit cancelled.", "info");
             return;
@@ -945,16 +947,25 @@ export default function (pi: ExtensionAPI): void {
 
   // ── /persona-audit-settings command ───────────────────────────
   pi.registerCommand("persona-audit-settings", {
-    description: "Configure the persona-audit activity monitor and reviewer temperament",
+    description: "Configure persona-audit rosters, activity monitor, reviewer temperament, and verification rounds",
     handler: async (_args, ctx) => {
       if (ctx.mode !== "tui") {
         ctx.ui.notify("persona-audit-settings requires TUI mode", "error");
         return;
       }
-      const edited = await showSettingsMenu(ctx, loadPersonaAuditConfig());
-      if (!edited) return;
+      let draft = loadPersonaAuditConfig();
+      for (;;) {
+        const result = await showSettingsMenu(ctx, draft);
+        if (result.action === "cancel") return;
+        draft = result.draft;
+        if (result.action === "rosters") {
+          draft = { ...draft, rosters: await showRosterManager(ctx, draft.rosters) };
+          continue;
+        }
+        break;
+      }
       try {
-        savePersonaAuditConfig(edited);
+        savePersonaAuditConfig(draft);
       } catch (error) {
         ctx.ui.notify(
           `Could not save persona-audit settings: ${error instanceof Error ? error.message : String(error)}`,
