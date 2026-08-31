@@ -84,7 +84,7 @@ export class ExpertPicker implements Component {
     }
   }
 
-  /** Rows the picker may use: the shared overlay-height budget of the terminal. */
+  /** Rows the picker may use: the internal 75% viewport budget of the terminal. */
   private viewportHeight(): number {
     const rows = this.host?.terminal?.rows ?? 0;
     return Math.max(10, Math.floor(((rows > 0 ? rows : FALLBACK_TERMINAL_ROWS) * OVERLAY_HEIGHT_PERCENT) / 100));

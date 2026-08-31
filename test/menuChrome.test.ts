@@ -4,7 +4,6 @@ import { visibleWidth, type Component, type KeybindingsManager, type TUI } from 
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import {
   MenuComponent,
-  OVERLAY_MAX_HEIGHT,
   PROMPT_OVERLAY_OPTIONS,
   SELECTOR,
   showOverlayPrompt,
@@ -75,7 +74,12 @@ test("showOverlayPrompt opens a focused overlay with the exact shared geometry",
   assert.deepEqual(capturedOptions, PROMPT_OVERLAY_OPTIONS);
   assert.deepEqual(capturedOptions, {
     overlay: true,
-    overlayOptions: { anchor: "center", width: "100%", maxHeight: OVERLAY_MAX_HEIGHT },
+    overlayOptions: {
+      anchor: "bottom-center",
+      width: "100%",
+      maxHeight: "100%",
+      margin: { left: 0, right: 0, bottom: 0 },
+    },
   });
 
   // Whatever the component hands to done resolves the returned promise.

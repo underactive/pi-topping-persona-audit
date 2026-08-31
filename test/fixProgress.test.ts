@@ -12,6 +12,7 @@ import {
   type FixProgressUi,
 } from "../src/components/FixProgress.ts";
 import type { AuditProgressWidget } from "../src/components/AuditProgress.ts";
+import { PROMPT_OVERLAY_OPTIONS } from "../src/components/menuChrome.ts";
 import type { Finding } from "../src/types.ts";
 
 const strip = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
@@ -378,10 +379,7 @@ test("the gate opens a focused overlay; done fires before the settling update", 
 
   const decision = h.controller.gate(gateInput);
   assert.equal(h.customCalls.length, 1);
-  assert.deepEqual(h.lastCustomCall().options, {
-    overlay: true,
-    overlayOptions: { anchor: "center", width: "100%", maxHeight: "75%" },
-  });
+  assert.deepEqual(h.lastCustomCall().options, PROMPT_OVERLAY_OPTIONS);
 
   // While the gate is open the raw listener leaves every key — Escape
   // included — untouched so the focused overlay receives it.

@@ -1,5 +1,5 @@
 import type { ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
-import { Editor, Key, matchesKey, type Component, type EditorTheme, type OverlayOptions, type TUI } from "@earendil-works/pi-tui";
+import { Editor, Key, matchesKey, type Component, type EditorTheme, type TUI } from "@earendil-works/pi-tui";
 import { describeAdditionalContext, parseAdditionalContext, type AdditionalContext } from "../additionalContext.ts";
 import { phaseModelChoiceLabel, type PhaseModelSelection } from "../modelConfig.ts";
 import type { AuditMode, ReviewerSelection } from "../types.ts";
@@ -22,17 +22,6 @@ export interface AuditSummaryConfig {
 }
 
 const reviewerByName = new Map(TIERS.flatMap((tier) => tier.reviewers.map((reviewer) => [reviewer.name, { ...reviewer, tier: tier.label }] as const)));
-
-const AUDIT_SUMMARY_OVERLAY_OPTIONS: {
-  overlay: true;
-  overlayOptions: OverlayOptions;
-} = {
-  overlay: true,
-  overlayOptions: {
-    ...PROMPT_OVERLAY_OPTIONS.overlayOptions,
-    anchor: "bottom-center",
-  },
-};
 
 export class AuditSummaryComponent implements Component {
   private readonly tui: TUI;
@@ -203,6 +192,6 @@ export function showAuditSummary(ctx: ExtensionCommandContext, config: Omit<Audi
   return showOverlayPrompt(
     ctx,
     (tui, theme, done) => new AuditSummaryComponent(tui, theme, { ...config, cwd: ctx.cwd }, done),
-    AUDIT_SUMMARY_OVERLAY_OPTIONS,
+    PROMPT_OVERLAY_OPTIONS,
   );
 }

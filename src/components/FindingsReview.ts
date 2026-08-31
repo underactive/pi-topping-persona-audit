@@ -5,7 +5,7 @@ import { handoffRelPath, renderDeferredHandoff, writeReportFile } from "../repor
 import { gitHeadCommit } from "../git.ts";
 import { SEVERITY_ORDER } from "../types.ts";
 import type { Finding, FindingRecommendation, FindingsReviewOutcome, FindingsReviewResult, FindingStatus, FixedFinding, ReviewSessionState, ReviewSortMode } from "../types.ts";
-import { FALLBACK_TERMINAL_ROWS, OVERLAY_HEIGHT_PERCENT, OVERLAY_MAX_HEIGHT, renderFramedBottom, renderFramedRow, renderFramedTop, SELECTOR } from "./menuChrome.ts";
+import { FALLBACK_TERMINAL_ROWS, OVERLAY_HEIGHT_PERCENT, PROMPT_OVERLAY_OPTIONS, renderFramedBottom, renderFramedRow, renderFramedTop, SELECTOR } from "./menuChrome.ts";
 
 interface ReviewItem {
   finding: Finding;
@@ -344,8 +344,8 @@ export class FindingsReview implements Component {
   }
 
   /**
-   * Lines the host will show before it clips, mirroring the overlay's maxHeight.
-   * `render` is handed only a width, so the budget is rederived here.
+   * Lines the component renders before clipping its scrollable viewport.
+   * `render` is handed only a width, so the internal budget is rederived here.
    */
   private viewportHeight(): number {
     const rows = this.tui.terminal?.rows ?? 0;
@@ -698,13 +698,6 @@ export async function showFindingsReview(
   return ctx.ui.custom<FindingsReviewOutcome>(
     (tui: TUI, theme: Theme, _kb: KeybindingsManager, done: (outcome: FindingsReviewOutcome) => void) =>
       new FindingsReview(findings, theme, done, tui, onWriteHandoff, degradationNote, restore),
-    {
-      overlay: true,
-      overlayOptions: {
-        anchor: "center",
-        width: "100%",
-        maxHeight: OVERLAY_MAX_HEIGHT,
-      },
-    },
+    PROMPT_OVERLAY_OPTIONS,
   );
 }

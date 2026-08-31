@@ -2,7 +2,7 @@ import type { ExtensionCommandContext, Theme, ThemeColor } from "@earendil-works
 import { getMarkdownTheme } from "@earendil-works/pi-coding-agent";
 import type { Component, KeybindingsManager, MarkdownTheme, TUI } from "@earendil-works/pi-tui";
 import { Key, Markdown, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { FALLBACK_TERMINAL_ROWS, OVERLAY_HEIGHT_PERCENT, OVERLAY_MAX_HEIGHT, renderFramedBottom, renderFramedRow, renderFramedTop } from "./menuChrome.ts";
+import { FALLBACK_TERMINAL_ROWS, OVERLAY_HEIGHT_PERCENT, PROMPT_OVERLAY_OPTIONS, renderFramedBottom, renderFramedRow, renderFramedTop } from "./menuChrome.ts";
 
 /** The slice of the TUI host required by the viewer; structural for unit tests. */
 export interface ReportViewerHost {
@@ -175,14 +175,7 @@ export function showReportViewer(
   return ctx.ui.custom<void>(
     (tui: TUI, theme: Theme, _kb: KeybindingsManager, done: () => void) =>
       new ReportViewer(reportText, header, theme, getMarkdownTheme(), done, tui),
-    {
-      overlay: true,
-      overlayOptions: {
-        anchor: "center",
-        width: "100%",
-        maxHeight: OVERLAY_MAX_HEIGHT,
-      },
-    },
+    PROMPT_OVERLAY_OPTIONS,
   );
 }
 

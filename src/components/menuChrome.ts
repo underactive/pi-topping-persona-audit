@@ -88,9 +88,8 @@ const MAX_WIDTH = 76;
 export const SELECTOR = "❯";
 const UNSELECTED_SELECTOR = " ".repeat(SELECTOR.length);
 
-/** Shared overlay sizing constants for focus-taking overlays. */
+/** Internal viewport budget for scrollable prompt content. */
 export const OVERLAY_HEIGHT_PERCENT = 75;
-export const OVERLAY_MAX_HEIGHT = `${OVERLAY_HEIGHT_PERCENT}%` as const;
 export const FALLBACK_TERMINAL_ROWS = 40;
 
 function isToggleItem(item: MenuItem): item is ToggleMenuItem {
@@ -495,16 +494,21 @@ export class MenuComponent implements Component {
 // focus, settle-once behavior, component disposal, keyboard dispatch, and
 // Kitty key-release filtering for focused overlays.
 
-/** Shared geometry for every persona-audit prompt overlay: centered, full width, capped at 75% of the terminal height. */
+/**
+ * Shared geometry for every persona-audit prompt overlay. Overlays remain
+ * floating, but anchor flush to the terminal bottom and paint over the editor
+ * while open. Scrollable components retain their own 75% viewport budgets.
+ */
 export const PROMPT_OVERLAY_OPTIONS: {
   overlay: true;
   overlayOptions: OverlayOptions;
 } = {
   overlay: true,
   overlayOptions: {
-    anchor: "center",
+    anchor: "bottom-center",
     width: "100%",
-    maxHeight: OVERLAY_MAX_HEIGHT,
+    maxHeight: "100%",
+    margin: { left: 0, right: 0, bottom: 0 },
   },
 };
 

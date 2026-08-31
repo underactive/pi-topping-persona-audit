@@ -78,10 +78,7 @@ test("escape returns Back with the current draft", async () => {
   const result = showAuditSummary(ctx, { ...config, draft: "remember me" });
   component?.handleInput?.(ESCAPE);
   assert.deepEqual(await result, { action: "back", draft: "remember me" });
-  assert.deepEqual(options, {
-    ...PROMPT_OVERLAY_OPTIONS,
-    overlayOptions: { ...PROMPT_OVERLAY_OPTIONS.overlayOptions, anchor: "bottom-center" },
-  });
+  assert.deepEqual(options, PROMPT_OVERLAY_OPTIONS);
 });
 
 test("Start and Cancel buttons return distinct outcomes", async () => {

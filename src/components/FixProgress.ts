@@ -2,7 +2,7 @@
  * Fix Now surfaces, split by lifecycle responsibility. Working and settling
  * status lives in the audit table as nested detail under the `fix now · …`
  * row (via the sink below) — it is not a prompt, so Pi must not bracket it as
- * a user wait. Each accept/retry/discard decision opens one fresh centered
+ * a user wait. Each accept/retry/discard decision opens one fresh bottom-anchored
  * overlay (FixGate) through ctx.ui.custom with overlay: true — the only
  * lifecycle prompt here. The gate calls done the moment the user decides,
  * ending the prompt span before retry/discard cleanup, commit summarization,
@@ -72,7 +72,7 @@ function colorDiffLine(theme: FixProgressTheme, line: string): string {
   return theme.fg("muted", line);
 }
 
-/** Content viewport: 75% of the terminal, mirroring the overlay's maxHeight. */
+/** Content viewport: 75% of the terminal, independent of the host overlay's maximum height. */
 function viewportHeight(tui: FixProgressHost): number {
   const rows = tui.terminal?.rows ?? 0;
   const usable = rows > 0 ? rows : FALLBACK_TERMINAL_ROWS;

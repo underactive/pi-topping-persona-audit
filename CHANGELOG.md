@@ -28,6 +28,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- **Floating prompts anchor at the terminal bottom** — focused persona-audit overlays now span the full width and cover Pi's editor while open.
+
 - **Progress ticker pauses when no rows are active** — the render loop yields while every row is completed, so a finished audit no longer burns CPU on pointless refreshes.
 
 - **Fix Now toasts truncate agent-session errors** — large error payloads (e.g., the full model catalog in a Model-not-found error) are capped at the first line, 200 characters, preventing transcript flooding.
