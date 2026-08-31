@@ -160,7 +160,7 @@ export function calculateTurnCost(model: Model<Api> | undefined, usage: TurnToke
     // Router/proxy models can carry zero rates even when their provider knows
     // the actual bill. Prefer that report instead of displaying a misleading
     // zero, while retaining registry pricing for ordinary models.
-    return total > 0 || reported === undefined ? total : Math.max(total, reported);
+    return total > 0 || reported === undefined ? total : reported;
   }
   // Negative model-rate sentinels are not costs. A positive provider report is
   // still usable when it came from a provider with better billing metadata.
