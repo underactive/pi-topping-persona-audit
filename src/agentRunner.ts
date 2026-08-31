@@ -155,7 +155,7 @@ export function calculateTurnCost(model: Model<Api> | undefined, usage: TurnToke
     totalTokens: nonnegativeFinite(usage.totalTokens),
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
   });
-  const total = cost.input + cost.output + cost.cacheRead + cost.cacheWrite;
+  const total = cost.total;
   if (Number.isFinite(total) && total >= 0) {
     // Router/proxy models can carry zero rates even when their provider knows
     // the actual bill. Prefer that report instead of displaying a misleading
