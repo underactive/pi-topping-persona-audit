@@ -1,12 +1,12 @@
-import type { Component, TUI, KeybindingsManager } from "@earendil-works/pi-tui";
+import type { Component } from "@earendil-works/pi-tui";
 import { Key, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import type { ExtensionCommandContext, Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
+import type { ExtensionCommandContext, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { handoffRelPath, renderDeferredHandoff, writeReportFile } from "../report.ts";
 import { gitHeadCommit } from "../git.ts";
 import { SEVERITY_ORDER } from "../types.ts";
 import type { Finding, FindingRecommendation, FindingsReviewOutcome, FindingsReviewResult, FindingStatus, FixedFinding, ReviewSessionState, ReviewSortMode } from "../types.ts";
 import { sanitizeTerminalText } from "./AuditProgress.ts";
-import { FALLBACK_TERMINAL_ROWS, OVERLAY_HEIGHT_PERCENT, PROMPT_OVERLAY_OPTIONS, renderFramedBottom, renderFramedRow, renderFramedTop, SELECTOR } from "./menuChrome.ts";
+import { FALLBACK_TERMINAL_ROWS, OVERLAY_HEIGHT_PERCENT, renderFramedBottom, renderFramedRow, renderFramedTop, SELECTOR, showOverlayPrompt } from "./menuChrome.ts";
 
 interface ReviewItem {
   finding: Finding;
@@ -699,9 +699,8 @@ export async function showFindingsReview(
     return relPath;
   };
 
-  return ctx.ui.custom<FindingsReviewOutcome>(
-    (tui: TUI, theme: Theme, _kb: KeybindingsManager, done: (outcome: FindingsReviewOutcome) => void) =>
-      new FindingsReview(findings, theme, done, tui, onWriteHandoff, degradationNote, restore),
-    PROMPT_OVERLAY_OPTIONS,
+  return showOverlayPrompt<FindingsReviewOutcome>(
+    ctx,
+    (tui, theme, done) => new FindingsReview(findings, theme, done, tui, onWriteHandoff, degradationNote, restore),
   );
 }

@@ -1,8 +1,8 @@
-import type { ExtensionCommandContext, Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
+import type { ExtensionCommandContext, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { getMarkdownTheme } from "@earendil-works/pi-coding-agent";
-import type { Component, KeybindingsManager, MarkdownTheme, TUI } from "@earendil-works/pi-tui";
+import type { Component, MarkdownTheme } from "@earendil-works/pi-tui";
 import { Key, Markdown, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { FALLBACK_TERMINAL_ROWS, OVERLAY_HEIGHT_PERCENT, PROMPT_OVERLAY_OPTIONS, renderFramedBottom, renderFramedRow, renderFramedTop } from "./menuChrome.ts";
+import { FALLBACK_TERMINAL_ROWS, OVERLAY_HEIGHT_PERCENT, renderFramedBottom, renderFramedRow, renderFramedTop, showOverlayPrompt } from "./menuChrome.ts";
 
 /** The slice of the TUI host required by the viewer; structural for unit tests. */
 export interface ReportViewerHost {
@@ -172,10 +172,9 @@ export function showReportViewer(
   reportText: string,
   header: ReportViewerHeader,
 ): Promise<void> {
-  return ctx.ui.custom<void>(
-    (tui: TUI, theme: Theme, _kb: KeybindingsManager, done: () => void) =>
-      new ReportViewer(reportText, header, theme, getMarkdownTheme(), done, tui),
-    PROMPT_OVERLAY_OPTIONS,
+  return showOverlayPrompt<void>(
+    ctx,
+    (tui, theme, done) => new ReportViewer(reportText, header, theme, getMarkdownTheme(), done, tui),
   );
 }
 

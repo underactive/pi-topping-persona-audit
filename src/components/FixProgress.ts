@@ -15,7 +15,7 @@ import type { TerminalInputHandler, Theme, ThemeColor } from "@earendil-works/pi
 import type { AuditProgressWidget } from "./AuditProgress.ts";
 import type { Finding, HeadlessProgress } from "../types.ts";
 import { sanitizeTerminalText } from "./AuditProgress.ts";
-import { FALLBACK_TERMINAL_ROWS, OVERLAY_HEIGHT_PERCENT, PROMPT_OVERLAY_OPTIONS, renderFramedBottom, renderFramedRow, renderFramedTop, wrapText } from "./menuChrome.ts";
+import { FALLBACK_TERMINAL_ROWS, OVERLAY_HEIGHT_PERCENT, renderFramedBottom, renderFramedRow, renderFramedTop, showOverlayPrompt, wrapText } from "./menuChrome.ts";
 
 export interface FixChatMessage {
   role: "user" | "assistant";
@@ -443,13 +443,10 @@ export function openFixProgress(
     gate: (input) => {
       if (closed) return Promise.resolve("discard" as const);
       gateActive = true;
-      const shown = ctx.ui.custom<FixGateDecision>(
-        (tui, theme, _kb, done) => {
-          settleGate = done;
-          return new FixGate(finding, input, theme, tui, done);
-        },
-        PROMPT_OVERLAY_OPTIONS,
-      );
+      const shown = showOverlayPrompt<FixGateDecision>(ctx, (tui, theme, done) => {
+        settleGate = done;
+        return new FixGate(finding, input, theme, tui, done);
+      });
       return shown
         .then((decision) => {
           if (!closed) {
