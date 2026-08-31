@@ -1,7 +1,7 @@
 import type { ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
 import { Editor, Key, matchesKey, type Component, type EditorTheme, type TUI } from "@earendil-works/pi-tui";
 import { describeAdditionalContext, parseAdditionalContext, type AdditionalContext } from "../additionalContext.ts";
-import { MenuComponent, PROMPT_OVERLAY_OPTIONS, renderMenuBottomBorder, renderMenuContentRow, renderMenuSeparator, renderMenuTopBorder, showOverlayPrompt, wrapText } from "./menuChrome.ts";
+import { MenuComponent, renderMenuBottomBorder, renderMenuContentRow, renderMenuSeparator, renderMenuTopBorder, showOverlayPrompt, wrapText } from "./menuChrome.ts";
 
 export type AuditSummaryResult =
   | { action: "start"; draft: string; context: AdditionalContext }
@@ -164,9 +164,5 @@ export class AuditSummaryComponent implements Component {
 }
 
 export function showAuditSummary(ctx: ExtensionCommandContext, config: Omit<AuditSummaryConfig, "cwd">): Promise<AuditSummaryResult> {
-  return showOverlayPrompt(
-    ctx,
-    (tui, theme, done) => new AuditSummaryComponent(tui, theme, { ...config, cwd: ctx.cwd }, done),
-    PROMPT_OVERLAY_OPTIONS,
-  );
+  return showOverlayPrompt(ctx, (tui, theme, done) => new AuditSummaryComponent(tui, theme, { ...config, cwd: ctx.cwd }, done));
 }

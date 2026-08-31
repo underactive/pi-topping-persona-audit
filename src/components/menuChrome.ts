@@ -534,10 +534,6 @@ export interface OverlayPromptUi {
 export function showOverlayPrompt<T>(
   ctx: { ui: OverlayPromptUi },
   create: (tui: TUI, theme: Theme, done: (value: T) => void) => Component,
-  options: {
-    overlay: true;
-    overlayOptions: OverlayOptions;
-  } = PROMPT_OVERLAY_OPTIONS,
 ): Promise<T> {
-  return ctx.ui.custom<T>((tui, theme, _keybindings, done) => create(tui, theme, done), options);
+  return ctx.ui.custom<T>((tui, theme, _keybindings, done) => create(tui, theme, done), PROMPT_OVERLAY_OPTIONS);
 }
