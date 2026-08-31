@@ -6,13 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-08-30
+
 ### Added
 
 - **Per-command full-tree exclusions** — `/persona-audit --full` accepts repeatable `--exclude <dir-or-path>` values with quote-aware parsing, global directory-name matching, and exact project-root-relative path matching while retaining mandatory built-in exclusions.
 
 - **Pre-audit reviewer context** — normal audits now show a guidance screen where shared text and up to five existing PNG, JPG, JPEG, GIF, or WebP files (5 MiB each) can be attached to every reviewer pass. Context is reviewer-only, included in cache identity, and represented in reports by counts rather than raw content.
 
+### Changed
+
+- **Floating prompts anchor at the terminal bottom** — focused persona-audit overlays now span the full width, cover Pi's editor while open, and leave consistent spacing around the prompt.
+
+- **Progress ticker pauses when no rows are active** — the render loop yields while every row is completed, so a finished audit no longer burns CPU on pointless refreshes.
+
+- **Audit progress reuses its row snapshot** — footer cost calculation no longer rebuilds the progress rows during the same render tick.
+
+- **Fix Now toasts truncate agent-session errors** — large error payloads (e.g., the full model catalog in a Model-not-found error) are capped at the first line, 200 characters, preventing transcript flooding.
+
+- **Hardened audit progress rendering** — edge-case title overflow in the progress table and refresh-race conditions in the fix-now sub-rows are handled more robustly.
+
+- **Simplified overlay plumbing** — prompt components share one overlay helper and geometry, while unused audit-summary configuration, border-counter, and per-call overlay-option parameters were removed.
+
 ### Fixed
+
+- **Guidance and context views preserve their height** — switching between the additional-context editor and guidance menu no longer changes the overlay height.
+
+- **Finding text is sanitized before terminal rendering** — rationale, suggested changes, recommendation reasons, reviewer names, paths, categories, and blast-radius reasons no longer pass terminal control sequences through the Findings Review overlay.
 
 - **Fix Now rejects out-of-root targets before edits** — the dirty-target check now shares the existing `resolveTargetPath` guard and returns an error notification instead of starting an agent session for a file outside the project root.
 
@@ -25,16 +45,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **Tracker snapshot moved into throttled branch** — `tracker.snapshot()` is now called inside the progress-emission branch instead of unconditionally every render tick, reducing overhead when no output is due.
 
 - **Removed unused `createInteractiveSession` injection** — dead code path and type removed from `FixNowDeps`; the `if` ladder collapses to a single `runSession` branch with no behavior change.
-
-### Changed
-
-- **Floating prompts anchor at the terminal bottom** — focused persona-audit overlays now span the full width and cover Pi's editor while open.
-
-- **Progress ticker pauses when no rows are active** — the render loop yields while every row is completed, so a finished audit no longer burns CPU on pointless refreshes.
-
-- **Fix Now toasts truncate agent-session errors** — large error payloads (e.g., the full model catalog in a Model-not-found error) are capped at the first line, 200 characters, preventing transcript flooding.
-
-- **Hardened audit progress rendering** — edge-case title overflow in the progress table and refresh-race conditions in the fix-now sub-rows are handled more robustly.
 
 ## [0.1.4] - 2026-08-29
 
