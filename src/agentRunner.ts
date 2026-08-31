@@ -128,15 +128,24 @@ function emptyUsage(): HeadlessUsage {
   return { turns: 0, contextTokens: 0, outputTokens: 0 };
 }
 
-export type TurnTokenUsage = Pick<Usage, "input" | "output" | "cacheRead" | "cacheWrite" | "cacheWrite1h" | "totalTokens">;
+export type TurnTokenUsage = Pick<Usage, "input" | "output" | "cacheRead" | "cacheWrite" | "cacheWrite1h" | "totalTokens"> & {
+  /** Provider-calculated total, when the provider reports one. */
+  cost?: Usage["cost"];
+};
 
 function nonnegativeFinite(value: number | undefined): number {
   return typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : 0;
 }
 
-/** Calculate one assistant turn's cost using the resolved model's registry rates. */
+function reportedUsageCost(usage: TurnTokenUsage): number | undefined {
+  const total = usage.cost?.total;
+  return typeof total === "number" && Number.isFinite(total) && total >= 0 ? total : undefined;
+}
+
+/** Calculate one assistant turn's cost using registry rates, with provider cost as a fallback. */
 export function calculateTurnCost(model: Model<Api> | undefined, usage: TurnTokenUsage): number | undefined {
-  if (!model) return undefined;
+  const reported = reportedUsageCost(usage);
+  if (!model) return reported;
   const cost = calculateCost(model, {
     input: nonnegativeFinite(usage.input),
     output: nonnegativeFinite(usage.output),
@@ -147,7 +156,46 @@ export function calculateTurnCost(model: Model<Api> | undefined, usage: TurnToke
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
   });
   const total = cost.input + cost.output + cost.cacheRead + cost.cacheWrite;
-  return Number.isFinite(total) && total >= 0 ? total : undefined;
+  if (Number.isFinite(total) && total >= 0) {
+    // Router/proxy models can carry zero rates even when their provider knows
+    // the actual bill. Prefer that report instead of displaying a misleading
+    // zero, while retaining registry pricing for ordinary models.
+    return total > 0 || reported === undefined ? total : Math.max(total, reported);
+  }
+  // Negative model-rate sentinels are not costs. A positive provider report is
+  // still usable when it came from a provider with better billing metadata.
+  return reported !== undefined && reported > 0 ? reported : undefined;
+}
+
+function findReportedModel(
+  registry: Pick<ModelRegistry, "find">,
+  provider: string | undefined,
+  modelId: string | undefined,
+): Model<Api> | undefined {
+  if (!modelId) return undefined;
+  if (provider) {
+    const exact = registry.find(provider, modelId);
+    if (exact) return exact;
+  }
+  const slash = modelId.indexOf("/");
+  return slash > 0 ? registry.find(modelId.slice(0, slash), modelId.slice(slash + 1)) : undefined;
+}
+
+/** Prefer a provider-reported routed model over the model requested by the session. */
+export function resolveTurnCostModel(
+  fallback: Model<Api> | undefined,
+  registry: Pick<ModelRegistry, "find">,
+  provider: string | undefined,
+  modelId: string | undefined,
+  responseModel: string | undefined,
+): Model<Api> | undefined {
+  if (responseModel && responseModel !== modelId) {
+    // A different response model means the request was routed. Do not price it
+    // with the requested model if the actual model is absent from the registry;
+    // calculateTurnCost can then use a provider-reported cost, if available.
+    return findReportedModel(registry, provider, responseModel);
+  }
+  return fallback ?? findReportedModel(registry, provider, modelId);
 }
 
 function failedResult(errorMessage: string): HeadlessResult {
@@ -308,12 +356,19 @@ export async function createInteractiveAgentSession(
           if (msg.usage) usage.contextTokens = msg.usage.totalTokens || 0;
           if (!provider && msg.provider) provider = msg.provider;
           if (!modelId && msg.model) modelId = msg.model;
-          if (!costModel && provider && modelId) {
-            costModel = opts.modelRegistry.find(provider, modelId);
-            if (costModel) costUsd = 0;
+          const turnModel = resolveTurnCostModel(
+            costModel,
+            opts.modelRegistry,
+            msg.provider,
+            msg.model,
+            msg.responseModel,
+          );
+          if (!costModel && turnModel) {
+            costModel = turnModel;
+            costUsd = 0;
           }
           if (msg.usage) {
-            const turnCost = calculateTurnCost(costModel, msg.usage);
+            const turnCost = calculateTurnCost(turnModel, msg.usage);
             if (turnCost !== undefined) costUsd = (costUsd ?? 0) + turnCost;
           }
           if (msg.stopReason) stopReason = msg.stopReason;

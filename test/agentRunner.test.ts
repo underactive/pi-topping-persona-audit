@@ -14,6 +14,7 @@ import {
   getFinalAssistantText,
   promptAgentSession,
   resolveModelRef,
+  resolveTurnCostModel,
   type SessionMessage,
 } from "../src/agentRunner.ts";
 
@@ -137,6 +138,55 @@ test("calculateTurnCost uses registry rates, including long-cache writes", async
   assert.equal(
     calculateTurnCost(zeroCostModel, { input: 1, output: 1, cacheRead: 1, cacheWrite: 1, cacheWrite1h: 1, totalTokens: 5 }),
     0,
+  );
+  assert.equal(
+    calculateTurnCost(zeroCostModel, {
+      input: 1,
+      output: 1,
+      cacheRead: 1,
+      cacheWrite: 1,
+      cacheWrite1h: 1,
+      totalTokens: 5,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.42 },
+    }),
+    0.42,
+    "a provider-reported bill survives a zero-rate registry model",
+  );
+  assert.equal(
+    calculateTurnCost(undefined, {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      cacheWrite1h: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.17 },
+    }),
+    0.17,
+  );
+});
+
+test("resolveTurnCostModel prefers a paid response model for routed requests", async () => {
+  const registry = await testRegistry();
+  const router = registry.find("zzz-rt-test-provider", "zzz-rt-test-auto-router");
+  const paid = registry.find("zzz-rt-test-provider", "zzz-rt-test-alpha-4-5");
+  assert.ok(router);
+  assert.ok(paid);
+
+  const resolved = resolveTurnCostModel(
+    router,
+    registry,
+    "zzz-rt-test-provider",
+    router.id,
+    paid.id,
+  );
+  assert.equal(resolved?.id, paid.id);
+  assert.equal(calculateTurnCost(resolved, { input: 1_000, output: 1_000, cacheRead: 0, cacheWrite: 0, totalTokens: 2_000 }), 0.03);
+
+  assert.equal(
+    resolveTurnCostModel(router, registry, "zzz-rt-test-provider", router.id, "missing-response-model"),
+    undefined,
+    "an unknown routed model must not be priced with the requested model",
   );
 });
 

@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Progress-table costs account for routed and provider-reported billing** — paid downstream models no longer appear as `$0.000` when a router or proxy reports a different model or bill.
+
 - **Fix Now highlights the correct phase in the progress band** — during an interactive fix the widget header now highlights Implement while the fix agent edits and Verify while the verifier runs, instead of staying stuck on Triage; the pre-episode phase is restored when the fix episode closes.
 
 ## [0.1.5] - 2026-08-30
