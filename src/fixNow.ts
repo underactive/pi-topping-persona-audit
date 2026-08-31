@@ -1,9 +1,9 @@
 /**
  * Fix Now: interactively fix a single finding from the review overlay.
  * Runs an edit-capable fix agent, a lightweight single-finding verifier, then
- * a user diff gate (accept / retry / discard). Accepting commits exactly the
- * touched files; discard/cancel restores only files that were clean before the
- * fix started.
+ * a user diff gate (accept / retry / discard, or chat to ask about impact or
+ * request changes). Accepting commits exactly the touched files; discard/cancel
+ * restores only files that were clean before the fix started.
  */
 
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";

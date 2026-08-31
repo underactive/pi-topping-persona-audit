@@ -129,7 +129,7 @@ function emptyUsage(): HeadlessUsage {
 }
 
 export type TurnTokenUsage = Pick<Usage, "input" | "output" | "cacheRead" | "cacheWrite" | "cacheWrite1h" | "totalTokens"> & {
-  /** Provider-calculated total, when the provider reports one. */
+  /** Provider-reported cost breakdown; only its total is used, as a fallback when registry rates are unavailable or zero. */
   cost?: Usage["cost"];
 };
 
