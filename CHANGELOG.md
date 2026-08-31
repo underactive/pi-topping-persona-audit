@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Labeled finding summaries** — Findings Review, audit reports, and deferred handoffs now preserve an authoritative rationale alongside a simplified-technical-English summary and suggested change. Reconciliation generates summaries when available; older handoffs and degraded runs receive a conservative fallback.
+
 ### Fixed
 
 - **Progress-table costs account for routed and provider-reported billing** — paid downstream models no longer appear as `$0.000` when a router or proxy reports a different model or bill.

@@ -140,10 +140,18 @@ test("deferred handoff includes frontmatter and complete finding details", () =>
   assert.ok(handoff.includes("tags: [audit, persona-audit, deferred, handoff]"));
   assert.ok(handoff.includes("status: pending"));
   assert.ok(handoff.includes("## Deferred Findings (1)"));
-  assert.ok(handoff.includes("**src/a.ts:12** [high] — security: unsanitized input reaches exec"));
-  assert.ok(handoff.includes("Fix: escape the argument before interpolation"));
+  assert.ok(handoff.includes("**src/a.ts:12** [high] — security"));
+  assert.ok(handoff.includes("Rationale: unsanitized input reaches exec"));
+  assert.ok(handoff.includes("Suggested Change: escape the argument before interpolation"));
   assert.ok(handoff.includes("Reviewers: Security Engineer"));
   assert.ok(handoff.includes("Adjudicator: needs design review"));
+});
+
+test("written findings include a summary when one is available", () => {
+  const handoff = renderDeferredHandoff(handoffCtx, [finding({ summary: "User input reaches the command." })]);
+
+  assert.ok(handoff.includes("Summary: User input reaches the command."));
+  assert.ok(handoff.includes("Rationale: unsanitized input reaches exec"));
 });
 
 test("deferred handoff groups findings and action items by file", () => {

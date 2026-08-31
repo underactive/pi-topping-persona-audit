@@ -58,6 +58,16 @@ test("resume block round-trips losslessly through the rendered handoff", () => {
   assert.deepEqual(parsed.findings, findings);
 });
 
+test("resume block preserves optional summaries while old handoffs remain valid", () => {
+  const withSummary = parseHandoffPayload(renderHandoffResumeBlock(payload([
+    finding({ summary: "Input reaches the command." }),
+  ])));
+  assert.equal(withSummary.findings[0]?.summary, "Input reaches the command.");
+
+  const withoutSummary = parseHandoffPayload(renderHandoffResumeBlock(payload([finding()])));
+  assert.equal(withoutSummary.findings[0]?.summary, undefined);
+});
+
 test("derived blastRadius is omitted while reviewer changeKind survives", () => {
   const block = renderHandoffResumeBlock(payload([
     finding({

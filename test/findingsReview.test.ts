@@ -120,7 +120,7 @@ test("PageUp and PageDown move through one rendered page and clamp at both ends"
   assert.match(strip(ui.selected() ?? ""), /Reviewer 01/);
 
   ui.press(PAGE_DOWN);
-  assert.match(strip(ui.selected() ?? ""), /Reviewer 03/);
+  assert.match(strip(ui.selected() ?? ""), /Reviewer 02/);
 
   ui.press(PAGE_UP);
   assert.match(strip(ui.selected() ?? ""), /Reviewer 01/);
@@ -257,6 +257,31 @@ test("any other key disarms the cancel and keeps the triage decisions", () => {
   assert.ok(result, "Enter still finishes the review after a disarmed Esc");
   assert.equal(result.rejected.length, 1, "the earlier reject survived the disarmed cancel");
   assert.equal(result.accepted.length, 2);
+});
+
+test("findings render labeled summary, rationale, and suggested-change sections", () => {
+  const ui = harness([
+    finding(1, {
+      summary: "The parser keeps all output after the question.",
+      rationale: "Open Question regex captures all remaining output as the question shown to the user",
+      suggestedChange: "Stop at the next heading before opening the editor.",
+    }),
+  ], 60);
+  const rendered = ui.visible().map(strip).join("\n");
+
+  assert.ok(rendered.indexOf("Summary:") < rendered.indexOf("Rationale:"));
+  assert.ok(rendered.indexOf("Rationale:") < rendered.indexOf("Suggested Change:"));
+  assert.match(rendered, /parser keeps all output/i);
+  assert.match(rendered, /bug:1 — Open Question regex/);
+  assert.match(rendered, /Stop at the next heading/);
+  assert.doesNotMatch(rendered, /→/);
+});
+
+test("findings without a summary defensively display the rationale as their summary", () => {
+  const rendered = harness([finding(1, { summary: undefined })], 60).visible().map(strip).join("\n");
+
+  assert.match(rendered, /Summary:/);
+  assert.match(rendered, /Rationale 01 explaining/);
 });
 
 test("a degradation note renders as a header warning, and only when provided", () => {

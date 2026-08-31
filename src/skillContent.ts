@@ -985,6 +985,7 @@ When two fixes conflict, choose the winner by this precedence, in order:
 Recommend "reject" for the losing side of a conflict and "apply" for the winner.
 
 IMPORTANT — Output format. Ignore any output format described in your system prompt (including any {"id","status","decisionRationale"} schema). Your FINAL message must be ONLY a JSON array, with no surrounding prose and no code fences. Each element must be one of the input findings echoed back with ALL of its original fields (reviewer, file, line, category, severity, rationale, suggestedChange) PLUS:
+- "summary": a neutral ASD-STE100 restatement of rationale. Use 1–3 short declarative sentences in active voice and present tense, with one idea per sentence and common words. Keep it to one line and at most 360 characters. Do not add claims, include a fix, or use persona voice. Example: rewrite "Open Question regex swallows all remaining output as the question shown to the user" as "The Open Question regex captures all remaining output. The user sees that output as the question."
 - "recommendation": one of "apply", "reject", or "defer"
   - "apply" — valid, non-conflicting, should be fixed
   - "reject" — false positive, contradicted by another finding, or not worth fixing

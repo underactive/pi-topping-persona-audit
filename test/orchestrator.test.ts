@@ -108,6 +108,27 @@ test("annotateFindings merges recommendations onto matching findings", () => {
   assert.equal(findings[1]?.recommendationReason, "risky hot path");
 });
 
+test("annotateFindings attaches a sanitized summary to every recommendation type", () => {
+  const base = [finding(), finding({ file: "src/b.ts", line: 3, category: "bug" })];
+  const output = JSON.stringify([
+    { ...annotated("apply"), summary: "Input reaches exec." },
+    { ...annotated("defer", "risky hot path", { file: "src/b.ts", line: 3, category: "bug" }), summary: "\u001b[31mThis needs review.\u001b[0m" },
+  ]);
+
+  const { findings } = annotateFindings(base, [output]);
+  assert.equal(findings[0]?.summary, "Input reaches exec.");
+  assert.equal(findings[1]?.summary, "[31mThis needs review. [0m");
+});
+
+test("annotateFindings drops missing, malformed, and overlong summaries", () => {
+  const base = [finding()];
+  const output = JSON.stringify([{ ...annotated("apply"), summary: "x".repeat(500) }]);
+
+  const { findings } = annotateFindings(base, [output]);
+  assert.equal(findings[0]?.summary?.length, 360);
+  assert.equal(annotateFindings(base, [JSON.stringify([{ ...annotated("apply"), summary: 42 }])]).findings[0]?.summary, undefined);
+});
+
 test("annotateFindings notes partially-annotated results and keeps unmatched findings intact", () => {
   const base = [finding(), finding({ file: "src/b.ts", line: 3, category: "bug" })];
   const output = JSON.stringify([annotated("reject", "false positive")]);

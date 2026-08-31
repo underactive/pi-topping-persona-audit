@@ -13,8 +13,8 @@ interface ReviewItem {
   /** Position in the original findings array — flatGroups reorders, and Fix Now must name the source finding. */
   originalIndex: number;
   status: FindingStatus;
-  /** Wrapped rationale/suggestedChange/reason lines, cached per width — arrow-key navigation invalidates the render cache on every keystroke, so this avoids re-wrapping every finding just to redraw the visible window. */
-  wrapCache?: { width: number; headCols: number; rationale: string[]; suggestedChange: string[]; reason?: string[] };
+  /** Wrapped summary/rationale/suggested-change/reason lines, cached per width — arrow-key navigation invalidates the render cache on every keystroke, so this avoids re-wrapping every finding just to redraw the visible window. */
+  wrapCache?: { width: number; headCols: number; summary: string[]; rationale: string[]; suggestedChange: string[]; reason?: string[] };
 }
 
 /** Body-line range a single finding occupies, used to keep the selection on screen. */
@@ -387,17 +387,18 @@ export class FindingsReview implements Component {
     return result.length > 0 ? result : [text];
   }
 
-  private wrapItem(item: ReviewItem, width: number, headCols: number): { rationale: string[]; suggestedChange: string[]; reason?: string[] } {
+  private wrapItem(item: ReviewItem, width: number, headCols: number): { summary: string[]; rationale: string[]; suggestedChange: string[]; reason?: string[] } {
     if (item.wrapCache && item.wrapCache.width === width && item.wrapCache.headCols === headCols) return item.wrapCache;
-    // Continuation lines are indented 6; the first also pays for the head.
-    const rationale = this.wordWrap(sanitizeTerminalText(item.finding.rationale), Math.max(2, width - 6), Math.max(2, width - 4 - headCols));
-    const suggestedChange = this.wordWrap(`→ ${sanitizeTerminalText(item.finding.suggestedChange)}`, Math.max(2, width - 6), Math.max(2, width - 4));
+    // Section content is indented 6; rationale's opening line also pays for its location head.
+    const summary = this.wordWrap(sanitizeTerminalText(item.finding.summary || item.finding.rationale), Math.max(2, width - 6));
+    const rationale = this.wordWrap(sanitizeTerminalText(item.finding.rationale), Math.max(2, width - 6), Math.max(2, width - 6 - headCols));
+    const suggestedChange = this.wordWrap(sanitizeTerminalText(item.finding.suggestedChange), Math.max(2, width - 6));
     let reason: string[] | undefined;
     if (item.finding.recommendationReason && item.finding.recommendation !== "apply") {
       const reasonLabel = item.finding.recommendation === "reject" ? "Why reject" : "Why defer";
       reason = this.wordWrap(`⚑ ${reasonLabel}: ${sanitizeTerminalText(item.finding.recommendationReason)}`, Math.max(2, width - 6), Math.max(2, width - 4));
     }
-    const cache = { width, headCols, rationale, suggestedChange, reason };
+    const cache = { width, headCols, summary, rationale, suggestedChange, reason };
     item.wrapCache = cache;
     return cache;
   }
@@ -557,17 +558,26 @@ export class FindingsReview implements Component {
           : category
         : `${location} ${category}${blastInfo}`;
       const wrapped = this.wrapItem(item, width, visibleWidth(lineInfo) + 3);
+      lines.push(`    ${t.fg("dim", "Summary:")}`);
+      for (const summary of wrapped.summary) {
+        lines.push(`      ${t.fg("muted", summary)}`);
+      }
+      lines.push("");
+
+      lines.push(`    ${t.fg("dim", "Rationale:")}`);
       const firstRationale = wrapped.rationale[0];
       if (firstRationale !== undefined) {
-        lines.push(`    ${t.fg("dim", lineInfo + " — ")}` + t.fg("muted", firstRationale));
+        lines.push(`      ${t.fg("dim", lineInfo + " — ")}` + t.fg("muted", firstRationale));
         for (let ri = 1; ri < wrapped.rationale.length; ri++) {
           const rl = wrapped.rationale[ri];
           if (rl !== undefined) lines.push(`      ${t.fg("muted", rl)}`);
         }
       }
+      lines.push("");
 
-      for (const [ci, cl] of wrapped.suggestedChange.entries()) {
-        lines.push(`${ci === 0 ? "    " : "      "}${t.fg("accent", cl)}`);
+      lines.push(`    ${t.fg("accent", "Suggested Change:")}`);
+      for (const change of wrapped.suggestedChange) {
+        lines.push(`      ${t.fg("accent", change)}`);
       }
 
       if (wrapped.reason) {

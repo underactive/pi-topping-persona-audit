@@ -73,6 +73,14 @@ test("gate-repair directive forbids weakening gates and covers every failure typ
   assert.match(VERIFY_REPAIR_DIRECTIVE, /### Unresolved/);
 });
 
+test("reconcile directive defines ASD-STE100 summaries", () => {
+  assert.match(ADJUDICATOR_RECONCILE_DIRECTIVE, /"summary"/);
+  assert.match(ADJUDICATOR_RECONCILE_DIRECTIVE, /ASD-STE100/);
+  assert.match(ADJUDICATOR_RECONCILE_DIRECTIVE, /1–3 short declarative sentences/);
+  assert.match(ADJUDICATOR_RECONCILE_DIRECTIVE, /at most 360 characters/);
+  assert.match(ADJUDICATOR_RECONCILE_DIRECTIVE, /Do not add claims/);
+});
+
 test("reconcile directive defers rather than rejects slop-prone fixes", () => {
   assert.match(ADJUDICATOR_RECONCILE_DIRECTIVE, /recommend "defer"/);
 });

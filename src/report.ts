@@ -266,8 +266,10 @@ function overviewSection(ctx: ReportContext, opts: { inProgress?: boolean } = {}
 function findingLines(finding: Finding, extra?: string): string[] {
   const location = finding.line > 0 ? `${finding.file}:${finding.line}` : finding.file;
   const lines = [
-    `- **${location}** [${finding.severity}] — ${finding.category}: ${finding.rationale}`,
-    `  - Fix: ${finding.suggestedChange}`,
+    `- **${location}** [${finding.severity}] — ${finding.category}`,
+    ...(finding.summary ? [`  - Summary: ${finding.summary}`] : []),
+    `  - Rationale: ${finding.rationale}`,
+    `  - Suggested Change: ${finding.suggestedChange}`,
     `  - Reviewers: ${finding.reviewer}`,
   ];
   if (finding.recommendationReason) {

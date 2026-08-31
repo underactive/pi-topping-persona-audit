@@ -76,6 +76,7 @@ function validateFinding(raw: unknown, index: number): Finding {
   if (!isFindingCategory(f.category)) fail(`has an unknown category: ${JSON.stringify(f.category)}`);
   if (!isFindingSeverity(f.severity)) fail(`has an unknown severity: ${JSON.stringify(f.severity)}`);
   if (typeof f.rationale !== "string") fail("is missing a rationale");
+  if (f.summary !== undefined && (typeof f.summary !== "string" || !f.summary)) fail("has an invalid summary");
   if (typeof f.suggestedChange !== "string") fail("is missing a suggestedChange");
 
   const finding: Finding = {
@@ -85,6 +86,7 @@ function validateFinding(raw: unknown, index: number): Finding {
     category: f.category as FindingCategory,
     severity: f.severity as FindingSeverity,
     rationale: f.rationale as string,
+    ...(typeof f.summary === "string" && f.summary ? { summary: f.summary } : {}),
     suggestedChange: f.suggestedChange as string,
   };
   if (isChangeKind(f.changeKind)) {

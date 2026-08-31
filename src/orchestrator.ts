@@ -21,6 +21,7 @@ import { getAgentDir, withFileMutationQueue } from "@earendil-works/pi-coding-ag
 import { collectReviewerFindings } from "./findingsTransport.ts";
 import { computeBlastRadius, hasCorrespondingTest, sensitivityTags } from "./blastRadius.ts";
 import { isRecord, normalizeFindingText } from "./dedup.ts";
+import { fallbackSteSummary, MAX_FINDING_SUMMARY_LENGTH } from "./findingSummary.ts";
 import { type AuditProgressWidget, formatTokens } from "./components/AuditProgress.ts";
 import type { ReviewerFailurePrompt } from "./components/ReviewerRetry.ts";
 import type { VerifierFailurePrompt, VerifierRetryDecision } from "./components/VerifierRetry.ts";
@@ -276,7 +277,7 @@ export function annotateFindings(
     };
   }
 
-  const annotations = new Map<string, { rec: FindingRecommendation; reason?: string }>();
+  const annotations = new Map<string, { rec: FindingRecommendation; reason?: string; summary?: string }>();
   for (const raw of items) {
     if (!isRecord(raw)) continue;
     const rec = normalizeFindingText(raw.recommendation).toLowerCase();
@@ -287,7 +288,8 @@ export function annotateFindings(
     const lineNum = Number(raw.line);
     const key = `${file}\u0000${Number.isFinite(lineNum) ? lineNum : -1}\u0000${category}`;
     const reason = normalizeFindingText(raw.recommendationReason, 120) || undefined;
-    annotations.set(key, { rec, reason });
+    const summary = normalizeFindingText(raw.summary, MAX_FINDING_SUMMARY_LENGTH).replace(/\s+/g, " ") || undefined;
+    annotations.set(key, { rec, reason, summary });
   }
 
   let matched = 0;
@@ -296,7 +298,11 @@ export function annotateFindings(
     const annotation = annotations.get(key);
     if (!annotation) return finding;
     matched++;
-    const annotated: Finding = { ...finding, recommendation: annotation.rec };
+    const annotated: Finding = {
+      ...finding,
+      recommendation: annotation.rec,
+      ...(annotation.summary ? { summary: annotation.summary } : {}),
+    };
     if (annotation.reason && annotation.rec !== "apply") {
       annotated.recommendationReason = annotation.reason;
     }
@@ -1719,6 +1725,14 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
         return makeSummary("cancelled", relPath, { findings: collection.dedupedFindings.length }, skippedVerification());
       }
     }
+
+    // The reconciliation pass supplies semantic ASD-STE100 summaries when it
+    // can. Resumed or degraded runs use the deterministic fallback once, before
+    // the review loop, so reopening after Fix Now never regenerates text.
+    annotatedFindings = annotatedFindings.map((finding) => ({
+      ...finding,
+      summary: normalizeFindingText(finding.summary, MAX_FINDING_SUMMARY_LENGTH).replace(/\s+/g, " ") || fallbackSteSummary(finding.rationale),
+    }));
 
     const testCoverage = new Map(
       await mapWithConcurrencyLimit(

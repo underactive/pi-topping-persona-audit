@@ -49,6 +49,8 @@ export interface Finding {
   category: FindingCategory;
   severity: FindingSeverity;
   rationale: string; // complete issue summary, newlines flattened
+  /** Neutral ASD-STE100 restatement of rationale; never replaces the authoritative rationale. */
+  summary?: string;
   suggestedChange: string; // max 2000 chars, newlines flattened
   changeKind?: ChangeKind; // reviewer-supplied nature of the proposed fix
   blastRadius?: BlastRadius; // deterministic risk estimate computed before review
