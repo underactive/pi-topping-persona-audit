@@ -822,8 +822,8 @@ export class AuditProgressTable implements Component {
     const border = (s: string) => th.fg("border", s);
     const row = (s: string) => `  ${truncateToWidth(s, bodyWidth, "…", true)}  `;
     const band = this.phaseModelBand(bodyWidth, Date.now());
-    const footer = this.footerLines(bodyWidth);
     const sourceRows = this.view.progressRows();
+    const footer = this.footerLines(bodyWidth, totalCost(sourceRows));
     const maxBaseRows = Math.max(
       1,
       this.rowBudget() -
@@ -974,10 +974,9 @@ export class AuditProgressTable implements Component {
    * elapsed time is the run's own duration, not the sum of row clocks, which
    * overlap whenever passes run concurrently.
    */
-  private footerLines(bodyWidth: number): string[] {
+  private footerLines(bodyWidth: number, cost: TotalCost): string[] {
     const dim = (s: string) => this.theme.fg("dim", s);
     const summary = sanitizeTerminalText(this.view.footerSummary());
-    const cost = this.view.totalCost();
     // An asterisk means at least one row has unavailable or invalid cost telemetry.
     const total = `total cost ${formatCost(cost.costUsd)}${cost.incomplete ? "*" : ""}  total ${formatElapsed(this.view.totalMs())}`;
     const rhs = this.frozen ? dim(total) : `${dim(total)}  ${dim("ctrl+shift+c: cancel")}`;
