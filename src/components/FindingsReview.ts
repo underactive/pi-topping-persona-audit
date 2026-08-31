@@ -5,6 +5,7 @@ import { handoffRelPath, renderDeferredHandoff, writeReportFile } from "../repor
 import { gitHeadCommit } from "../git.ts";
 import { SEVERITY_ORDER } from "../types.ts";
 import type { Finding, FindingRecommendation, FindingsReviewOutcome, FindingsReviewResult, FindingStatus, FixedFinding, ReviewSessionState, ReviewSortMode } from "../types.ts";
+import { sanitizeTerminalText } from "./AuditProgress.ts";
 import { FALLBACK_TERMINAL_ROWS, OVERLAY_HEIGHT_PERCENT, PROMPT_OVERLAY_OPTIONS, renderFramedBottom, renderFramedRow, renderFramedTop, SELECTOR } from "./menuChrome.ts";
 
 interface ReviewItem {
@@ -389,12 +390,12 @@ export class FindingsReview implements Component {
   private wrapItem(item: ReviewItem, width: number, headCols: number): { rationale: string[]; suggestedChange: string[]; reason?: string[] } {
     if (item.wrapCache && item.wrapCache.width === width && item.wrapCache.headCols === headCols) return item.wrapCache;
     // Continuation lines are indented 6; the first also pays for the head.
-    const rationale = this.wordWrap(item.finding.rationale, Math.max(2, width - 6), Math.max(2, width - 4 - headCols));
-    const suggestedChange = this.wordWrap(`→ ${item.finding.suggestedChange}`, Math.max(2, width - 6), Math.max(2, width - 4));
+    const rationale = this.wordWrap(sanitizeTerminalText(item.finding.rationale), Math.max(2, width - 6), Math.max(2, width - 4 - headCols));
+    const suggestedChange = this.wordWrap(`→ ${sanitizeTerminalText(item.finding.suggestedChange)}`, Math.max(2, width - 6), Math.max(2, width - 4));
     let reason: string[] | undefined;
     if (item.finding.recommendationReason && item.finding.recommendation !== "apply") {
       const reasonLabel = item.finding.recommendation === "reject" ? "Why reject" : "Why defer";
-      reason = this.wordWrap(`⚑ ${reasonLabel}: ${item.finding.recommendationReason}`, Math.max(2, width - 6), Math.max(2, width - 4));
+      reason = this.wordWrap(`⚑ ${reasonLabel}: ${sanitizeTerminalText(item.finding.recommendationReason)}`, Math.max(2, width - 6), Math.max(2, width - 4));
     }
     const cache = { width, headCols, rationale, suggestedChange, reason };
     item.wrapCache = cache;
@@ -504,7 +505,8 @@ export class FindingsReview implements Component {
     const severity = t.fg(severe ? "error" : "muted", severityText.padEnd(SEVERITY_WIDTH));
     const marker = selected ? t.bold(t.fg("accent", SELECTOR)) : " ";
     const sha = item.status === "fixed" ? this.fixedByIndex.get(item.originalIndex)?.commitSha : undefined;
-    const reviewer = sha ? `${item.finding.reviewer} ${t.fg("dim", `@${sha}`)}` : item.finding.reviewer;
+    const reviewerName = sanitizeTerminalText(item.finding.reviewer);
+    const reviewer = sha ? `${reviewerName} ${t.fg("dim", `@${sha}`)}` : reviewerName;
     const row = `  ${marker} ${status} ${severity} ${reviewer}`;
     if (!selected) return row;
     // Pad the bar to the full overlay width so the highlight reads as one row.
@@ -535,23 +537,25 @@ export class FindingsReview implements Component {
         lastLabel = "";
       }
 
-      if (groupLabel && groupLabel !== lastLabel) {
-        lines.push("  " + t.bold(t.fg("accent", groupLabel)));
-        lastLabel = groupLabel;
+      const safeGroupLabel = sanitizeTerminalText(groupLabel);
+      if (safeGroupLabel && safeGroupLabel !== lastLabel) {
+        lines.push("  " + t.bold(t.fg("accent", safeGroupLabel)));
+        lastLabel = safeGroupLabel;
       }
 
       lines.push(this.renderFindingRow(item, index === this.selectedIndex, width));
 
-      const location = item.finding.line > 0 ? `${item.finding.file}:${item.finding.line}` : item.finding.file;
+      const location = sanitizeTerminalText(item.finding.line > 0 ? `${item.finding.file}:${item.finding.line}` : item.finding.file);
+      const category = sanitizeTerminalText(item.finding.category);
       const blast = this.sortMode === "blast" ? item.finding.blastRadius : undefined;
       const blastInfo = blast
-        ? ` · blast ${blast.level[0]!.toUpperCase()}${blast.level.slice(1)}${blast.reasons.length > 0 ? `: ${blast.reasons.slice(0, 2).join(", ")}` : ""}`
+        ? ` · blast ${blast.level[0]!.toUpperCase()}${blast.level.slice(1)}${blast.reasons.length > 0 ? `: ${blast.reasons.slice(0, 2).map(sanitizeTerminalText).join(", ")}` : ""}`
         : "";
       const lineInfo = this.sortMode === "file"
         ? item.finding.line > 0
-          ? `${item.finding.category}:${item.finding.line}`
-          : item.finding.category
-        : `${location} ${item.finding.category}${blastInfo}`;
+          ? `${category}:${item.finding.line}`
+          : category
+        : `${location} ${category}${blastInfo}`;
       const wrapped = this.wrapItem(item, width, visibleWidth(lineInfo) + 3);
       const firstRationale = wrapped.rationale[0];
       if (firstRationale !== undefined) {
