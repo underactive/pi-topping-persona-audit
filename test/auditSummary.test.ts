@@ -13,15 +13,6 @@ const theme = {
 const tui = { requestRender: () => {}, terminal: { rows: 40, columns: 100 } } as unknown as TUI;
 const config: AuditSummaryConfig = {
   cwd: process.cwd(),
-  mode: "full",
-  fileCount: 3,
-  selection: { reviewers: ["Security Engineer"], passes: 2 },
-  phaseModels: {
-    review: { ref: { provider: "test", id: "vision" }, thinking: "high" },
-    triage: { ref: { provider: "test", id: "model" }, thinking: "medium" },
-    implement: { ref: { provider: "test", id: "model" }, thinking: "medium" },
-    verify: { ref: { provider: "test", id: "model" }, thinking: "medium" },
-  },
   draft: "",
   reviewModelSupportsImages: true,
 };

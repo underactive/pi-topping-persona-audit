@@ -736,10 +736,6 @@ export default function (pi: ExtensionAPI): void {
             const reviewRef = models.selections.review.ref;
             const reviewModel = ctx.modelRegistry.find(reviewRef.provider, reviewRef.id);
             const summary = await showAuditSummary(ctx, {
-              mode,
-              fileCount,
-              selection: reviewers,
-              phaseModels: models.selections,
               draft: contextDraft,
               reviewModelSupportsImages: reviewModel?.input.includes("image") === true,
             });

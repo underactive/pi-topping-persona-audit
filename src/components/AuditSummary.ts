@@ -1,8 +1,6 @@
 import type { ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
 import { Editor, Key, matchesKey, type Component, type EditorTheme, type TUI } from "@earendil-works/pi-tui";
 import { describeAdditionalContext, parseAdditionalContext, type AdditionalContext } from "../additionalContext.ts";
-import type { PhaseModelSelection } from "../modelConfig.ts";
-import type { AuditMode, ReviewerSelection } from "../types.ts";
 import { MenuComponent, PROMPT_OVERLAY_OPTIONS, renderMenuBottomBorder, renderMenuContentRow, renderMenuSeparator, renderMenuTopBorder, showOverlayPrompt, wrapText } from "./menuChrome.ts";
 
 export type AuditSummaryResult =
@@ -11,10 +9,6 @@ export type AuditSummaryResult =
   | { action: "cancel"; draft: string };
 
 export interface AuditSummaryConfig {
-  mode: Exclude<AuditMode, "handoff">;
-  fileCount: number;
-  selection: ReviewerSelection;
-  phaseModels: PhaseModelSelection;
   draft: string;
   cwd: string;
   reviewModelSupportsImages: boolean;
