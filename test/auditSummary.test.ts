@@ -26,32 +26,28 @@ const config: AuditSummaryConfig = {
   reviewModelSupportsImages: true,
 };
 const ENTER = "\r";
-const DOWN = "\x1b[B";
 const ESCAPE = "\x1b";
 const TAB = "\t";
 
 const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
 
-test("summary renders reviewers, run details, and context action", () => {
+test("guidance view renders the title and context action without audit details", () => {
   const component = new AuditSummaryComponent(tui, theme, config, () => {});
   const text = component.render(100).join("\n");
-  assert.match(text, /Security Engineer/);
-  assert.match(text, /Passes.*2/);
-  assert.match(text, /Files.*3/);
+  assert.match(text, /Persona-audit - guidance/);
   assert.match(text, /Additional context.*\(none\)/);
+  assert.doesNotMatch(text, /Security Engineer|Passes|Files|Review model|Guidance/);
 });
 
 test("summary and additional context views keep the same height", () => {
   const component = new AuditSummaryComponent(tui, theme, config, () => {});
   const summaryHeight = component.render(100).length;
-  for (let index = 0; index < 5; index++) component.handleInput(DOWN);
   component.handleInput(ENTER);
   assert.equal(component.render(100).length, summaryHeight);
 });
 
 test("embedded editor preserves its draft when returning to and reopening the summary", async () => {
   const component = new AuditSummaryComponent(tui, theme, config, () => {});
-  for (let index = 0; index < 5; index++) component.handleInput(DOWN);
   component.handleInput(ENTER);
   assert.match(component.render(100).join("\n"), /Additional reviewer context/);
   for (const char of "Focus auth") component.handleInput(char);

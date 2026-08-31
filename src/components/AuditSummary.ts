@@ -1,10 +1,9 @@
 import type { ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
 import { Editor, Key, matchesKey, type Component, type EditorTheme, type TUI } from "@earendil-works/pi-tui";
 import { describeAdditionalContext, parseAdditionalContext, type AdditionalContext } from "../additionalContext.ts";
-import { phaseModelChoiceLabel, type PhaseModelSelection } from "../modelConfig.ts";
+import type { PhaseModelSelection } from "../modelConfig.ts";
 import type { AuditMode, ReviewerSelection } from "../types.ts";
 import { MenuComponent, PROMPT_OVERLAY_OPTIONS, renderMenuBottomBorder, renderMenuContentRow, renderMenuSeparator, renderMenuTopBorder, showOverlayPrompt, wrapText } from "./menuChrome.ts";
-import { TIERS } from "./ReviewerData.ts";
 
 export type AuditSummaryResult =
   | { action: "start"; draft: string; context: AdditionalContext }
@@ -20,8 +19,6 @@ export interface AuditSummaryConfig {
   cwd: string;
   reviewModelSupportsImages: boolean;
 }
-
-const reviewerByName = new Map(TIERS.flatMap((tier) => tier.reviewers.map((reviewer) => [reviewer.name, { ...reviewer, tier: tier.label }] as const)));
 
 export class AuditSummaryComponent implements Component {
   private readonly tui: TUI;
@@ -58,28 +55,12 @@ export class AuditSummaryComponent implements Component {
     this.editor.onChange = (text) => { this.draft = text; };
 
     this.menu = new MenuComponent({
-      title: "Persona-audit - review summary",
+      title: "Persona-audit - guidance",
       fullWidth: true,
       hints: ["↑↓ item", "⇥ switch btn", "⏎ select", "esc back"],
       sections: [
         {
-          title: "Run",
-          items: [
-            { id: "mode", label: "Mode", displayValue: config.mode },
-            { id: "passes", label: "Passes", displayValue: String(config.selection.passes) },
-            { id: "files", label: "Files", displayValue: String(config.fileCount) },
-            { id: "model", label: "Review model", displayValue: phaseModelChoiceLabel(config.phaseModels.review) },
-          ],
-        },
-        {
-          title: "Reviewers",
-          items: config.selection.reviewers.map((name) => {
-            const reviewer = reviewerByName.get(name);
-            return { id: `reviewer:${name}`, label: name, displayValue: reviewer?.tier, description: reviewer?.description };
-          }),
-        },
-        {
-          title: "Guidance",
+          title: "",
           description: "Shared only with reviewer passes. A line containing an existing PNG, JPG, JPEG, GIF, or WebP path attaches that image to every reviewer pass.",
           items: [{ id: "context", label: "Additional context", displayValue: "(none)", onSelect: () => this.openEditor() }],
         },
