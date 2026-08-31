@@ -142,9 +142,8 @@ export function renderFramedRow(theme: Pick<Theme, "fg">, innerWidth: number, co
   return theme.fg("border", "║") + padded + theme.fg("border", "║");
 }
 
-export function renderFramedBottom(theme: Pick<Theme, "fg">, innerWidth: number, counter = ""): string {
-  const fill = "═".repeat(Math.max(0, innerWidth - visibleWidth(counter)));
-  return theme.fg("border", `╚${fill}${counter}╝`);
+export function renderFramedBottom(theme: Pick<Theme, "fg">, innerWidth: number): string {
+  return theme.fg("border", `╚${"═".repeat(innerWidth)}╝`);
 }
 
 export function renderMenuContentRow(theme: MenuTheme, innerWidth: number, content: string, selected = false): string {
