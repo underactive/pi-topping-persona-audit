@@ -397,6 +397,8 @@ export function openFixProgress(
   let settleGate: ((decision: FixGateDecision) => void) | undefined;
 
   sink?.progress.setFixNowDetail(sink.key, finding);
+  /** Band highlight before the episode — restored on close so the surface that opened the fix (typically the Triage-parked review overlay) gets its phase back. */
+  const previousPhase = sink?.progress.activePhase();
 
   const setArmed = (armed: boolean): void => {
     if (cancelArmed === armed) return;
@@ -434,6 +436,9 @@ export function openFixProgress(
       if (closed) return;
       settling = false;
       setArmed(false);
+      // The band highlight follows the fix-now progress: edit-capable work is
+      // the Implement phase, the single-finding verifier pass is Verify.
+      sink?.progress.setActivePhase(phase === "fixing" ? "Implement" : "Verify");
       sink?.progress.updateFixNowPhase(sink.key, phase, statusText, attempt);
     },
     applyProgress: (progress) => {
@@ -471,6 +476,7 @@ export function openFixProgress(
       settleGate?.("discard");
       settleGate = undefined;
       unsubscribe();
+      sink?.progress.setActivePhase(previousPhase);
       sink?.progress.clearFixNowDetail(sink.key);
     },
   };

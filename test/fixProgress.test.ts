@@ -235,6 +235,8 @@ function controllerHarness(rows = 40, withSink = true) {
   let cancelRequests = 0;
   /** Ordered sink event log — the audit-table writes the controller makes. */
   const log: string[] = [];
+  /** Band highlight tracked separately from `log` — phase assertions below pin exact log slices. */
+  let bandPhase: string | undefined = "Triage";
 
   const sink = {
     setFixNowDetail: (key: string, f: Finding) => log.push(`detail:${key}:${f.file}`),
@@ -245,6 +247,10 @@ function controllerHarness(rows = 40, withSink = true) {
     setFixNowCancelArmed: (key: string, armed: boolean) => log.push(`armed:${armed}`),
     applyProgress: () => log.push("telemetry"),
     clearFixNowDetail: (key: string) => log.push(`clear:${key}`),
+    setActivePhase: (phase: string | undefined) => {
+      bandPhase = phase;
+    },
+    activePhase: () => bandPhase,
   } as unknown as AuditProgressWidget;
 
   const ui: FixProgressUi = {
@@ -291,6 +297,7 @@ function controllerHarness(rows = 40, withSink = true) {
   return {
     controller,
     log,
+    bandPhase: () => bandPhase,
     customCalls: customCalls as readonly CustomCall[],
     lastCustomCall: () => customCalls[customCalls.length - 1]!,
     listenerActive: () => inputHandler !== undefined,
@@ -322,6 +329,21 @@ test("opening seeds the row detail; automated work flows to the sink and never o
 
   await h.controller.close();
   assert.ok(h.log.includes("clear:row-key"), "close removes the row detail");
+});
+
+test("the band highlight follows fix-now phases and restores on close", async () => {
+  const h = controllerHarness();
+
+  assert.equal(h.bandPhase(), "Triage", "the review overlay parks the band on Triage");
+  h.controller.setPhase("fixing", "applying security fix", 1);
+  assert.equal(h.bandPhase(), "Implement", "edit-capable fix work highlights Implement");
+  h.controller.setPhase("verifying", "checking the fix", 1);
+  assert.equal(h.bandPhase(), "Verify", "the single-finding verifier highlights Verify");
+  h.controller.setPhase("fixing", "refining fix / answering question", 1);
+  assert.equal(h.bandPhase(), "Implement", "a chat refinement is edit work again");
+
+  await h.controller.close();
+  assert.equal(h.bandPhase(), "Triage", "close restores the pre-episode phase");
 });
 
 test("a missing sink turns detail updates into no-ops", async () => {
