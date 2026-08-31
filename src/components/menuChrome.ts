@@ -496,8 +496,9 @@ export class MenuComponent implements Component {
 
 /**
  * Shared geometry for every persona-audit prompt overlay. Overlays remain
- * floating, but anchor flush to the terminal bottom and paint over the editor
- * while open. Scrollable components retain their own 75% viewport budgets.
+ * floating, anchor near the terminal bottom, and paint over the editor while
+ * open with two rows above and three rows below for visual separation.
+ * Scrollable components retain their own 75% viewport budgets.
  */
 export const PROMPT_OVERLAY_OPTIONS: {
   overlay: true;
@@ -508,7 +509,7 @@ export const PROMPT_OVERLAY_OPTIONS: {
     anchor: "bottom-center",
     width: "100%",
     maxHeight: "100%",
-    margin: { left: 0, right: 0, bottom: 0 },
+    margin: { left: 0, right: 0, top: 2, bottom: 3 },
   },
 };
 

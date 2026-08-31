@@ -78,7 +78,7 @@ test("showOverlayPrompt opens a focused overlay with the exact shared geometry",
       anchor: "bottom-center",
       width: "100%",
       maxHeight: "100%",
-      margin: { left: 0, right: 0, bottom: 0 },
+      margin: { left: 0, right: 0, top: 2, bottom: 3 },
     },
   });
 
