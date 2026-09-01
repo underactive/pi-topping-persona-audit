@@ -74,12 +74,12 @@ const SEVERITY_WIDTH = 8;
 
 /**
  * Findings review overlay — displays findings grouped by adjudicator recommendation.
- * Within each recommendation group, findings are sub-grouped by file.
+ * Within each recommendation group, findings are sub-grouped by file when the file sort is active.
  * The user cycles through apply → reject → defer states per finding.
  * `A`, `R`, and `D` set the selected finding to apply, reject, or defer directly.
  * `PageUp` and `PageDown` move the selection by one rendered page.
  * Enter returns the structured result; Esc arms a cancel that a second Esc
- * confirms, returning null (the orchestrator writes a partial report and
+ * confirms, returning a `{ kind: "cancelled" }` outcome (the orchestrator writes a partial report and
  * applies no fixes).
  *
  * Findings vary in height with word wrapping, so the body is measured as it is
