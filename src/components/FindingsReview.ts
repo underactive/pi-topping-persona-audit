@@ -558,13 +558,13 @@ export class FindingsReview implements Component {
           : category
         : `${location} ${category}${blastInfo}`;
       const wrapped = this.wrapItem(item, width, visibleWidth(lineInfo) + 3);
-      lines.push(`    ${t.fg("text", "Issue:")}`);
+      lines.push(`    ${t.fg("text", "Summary:")}`);
       for (const summary of wrapped.summary) {
         lines.push(`      ${t.fg("muted", summary)}`);
       }
       lines.push("");
 
-      lines.push(`    ${t.fg("dim", "Details:")}`);
+      lines.push(`    ${t.fg("dim", "Rationale:")}`);
       const firstRationale = wrapped.rationale[0];
       if (firstRationale !== undefined) {
         lines.push(`      ${t.fg("dim", lineInfo + " — ")}` + t.fg("muted", firstRationale));

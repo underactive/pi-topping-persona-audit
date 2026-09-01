@@ -269,8 +269,8 @@ test("findings render labeled summary, rationale, and suggested-change sections"
   ], 60);
   const rendered = ui.visible().map(strip).join("\n");
 
-  assert.ok(rendered.indexOf("Issue:") < rendered.indexOf("Details:"));
-  assert.ok(rendered.indexOf("Details:") < rendered.indexOf("Suggested Change:"));
+  assert.ok(rendered.indexOf("Summary:") < rendered.indexOf("Rationale:"));
+  assert.ok(rendered.indexOf("Rationale:") < rendered.indexOf("Suggested Change:"));
   assert.match(rendered, /parser keeps all output/i);
   assert.match(rendered, /bug:1 — Open Question regex/);
   assert.match(rendered, /Stop at the next heading/);
@@ -280,7 +280,7 @@ test("findings render labeled summary, rationale, and suggested-change sections"
 test("findings without a summary defensively display the rationale as their summary", () => {
   const rendered = harness([finding(1, { summary: undefined })], 60).visible().map(strip).join("\n");
 
-  assert.match(rendered, /Issue:/);
+  assert.match(rendered, /Summary:/);
   assert.match(rendered, /Rationale 01 explaining/);
 });
 
