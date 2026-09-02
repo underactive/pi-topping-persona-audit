@@ -15,7 +15,7 @@
  */
 
 import type { ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth, type Component, type TUI } from "@earendil-works/pi-tui";
+import type { TUI } from "@earendil-works/pi-tui";
 import { normalizeFindingText } from "../dedup.ts";
 import { getModelCatalogue } from "../modelCatalogue.ts";
 import {
@@ -24,8 +24,8 @@ import {
   type PhaseModelChoice,
   type ThinkingLevel,
 } from "../modelConfig.ts";
-import { RetryModelSubView } from "./ModelPicker.ts";
-import { MenuComponent, showOverlayPrompt } from "./menuChrome.ts";
+import { RetryMenuComponent } from "./RetryMenuComponent.ts";
+import { showOverlayPrompt } from "./menuChrome.ts";
 
 /** What the user decided to do about the failed verifier run. */
 export interface VerifierRetryDecision {
@@ -41,16 +41,9 @@ export type VerifierFailurePrompt = (
   current: PhaseModelChoice | undefined,
 ) => Promise<VerifierRetryDecision>;
 
-/** Keep long provider errors to roughly two wrapped lines so the overlay height stays bounded. */
-const DETAIL_MAX = 140;
-
 const MODEL_ROW = "verify-retry-model";
 
-export class VerifierRetryComponent implements Component {
-  private readonly done: (result: VerifierRetryDecision) => void;
-  private readonly modelView: RetryModelSubView;
-  private readonly menu: MenuComponent;
-
+export class VerifierRetryComponent extends RetryMenuComponent<VerifierRetryDecision> {
   constructor(
     tui: TUI,
     theme: Theme,
@@ -62,81 +55,32 @@ export class VerifierRetryComponent implements Component {
     currentThinking: ThinkingLevel,
     done: (result: VerifierRetryDecision) => void,
   ) {
-    this.done = done;
-    this.modelView = new RetryModelSubView(
-      tui, theme, ctx, availableRefs, thinkingOverrides, currentThinking, current,
-      "Retry model — re-run the verifier",
-      "Model used to re-run the verifier and author regression tests for this run.",
-    );
-
-    this.menu = new MenuComponent(
+    super(
+      tui,
+      theme,
+      ctx,
+      current,
+      availableRefs,
+      thinkingOverrides,
+      currentThinking,
+      done,
       {
         title: "persona-audit · verifier run crashed",
-        fullWidth: true,
         hints: ["↑↓ item", "⏎ select", "⇥ switch btn", "esc skip"],
-        sections: [
-          {
-            title: "failure",
-            items: [
-              {
-                id: "verify-failure",
-                label: `verifier · ${current.label}`,
-                description: `The verifier agent itself failed to run (not a fix verdict): ${truncateToWidth(normalizeFindingText(detail).replace(/\s+/g, " "), DETAIL_MAX, "…")}`,
-              },
-            ],
-          },
-          {
-            title: "retry model",
-            items: [
-              {
-                id: MODEL_ROW,
-                label: "Model for the retried verifier",
-                displayValue: this.modelView.displayValue(),
-                description:
-                  "Applies to the rest of the Verify phase — the saved phase config is unchanged.",
-                onSelect: () => this.modelView.open(),
-              },
-            ],
-          },
-        ],
-        buttons: [
-          {
-            id: "retry",
-            label: "Retry verifier",
-            primary: true,
-            onSelect: () => {
-              const model = this.modelView.selected;
-              this.done({ retry: true, ...(model ? { model } : {}) });
-            },
-          },
-          { id: "skip", label: "Skip verification", onSelect: () => this.done({ retry: false }) },
-        ],
+        modelRowId: MODEL_ROW,
+        modelViewBorderTitle: "Retry model — re-run the verifier",
+        modelViewDescription: "Model used to re-run the verifier and author regression tests for this run.",
+        failureItemId: "verify-failure",
+        failureLabel: `verifier · ${current.label}`,
+        failureDescriptionPrefix: "The verifier agent itself failed to run (not a fix verdict): ",
+        failureDetail: normalizeFindingText(detail),
+        retryModelLabel: "Model for the retried verifier",
+        retryModelDescription: "Applies to the rest of the Verify phase — the saved phase config is unchanged.",
+        retryButtonLabel: "Retry verifier",
+        declineButtonId: "skip",
+        declineButtonLabel: "Skip verification",
       },
-      theme,
-      // Esc is the non-destructive default: leave the fixes unjudged and let
-      // the audit finish, which is the behavior before this checkpoint existed.
-      () => this.done({ retry: false }),
-      tui,
     );
-  }
-
-  handleInput(data: string): void {
-    if (!this.modelView.isActive) {
-      this.menu.handleInput(data);
-      return;
-    }
-    if (this.modelView.handleInput(data)) {
-      this.menu.setItemValue(MODEL_ROW, this.modelView.displayValue());
-    }
-  }
-
-  render(width: number): string[] {
-    return this.modelView.isActive ? this.modelView.render(width) : this.menu.render(width);
-  }
-
-  invalidate(): void {
-    this.menu.invalidate();
-    this.modelView.invalidate();
   }
 }
 

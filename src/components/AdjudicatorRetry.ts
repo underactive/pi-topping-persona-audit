@@ -8,7 +8,7 @@
  */
 
 import type { ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth, type Component, type TUI } from "@earendil-works/pi-tui";
+import type { TUI } from "@earendil-works/pi-tui";
 import { normalizeFindingText } from "../dedup.ts";
 import { getModelCatalogue } from "../modelCatalogue.ts";
 import {
@@ -18,8 +18,8 @@ import {
   type ThinkingLevel,
 } from "../modelConfig.ts";
 import { sanitizeTerminalText } from "./AuditProgress.ts";
-import { RetryModelSubView } from "./ModelPicker.ts";
-import { MenuComponent, showOverlayPrompt } from "./menuChrome.ts";
+import { RetryMenuComponent } from "./RetryMenuComponent.ts";
+import { showOverlayPrompt } from "./menuChrome.ts";
 
 export interface AdjudicatorRetryDecision {
   retry: boolean;
@@ -34,14 +34,9 @@ export type AdjudicatorFailurePrompt = (
   current: PhaseModelChoice | undefined,
 ) => Promise<AdjudicatorRetryDecision>;
 
-const DETAIL_MAX = 140;
 const MODEL_ROW = "adjudicator-retry-model";
 
-export class AdjudicatorRetryComponent implements Component {
-  private readonly done: (result: AdjudicatorRetryDecision) => void;
-  private readonly modelView: RetryModelSubView;
-  private readonly menu: MenuComponent;
-
+export class AdjudicatorRetryComponent extends RetryMenuComponent<AdjudicatorRetryDecision> {
   constructor(
     tui: TUI,
     theme: Theme,
@@ -53,82 +48,32 @@ export class AdjudicatorRetryComponent implements Component {
     currentThinking: ThinkingLevel,
     done: (result: AdjudicatorRetryDecision) => void,
   ) {
-    this.done = done;
-    this.modelView = new RetryModelSubView(
-      tui, theme, ctx, availableRefs, thinkingOverrides, currentThinking, current,
-      "Retry model — re-run the adjudicator",
-      "Model used to re-run adjudicator reconciliation for this audit.",
-    );
-
-    this.menu = new MenuComponent(
+    super(
+      tui,
+      theme,
+      ctx,
+      current,
+      availableRefs,
+      thinkingOverrides,
+      currentThinking,
+      done,
       {
         title: "persona-audit · adjudicator reconcile failed",
-        fullWidth: true,
         hints: ["↑↓ item", "⏎ select", "⇥ switch btn", "esc continue"],
-        sections: [
-          {
-            title: "failure",
-            items: [
-              {
-                id: "adjudicator-failure",
-                label: `adjudicator · ${sanitizeTerminalText(current.label)}`,
-                description: `The adjudicator failed to produce recommendations: ${truncateToWidth(sanitizeTerminalText(normalizeFindingText(detail).replace(/\s+/g, " ")), DETAIL_MAX, "…")}`,
-              },
-            ],
-          },
-          {
-            title: "retry model",
-            items: [
-              {
-                id: MODEL_ROW,
-                label: "Model for the retried adjudicator",
-                displayValue: this.modelView.displayValue(),
-                description: "Applies to adjudication for this run — the saved phase config is unchanged.",
-                onSelect: () => this.modelView.open(),
-              },
-            ],
-          },
-        ],
-        buttons: [
-          {
-            id: "retry",
-            label: "Retry adjudicator",
-            primary: true,
-            onSelect: () => {
-              const model = this.modelView.selected;
-              this.done({ retry: true, ...(model ? { model } : {}) });
-            },
-          },
-          {
-            id: "continue",
-            label: "Continue without recommendations",
-            onSelect: () => this.done({ retry: false }),
-          },
-        ],
+        modelRowId: MODEL_ROW,
+        modelViewBorderTitle: "Retry model — re-run the adjudicator",
+        modelViewDescription: "Model used to re-run adjudicator reconciliation for this audit.",
+        failureItemId: "adjudicator-failure",
+        failureLabel: `adjudicator · ${sanitizeTerminalText(current.label)}`,
+        failureDescriptionPrefix: "The adjudicator failed to produce recommendations: ",
+        failureDetail: sanitizeTerminalText(normalizeFindingText(detail)),
+        retryModelLabel: "Model for the retried adjudicator",
+        retryModelDescription: "Applies to adjudication for this run — the saved phase config is unchanged.",
+        retryButtonLabel: "Retry adjudicator",
+        declineButtonId: "continue",
+        declineButtonLabel: "Continue without recommendations",
       },
-      theme,
-      () => this.done({ retry: false }),
-      tui,
     );
-  }
-
-  handleInput(data: string): void {
-    if (!this.modelView.isActive) {
-      this.menu.handleInput(data);
-      return;
-    }
-    if (this.modelView.handleInput(data)) {
-      this.menu.setItemValue(MODEL_ROW, this.modelView.displayValue());
-    }
-  }
-
-  render(width: number): string[] {
-    return this.modelView.isActive ? this.modelView.render(width) : this.menu.render(width);
-  }
-
-  invalidate(): void {
-    this.menu.invalidate();
-    this.modelView.invalidate();
   }
 }
 
