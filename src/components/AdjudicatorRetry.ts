@@ -17,6 +17,7 @@ import {
   type PhaseModelChoice,
   type ThinkingLevel,
 } from "../modelConfig.ts";
+import { sanitizeTerminalText } from "./AuditProgress.ts";
 import { RetryModelSubView } from "./ModelPicker.ts";
 import { MenuComponent, showOverlayPrompt } from "./menuChrome.ts";
 
@@ -70,8 +71,8 @@ export class AdjudicatorRetryComponent implements Component {
             items: [
               {
                 id: "adjudicator-failure",
-                label: `adjudicator · ${current.label}`,
-                description: `The adjudicator failed to produce recommendations: ${truncateToWidth(normalizeFindingText(detail).replace(/\s+/g, " "), DETAIL_MAX, "…")}`,
+                label: `adjudicator · ${sanitizeTerminalText(current.label)}`,
+                description: `The adjudicator failed to produce recommendations: ${truncateToWidth(sanitizeTerminalText(normalizeFindingText(detail).replace(/\s+/g, " ")), DETAIL_MAX, "…")}`,
               },
             ],
           },
