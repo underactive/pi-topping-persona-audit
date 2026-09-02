@@ -219,11 +219,9 @@ export async function getChangedFiles(
   baseCommit: string,
 ): Promise<string[]> {
   try {
-    const base = baseCommit;
-
     const { stdout } = await execFileAsync(
       "git",
-      ["diff", "--name-only", "--diff-filter=ACMR", "-z", `${base}...HEAD`],
+      ["diff", "--name-only", "--diff-filter=ACMR", "-z", `${baseCommit}...HEAD`],
       { cwd, encoding: "utf-8", timeout: 15_000 },
     );
 
