@@ -98,15 +98,50 @@ async function collectFiles(dir: string, kind: ArtifactKind, matcher: RegExp): P
   return matches.filter((entry): entry is ArtifactEntry => entry !== undefined);
 }
 
+async function collectAuditFiles(dir: string): Promise<{ reports: ArtifactEntry[]; progress: ArtifactEntry[] }> {
+  const entries = await safeReadDir(dir);
+  const matches = await mapWithConcurrencyLimit<typeof entries[number], { report?: ArtifactEntry; progress?: ArtifactEntry } | undefined>(
+    entries,
+    SCAN_CONCURRENCY,
+    async (entry) => {
+      const reportMatch = REPORT_RE.test(entry.name);
+      const progressMatch = PROGRESS_RE.test(entry.name);
+      if (!reportMatch && !progressMatch) return undefined;
+      const absPath = path.join(dir, entry.name);
+      const stats = await lstat(absPath).catch(() => undefined);
+      if (!stats || stats.isSymbolicLink() || !stats.isFile()) return undefined;
+      const result: { report?: ArtifactEntry; progress?: ArtifactEntry } = {};
+      if (reportMatch) {
+        result.report = { id: `report:${absPath}`, kind: "report", absPath, displayPath: entry.name, isDirectory: false, sizeBytes: stats.size, mtimeMs: stats.mtimeMs, slugDate: parseSlugDate(entry.name) } satisfies ArtifactEntry;
+      }
+      if (progressMatch) {
+        let detail: string | undefined;
+        const finalName = entry.name.replace("_progress_snapshot.md", "_persona-audit.md");
+        const finalStats = await lstat(path.join(dir, finalName)).catch(() => undefined);
+        if (finalStats?.isFile() && !finalStats.isSymbolicLink()) detail = "superseded";
+        result.progress = { id: `progress:${absPath}`, kind: "progress", absPath, displayPath: entry.name, isDirectory: false, sizeBytes: stats.size, mtimeMs: stats.mtimeMs, slugDate: parseSlugDate(entry.name), detail } satisfies ArtifactEntry;
+      }
+      return result;
+    },
+  );
+  const reports: ArtifactEntry[] = [];
+  const progress: ArtifactEntry[] = [];
+  for (const match of matches) {
+    if (!match) continue;
+    if (match.report) reports.push(match.report);
+    if (match.progress) progress.push(match.progress);
+  }
+  return { reports, progress };
+}
+
 export async function collectArtifacts(cwd: string, agentDir?: string): Promise<ArtifactEntry[]> {
   const root = path.resolve(cwd);
   const audits = path.join(root, AUDITS_DIR);
   const handoffs = path.join(root, HANDOFFS_DIR);
   const snapshots = path.join(root, SNAPSHOTS_DIR);
   const cache = repoCacheDir(cwd, agentDir);
-  const [reports, progress, handoffEntries, snapshotEntries, cacheEntries] = await Promise.all([
-    collectFiles(audits, "report", REPORT_RE),
-    collectFiles(audits, "progress", PROGRESS_RE),
+  const [{ reports, progress }, handoffEntries, snapshotEntries, cacheEntries] = await Promise.all([
+    collectAuditFiles(audits),
     collectFiles(handoffs, "handoff", HANDOFF_RE),
     (async () => {
       const dirs = await safeReadDir(snapshots);
