@@ -605,7 +605,7 @@ export class FindingsReview implements Component {
       renderFramedTop(t, inner, `Findings Review (${this.items.length} total)`),
       ...this.wordWrap(keybinds, Math.max(2, inner - 1)).map((line) => " " + t.fg("dim", line)),
       ...(this.degradationNote
-        ? this.wordWrap(`⚠ ${this.degradationNote}`, Math.max(2, inner - 1)).map((line) => " " + t.fg("warning", line))
+        ? this.wordWrap(`⚠ ${sanitizeTerminalText(this.degradationNote)}`, Math.max(2, inner - 1)).map((line) => " " + t.fg("warning", line))
         : []),
       "",
     ];
