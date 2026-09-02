@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-09-02
+
 ### Added
 
 - **Reusable reviewer rosters** — `/persona-audit-settings` can stage and save up to 20 named 1–10-reviewer combinations. Valid rosters appear alphabetically above individual reviewers in `/persona-audit`, filter by roster or member name, and expand to one pass per reviewer with the existing high-cost confirmation gate.
@@ -19,6 +21,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **Progress-table costs account for routed and provider-reported billing** — paid downstream models no longer appear as `$0.000` when a router or proxy reports a different model or bill.
 
 - **Fix Now highlights the correct phase in the progress band** — during an interactive fix the phase band now highlights Implement while the fix agent edits and Verify while the verifier runs, instead of staying stuck on Triage; the pre-episode phase is restored when the fix episode closes.
+
+- **Degradation warnings are sanitized before terminal rendering** — untrusted degradation notes are sanitized before they are wrapped and displayed in Findings Review, preventing terminal control sequences from reaching the warning banner.
+
+- **Provider and reviewer diagnostics normalize untrusted error text** — provider failures and reviewer/re-voice diagnostics now normalize error details before placing them in notifications, reports, or handoff metadata.
+
+- **Adjudicator retry details sanitize provider labels and finding text** — retry-overlay labels and failure details are sanitized before rendering, preventing provider- or finding-supplied terminal control sequences from reaching the prompt.
+
+- **Handoff notes are sanitized before footer rendering** — deferred handoff status text is sanitized before it is displayed in the Findings Review footer.
+
+- **Resumed handoff targets are contained by real path** — handoff files are admitted only when their resolved paths remain inside the project root, including when a symlink would otherwise escape it.
+
+- **Artifact collection reads the audits directory once** — report and progress discovery now shares one directory read and per-entry stat pass instead of scanning the directory twice.
 
 ## [0.1.5] - 2026-08-30
 

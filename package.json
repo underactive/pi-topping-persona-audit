@@ -1,6 +1,6 @@
 {
   "name": "@underactive/pi-topping-persona-audit",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Pi extension implementing /persona-audit — multi-persona code reviews with TUI expert selection and findings review",
   "keywords": [
     "pi-package",
