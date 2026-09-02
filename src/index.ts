@@ -210,8 +210,8 @@ async function resolveDiffBase(cwd: string, baseCommit?: string): Promise<{ base
 }
 
 /**
- * Get files changed in git diff against a base commit.
- * If no base commit is specified, uses merge-base with main branch.
+ * Get files changed by `git diff` between `baseCommit` and HEAD, filtered to `scope`.
+ * The base is resolved upstream by resolveDiffBase; this function requires it.
  */
 export async function getChangedFiles(
   cwd: string,
@@ -439,7 +439,7 @@ export function capFileList(
 
 /**
  * Scan the full directory tree under `scope` for source files — no git
- * required. Used by --full mode. Unlike `getDirectImporters`, this uses a
+ * required. Used by --full mode. Unlike `scanImportGraph`, this uses a
  * broad, language-agnostic extension allowlist since it's the primary
  * manifest source for non-git / non-diff audits, not just JS/TS import
  * resolution.
