@@ -1624,7 +1624,7 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
         if (collection.expectedRuns > 0 && collection.receivedRuns === 0) {
           const failureDetails = runRecords
             .filter((run) => run.status === "failed")
-            .map((run) => `${run.reviewer} pass ${run.pass}: ${run.detail ?? "no output"}`)
+            .map((run) => `${run.reviewer} pass ${run.pass}: ${normalizeFindingText(run.detail ?? "no output")}`)
             .join("; ");
           const reason = `All ${collection.expectedRuns} reviewer ${collection.expectedRuns === 1 ? "pass has" : "passes have"} failed${failureDetails ? ` — ${failureDetails}` : ". This typically means the model could not be resolved or the agent session failed to start; see the per-pass failure details above."}. (${collection.missingRuns.length} missing, ${collection.malformed.length} malformed)`;
           ctx.ui.notify(`persona-audit: ${reason}`, "error");
@@ -1665,9 +1665,9 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
           onProgress: (snapshot) => progress?.applyProgress(REVOICE_ROW, snapshot),
         });
         if (isFailedRun(revoiceResult) || !revoiceResult.allText.trim()) {
-          diagnostics.revoiceNote = `register re-voice failed (${
-            revoiceResult.errorMessage || (revoiceResult.aborted ? "aborted" : revoiceResult.stopReason) || "no output"
-          }) — findings keep the reviewer's original text`;
+          diagnostics.revoiceNote = `register re-voice failed (${normalizeFindingText(
+            revoiceResult.errorMessage || (revoiceResult.aborted ? "aborted" : revoiceResult.stopReason) || "no output",
+          )}) — findings keep the reviewer's original text`;
           progress?.settleRow(REVOICE_ROW, revoiceResult.aborted ? "cancelled" : "error", "kept original text");
         } else {
           const revoiced = applyRevoicedFindings(
@@ -1742,9 +1742,9 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
       annotatedFindings = collection.dedupedFindings;
       if (isFailedRun(reconcileResult)) {
         annotatedFindings = collection.dedupedFindings.map((f) => ({ ...f, recommendation: "defer" }));
-        diagnostics.annotationNote = `adjudicator reconcile failed (${
-          reconcileResult.errorMessage || reconcileResult.stopReason || "aborted"
-        }) — findings triaged without recommendations`;
+        diagnostics.annotationNote = `adjudicator reconcile failed (${normalizeFindingText(
+          reconcileResult.errorMessage || reconcileResult.stopReason || "aborted",
+        )}) — findings triaged without recommendations`;
         progress?.settleRow(RECONCILE_ROW, "error", "no recommendations");
       } else {
         let annotated = annotateFindings(collection.dedupedFindings, [
@@ -1999,7 +1999,7 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
     const failedApplyRuns = applyRuns.filter((run) => run.failureReason !== undefined);
     const applyFailed = failedApplyRuns.length === applyRuns.length;
     const applyFailureReason = failedApplyRuns.length > 0
-      ? [...new Set(failedApplyRuns.map((run) => run.failureReason))].join("; ")
+      ? [...new Set(failedApplyRuns.map((run) => normalizeFindingText(run.failureReason)))].join("; ")
       : undefined;
     const applyReport = mergeApplyReports(applyRuns, applyOverflow);
 
