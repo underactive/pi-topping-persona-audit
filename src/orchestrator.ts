@@ -24,6 +24,7 @@ import { isRecord, normalizeFindingText } from "./dedup.ts";
 import { fallbackSteSummary, MAX_FINDING_SUMMARY_LENGTH } from "./findingSummary.ts";
 import { type AuditProgressWidget, formatTokens } from "./components/AuditProgress.ts";
 import type { ReviewerFailurePrompt } from "./components/ReviewerRetry.ts";
+import type { AdjudicatorFailurePrompt, AdjudicatorRetryDecision } from "./components/AdjudicatorRetry.ts";
 import type { VerifierFailurePrompt, VerifierRetryDecision } from "./components/VerifierRetry.ts";
 import {
   ADJUDICATOR_APPLY_DIRECTIVE,
@@ -97,6 +98,7 @@ import type {
   FixVerdict,
   FixVerification,
   HeadlessOptions,
+  HeadlessResult,
   ReviewerOutput,
   ReviewerRunRecord,
   ReviewerSelection,
@@ -189,6 +191,7 @@ export interface AuditInput {
    * is how the audit behaved before the checkpoint existed.
    */
   onReviewFailures?: ReviewerFailurePrompt;
+  onAdjudicatorFailure?: AdjudicatorFailurePrompt;
   onVerifierFailure?: VerifierFailurePrompt;
 }
 
@@ -202,6 +205,31 @@ function resolvePhaseModel(
   if (!choice) return { model: fallbackModel, thinking: undefined, label: fallbackModel ?? "(session default)" };
   const label = modelRefLabel(choice.ref);
   return { model: label, thinking: choice.thinking, label: phaseModelChoiceLabel(choice) };
+}
+
+/** User-controlled retry loop around one adjudicator attempt (including its automatic transient retry). */
+export async function runAdjudicatorFailureRetries(options: {
+  runAttempt: () => Promise<HeadlessResult>;
+  prompt?: AdjudicatorFailurePrompt;
+  currentChoice: () => PhaseModelChoice | undefined;
+  applyDecision: (decision: AdjudicatorRetryDecision) => void;
+  onRetry?: () => void;
+  signal?: AbortSignal;
+}): Promise<HeadlessResult> {
+  for (;;) {
+    const result = await options.runAttempt();
+    if (!isFailedRun(result)) return result;
+
+    const detail = result.errorMessage || result.stopReason || "aborted";
+    const decision =
+      options.prompt && !result.aborted && !options.signal?.aborted
+        ? await options.prompt(detail, options.currentChoice())
+        : { retry: false };
+    if (!decision.retry || options.signal?.aborted) return result;
+
+    options.applyDecision(decision);
+    options.onRetry?.();
+  }
 }
 
 // ── Adjudicator annotation parsing (graceful fallback) ────────────────────
@@ -1369,7 +1397,8 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
     // to every later retry round.
     let reviewModel = resolvePhaseModel(input.phaseModels, "review", reviewerAgent.model);
     let reviewChoice = input.phaseModels?.review;
-    const triageModel = resolvePhaseModel(input.phaseModels, "triage", adjudicatorAgent.model);
+    let triageModel = resolvePhaseModel(input.phaseModels, "triage", adjudicatorAgent.model);
+    let triageChoice = input.phaseModels?.triage;
     const implementModel = resolvePhaseModel(input.phaseModels, "implement", adjudicatorAgent.model);
     // Reassigned only at the verifier-failure checkpoint, where a model swap
     // applies to the rest of the Verify phase.
@@ -1658,31 +1687,57 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
         state: "working",
         statusText: "annotating…",
       });
-      const reconcileOptions: HeadlessOptions = {
+      const dedupedFindings = collection.dedupedFindings;
+      const applyAdjudicatorRetryModel = (decision: AdjudicatorRetryDecision): void => {
+        if (!decision.model) return;
+        triageChoice = decision.model;
+        const label = modelRefLabel(decision.model.ref);
+        triageModel = {
+          model: label,
+          thinking: decision.model.thinking,
+          label: phaseModelChoiceLabel(decision.model),
+        };
+        reportCtx.phaseModels = { ...reportCtx.phaseModels, Triage: triageModel.label };
+        if (progress) progress.setPhaseModels({ ...progress.phaseModels(), Triage: triageModel.model });
+      };
+
+      const reconcileOptions = (): HeadlessOptions => ({
         agentName: "adjudicator reconcile",
         systemPrompt: adjudicatorAgent.systemPrompt,
         tools: READ_ONLY_TOOLS,
         model: triageModel.model,
         thinking: triageModel.thinking,
-        task: buildReconcileTask(input, baseLabel, collection.dedupedFindings),
+        task: buildReconcileTask(input, baseLabel, dedupedFindings),
         cwd: ctx.cwd,
         modelRegistry: ctx.modelRegistry,
         signal: input.signal,
         idleTimeoutMs: AGENT_IDLE_TIMEOUT_MS,
         onProgress: (snapshot) => progress?.applyProgress(RECONCILE_ROW, snapshot),
-      };
-      let reconcileResult = await runAgentSession(reconcileOptions);
-      // A transient provider error drops every recommendation from this phase, so it gets one retry before being recorded as failed.
-      // A "Model not found" error is resolveModelRef rejecting the ref before any network call — deterministic and permanent, so retrying just wastes 5s.
-      if (
-        isFailedRun(reconcileResult) &&
-        reconcileResult.stopReason === "error" &&
-        !isPermanentRunFailure(reconcileResult.errorMessage) &&
-        !input.signal?.aborted
-      ) {
-        await new Promise((r) => setTimeout(r, 5_000));
-        reconcileResult = await runAgentSession(reconcileOptions);
-      }
+      });
+
+      const reconcileResult = await runAdjudicatorFailureRetries({
+        runAttempt: async () => {
+          const options = reconcileOptions();
+          let result = await runAgentSession(options);
+          // A transient provider error drops every recommendation from this phase, so it gets one retry before prompting.
+          // A "Model not found" error is resolveModelRef rejecting the ref before any network call — deterministic and permanent.
+          if (
+            isFailedRun(result) &&
+            result.stopReason === "error" &&
+            !isPermanentRunFailure(result.errorMessage) &&
+            !input.signal?.aborted
+          ) {
+            await new Promise((resolve) => setTimeout(resolve, 5_000));
+            result = await runAgentSession(options);
+          }
+          return result;
+        },
+        prompt: input.onAdjudicatorFailure,
+        currentChoice: () => triageChoice,
+        applyDecision: applyAdjudicatorRetryModel,
+        onRetry: () => progress?.startRow(RECONCILE_ROW, "retrying…"),
+        signal: input.signal,
+      });
 
       annotatedFindings = collection.dedupedFindings;
       if (isFailedRun(reconcileResult)) {
@@ -1700,7 +1755,7 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
         // chance before every finding falls back to a reason-less defer.
         if (annotated.matched === 0 && collection.dedupedFindings.length > 0 && !input.signal?.aborted) {
           progress?.startRow(RECONCILE_ROW, "output unusable — retrying…");
-          const retryRun = await runAgentSession(reconcileOptions);
+          const retryRun = await runAgentSession(reconcileOptions());
           if (!isFailedRun(retryRun)) {
             const retried = annotateFindings(collection.dedupedFindings, [retryRun.finalText, retryRun.allText]);
             if (retried.matched > 0) {

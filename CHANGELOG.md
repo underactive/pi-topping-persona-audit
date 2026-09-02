@@ -14,6 +14,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Adjudicator failures offer recovery before triage** — provider failures during reconciliation now offer retry with the current or a replacement model instead of immediately opening Findings Review without recommendations.
+
 - **Progress-table costs account for routed and provider-reported billing** — paid downstream models no longer appear as `$0.000` when a router or proxy reports a different model or bill.
 
 - **Fix Now highlights the correct phase in the progress band** — during an interactive fix the phase band now highlights Implement while the fix agent edits and Verify while the verifier runs, instead of staying stuck on Triage; the pre-episode phase is restored when the fix episode closes.

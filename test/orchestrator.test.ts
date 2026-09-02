@@ -12,14 +12,17 @@ import {
   verifierOutputUnusable,
   partitionApplyBatches,
   recordFingerprint,
+  runAdjudicatorFailureRetries,
   scopeAcceptedFindings,
   type AuditInput,
 } from "../src/orchestrator.ts";
+import type { PhaseModelChoice } from "../src/modelConfig.ts";
 import type { FileSnapshot } from "../src/snapshot.ts";
 import type {
   FileChangeEvidence,
   FileChangeState,
   Finding,
+  HeadlessResult,
   SelfReport,
   VerificationRound,
 } from "../src/types.ts";
@@ -65,6 +68,105 @@ test("reviewer task adds delimited additional context before the output contract
 
 test("reviewer task omits the additional-context section when empty", () => {
   assert.doesNotMatch(buildReviewerTask(reviewerInput(), "/repo", "base", "Security Engineer"), /Additional User Context/);
+});
+
+const adjudicatorRun = (errorMessage?: string, aborted = false): HeadlessResult => ({
+  finalText: errorMessage ? "" : "[]",
+  allText: errorMessage ? "" : "[]",
+  aborted,
+  stopReason: errorMessage ? "error" : "stop",
+  errorMessage,
+  usage: { turns: 0, contextTokens: 0, outputTokens: 0 },
+});
+
+test("adjudicator failures prompt before retry and apply a replacement model", async () => {
+  const replacement = { ref: { provider: "next", id: "model" }, thinking: "high" as const };
+  const events: string[] = [];
+  let attempts = 0;
+  let current: PhaseModelChoice = { ref: { provider: "old", id: "model" }, thinking: "medium" };
+  const result = await runAdjudicatorFailureRetries({
+    runAttempt: async () => {
+      events.push(`run:${current.ref.provider}`);
+      return ++attempts === 1 ? adjudicatorRun("401 CreditsError") : adjudicatorRun();
+    },
+    prompt: async (detail, choice) => {
+      events.push(`prompt:${detail}:${choice?.ref.provider}`);
+      return { retry: true, model: replacement };
+    },
+    currentChoice: () => current,
+    applyDecision: (decision) => {
+      if (decision.model) current = decision.model;
+      events.push("apply");
+    },
+    onRetry: () => events.push("retry"),
+  });
+
+  assert.equal(result.errorMessage, undefined);
+  assert.deepEqual(events, ["run:old", "prompt:401 CreditsError:old", "apply", "retry", "run:next"]);
+});
+
+test("adjudicator failures may prompt repeatedly until a retry succeeds", async () => {
+  let attempts = 0;
+  let prompts = 0;
+  await runAdjudicatorFailureRetries({
+    runAttempt: async () => ++attempts < 3 ? adjudicatorRun(`failure ${attempts}`) : adjudicatorRun(),
+    prompt: async () => { prompts++; return { retry: true }; },
+    currentChoice: () => undefined,
+    applyDecision: () => {},
+  });
+  assert.equal(attempts, 3);
+  assert.equal(prompts, 2);
+});
+
+test("adjudicator skip and omitted callbacks preserve the failed result", async () => {
+  for (const prompt of [async () => ({ retry: false }), undefined]) {
+    let attempts = 0;
+    const result = await runAdjudicatorFailureRetries({
+      runAttempt: async () => { attempts++; return adjudicatorRun("provider failed"); },
+      prompt,
+      currentChoice: () => undefined,
+      applyDecision: () => {},
+    });
+    assert.equal(result.errorMessage, "provider failed");
+    assert.equal(attempts, 1);
+  }
+});
+
+test("adjudicator aborts do not prompt or restart, including cancellation while prompting", async () => {
+  const controller = new AbortController();
+  let attempts = 0;
+  let prompts = 0;
+  const result = await runAdjudicatorFailureRetries({
+    runAttempt: async () => { attempts++; return adjudicatorRun("provider failed"); },
+    prompt: async () => { prompts++; controller.abort(); return { retry: true }; },
+    currentChoice: () => undefined,
+    applyDecision: () => assert.fail("must not apply after abort"),
+    signal: controller.signal,
+  });
+  assert.equal(result.errorMessage, "provider failed");
+  assert.equal(attempts, 1);
+  assert.equal(prompts, 1);
+
+  prompts = 0;
+  await runAdjudicatorFailureRetries({
+    runAttempt: async () => adjudicatorRun("aborted", true),
+    prompt: async () => { prompts++; return { retry: true }; },
+    currentChoice: () => undefined,
+    applyDecision: () => {},
+  });
+  assert.equal(prompts, 0);
+});
+
+test("successful adjudicator sessions never prompt", async () => {
+  let prompts = 0;
+  const result = await runAdjudicatorFailureRetries({
+    runAttempt: async () => adjudicatorRun(),
+    prompt: async () => { prompts++; return { retry: true }; },
+    currentChoice: () => undefined,
+    applyDecision: () => {},
+  });
+  assert.equal(result.allText, "[]");
+  assert.equal(prompts, 0);
 });
 
 // ── extractJsonArray ───────────────────────────────────────────────────────

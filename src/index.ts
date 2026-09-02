@@ -26,6 +26,7 @@ import { showExpertPicker } from "./components/ExpertPicker.ts";
 import { showPhaseModelPicker } from "./components/ModelPicker.ts";
 import { showAuditSummary } from "./components/AuditSummary.ts";
 import { showReviewerRetryPrompt } from "./components/ReviewerRetry.ts";
+import { showAdjudicatorRetryPrompt } from "./components/AdjudicatorRetry.ts";
 import { showVerifierRetryPrompt } from "./components/VerifierRetry.ts";
 import { showArtifactViewer, showReportViewer } from "./components/ReportViewer.ts";
 import { showSettingsMenu } from "./components/SettingsMenu.ts";
@@ -836,6 +837,16 @@ export default function (pi: ExtensionAPI): void {
                 ref: (current ?? phaseModels.review).ref,
               },
               current?.thinking ?? pi.getThinkingLevel(),
+            ),
+          onAdjudicatorFailure: (detail, current) =>
+            showAdjudicatorRetryPrompt(
+              ctx,
+              detail,
+              {
+                label: modelRefLabel((current ?? phaseModels.triage).ref),
+                ref: (current ?? phaseModels.triage).ref,
+              },
+              current?.thinking ?? phaseModels.triage.thinking,
             ),
           onVerifierFailure: (detail, current) =>
             showVerifierRetryPrompt(
