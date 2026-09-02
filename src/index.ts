@@ -5,7 +5,7 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import * as path from "node:path";
 import type { Dirent } from "node:fs";
-import { lstat, readdir, readFile } from "node:fs/promises";
+import { lstat, readdir, readFile, realpath } from "node:fs/promises";
 import { promisify } from "node:util";
 import { runAudit } from "./orchestrator.ts";
 import { collectArtifacts, deleteArtifacts, formatBytes, isOlderThan } from "./artifacts.ts";
@@ -602,11 +602,17 @@ export default function (pi: ExtensionAPI): void {
         // Handoff content is untrusted input feeding edit-capable agents:
         // resolveTargetPath rejects escapes, and missing files are dropped.
         const existing = new Set<string>();
+        const cwdReal = await realpath(path.resolve(ctx.cwd));
         for (const file of new Set(handoffPayload.findings.map((f) => f.file))) {
           const absFile = resolveTargetPath(ctx.cwd, file);
           if (!absFile) continue;
           try {
-            if ((await lstat(absFile)).isFile()) existing.add(file);
+            if (!(await lstat(absFile)).isFile()) continue;
+            const real = await realpath(absFile).catch(() => undefined);
+            if (!real || path.relative(cwdReal, real).startsWith("..") || path.isAbsolute(path.relative(cwdReal, real))) {
+              continue;
+            }
+            existing.add(file);
           } catch {
             /* missing file — dropped below */
           }
