@@ -659,7 +659,7 @@ export class FindingsReview implements Component {
       "",
       counts + gap + t.fg("dim", position) + "  ",
     ];
-    if (this.handoffNote) footer.push(`  ${t.fg("accent", this.handoffNote)}`);
+    if (this.handoffNote) footer.push(`  ${t.fg("accent", sanitizeTerminalText(this.handoffNote))}`);
     if (this.awaitingCancelConfirm) {
       footer.push(
         "  " + t.fg("warning", "Press Esc again to cancel the audit — no fixes applied · any other key resumes"),
