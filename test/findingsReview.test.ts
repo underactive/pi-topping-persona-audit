@@ -210,10 +210,13 @@ test("A, R, and D set the selected finding directly", () => {
 
 test("O no longer overrides a deferred finding", () => {
   const ui = harness([finding(1, { recommendation: "defer" })], 40);
+  const statusRow = (): string => strip(ui.selected() ?? "");
 
+  assert.match(statusRow(), /\[DEFER]/);
+  ui.press("A");
+  assert.match(statusRow(), /\[APPLY]/);
   ui.press("O");
-
-  assert.match(strip(ui.selected() ?? ""), /\[DEFER]/);
+  assert.match(statusRow(), /\[APPLY]/);
 });
 
 test("one Esc arms the cancel rather than discarding the review", () => {
