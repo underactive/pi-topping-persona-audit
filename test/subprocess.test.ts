@@ -82,6 +82,8 @@ test("the bundled agents/ directory ships both required agents", () => {
   // Frontmatter is the source of truth for the subprocess tool allowlist.
   assert.deepEqual(reviewer.tools, ["read", "grep", "find", "ls"]);
   assert.ok(adjudicator.tools?.includes("edit"), "the adjudicator must be edit-capable");
+  assert.match(adjudicator.systemPrompt, /never weaken/i);
+  assert.doesNotMatch(adjudicator.systemPrompt, /Do not modify test fixtures/);
   assert.ok(reviewer.systemPrompt.trim().length > 0, "the markdown body is the base system prompt");
 });
 

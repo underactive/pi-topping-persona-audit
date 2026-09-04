@@ -29,7 +29,9 @@ async function makeRepo(): Promise<string> {
   run("config", "user.name", "Test");
   run("config", "commit.gpgsign", "false");
   await mkdir(path.join(cwd, "src"), { recursive: true });
+  await mkdir(path.join(cwd, "test"), { recursive: true });
   await writeFile(path.join(cwd, "src/a.ts"), "const a = 1;\n");
+  await writeFile(path.join(cwd, "test/a.test.ts"), "assert(a === 1);\n");
   run("add", ".");
   run("commit", "-q", "-m", "init");
   return cwd;
@@ -75,6 +77,7 @@ interface HarnessOptions {
 function makeDeps(opts: HarnessOptions) {
   const notifications: string[] = [];
   const fixTasks: string[] = [];
+  const verifyTasks: string[] = [];
   let fixRuns = 0;
   let verifyRuns = 0;
   const { controller, gates } = stubController(opts.decisions);
@@ -106,14 +109,66 @@ function makeDeps(opts: HarnessOptions) {
         return okResult(opts.summaryText ?? "Fix loop bound off-by-one");
       }
       verifyRuns++;
+      verifyTasks.push(options.task);
       assert.deepEqual(options.tools, ["read", "grep", "find", "ls"], "the verifier is read-only");
       return okResult(opts.verifierText ?? "VERDICT: fixed\nEVIDENCE: loop bound corrected");
     },
     promptDirtyChoice: async () => opts.dirtyChoice ?? "proceed",
     openProgress: () => controller,
   };
-  return { deps, notifications, gates, fixTaskAt: (i: number) => fixTasks[i], counts: () => ({ fixRuns, verifyRuns }) };
+  return {
+    deps,
+    notifications,
+    gates,
+    fixTaskAt: (i: number) => fixTasks[i],
+    verifyTaskAt: (i: number) => verifyTasks[i],
+    counts: () => ({ fixRuns, verifyRuns }),
+  };
 }
+
+test("accept commits the fix together with the tests the agent updated", async (t) => {
+  const cwd = await makeRepo();
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const h = makeDeps({
+    cwd,
+    decisions: ["accept"],
+    onFix: async () => {
+      await writeFile(path.join(cwd, "src/a.ts"), "const a = 2;\n");
+      await writeFile(path.join(cwd, "test/a.test.ts"), "assert(a === 2);\n");
+    },
+  });
+  const state = makeState();
+
+  await runFixNow(h.deps, finding(), 0, state);
+
+  assert.equal(state.statuses[0], "fixed");
+  assert.deepEqual(state.fixed.get(0)?.files, ["src/a.ts", "test/a.test.ts"]);
+  const status = execFileSync("git", ["status", "--porcelain"], { cwd, encoding: "utf-8" });
+  assert.equal(status, "", "the tree is clean after the commit");
+  const committed = execFileSync("git", ["show", "--name-only", "--format=", "HEAD"], { cwd, encoding: "utf-8" });
+  assert.deepEqual(committed.trim().split("\n").sort(), ["src/a.ts", "test/a.test.ts"]);
+});
+
+test("the fix task names the target file and demands a tests report", async (t) => {
+  const cwd = await makeRepo();
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const h = makeDeps({
+    cwd,
+    decisions: ["discard"],
+    onFix: () => writeFile(path.join(cwd, "src/a.ts"), "const a = 2;\n"),
+  });
+
+  await runFixNow(h.deps, finding(), 0, makeState());
+
+  const task = h.fixTaskAt(0) ?? "";
+  assert.match(task, /## Target File\n\n\["src\/a\.ts"\]/);
+  assert.match(task, /### Tests Updated/);
+  assert.doesNotMatch(task, /## Your Files/);
+  assert.doesNotMatch(task, /Reserved Files/);
+  const verify = h.verifyTaskAt(0) ?? "";
+  assert.match(verify, /Test edits in the diff are part of the fix/);
+  assert.match(verify, /loosened assertion means the fix is not-fixed/i);
+});
 
 test("accept commits exactly the touched file and marks the finding fixed", async (t) => {
   const cwd = await makeRepo();

@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Implement passes keep tests in step with the fix** — both the batch implement phase and Fix Now now grep for and update existing tests that exercise the changed code, and the Fix Now verifier treats those edits as part of the fix. Stale assertions no longer leave the verdict stuck at "partial" and no longer need a manual chat follow-up. Weakening an assertion is still forbidden and is reported under Tests Left Failing instead. Batch agents receive a Reserved Files list so parallel workers never edit each other's targets.
+
 ## [0.1.6] - 2026-09-02
 
 ### Added

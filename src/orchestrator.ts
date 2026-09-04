@@ -816,15 +816,19 @@ function buildReconcileTask(
   ].join("\n");
 }
 
-function buildApplyTask(batch: ApplyBatch): string {
+export function buildApplyTask(batch: ApplyBatch): string {
   return [
     ADJUDICATOR_APPLY_DIRECTIVE,
     "",
     UNTRUSTED_DATA_RULE,
     "",
-    "## Your Files",
+    "## Your Primary Files",
     "",
     JSON.stringify(batch.files),
+    "",
+    "## Reserved Files",
+    "",
+    JSON.stringify(batch.reservedFiles),
     "",
     "## Accepted Findings (JSON)",
     "",
@@ -888,7 +892,7 @@ export function partitionApplyBatches(
   );
   const batches: ApplyBatch[] = Array.from(
     { length: Math.min(Math.max(1, APPLY_CONCURRENCY), groups.length) },
-    (_, index) => ({ index, files: [], findings: [] }),
+    (_, index) => ({ index, files: [], reservedFiles: [], findings: [] }),
   );
   for (const [file, findings] of groups) {
     const target = batches.reduce((lightest, batch) =>
@@ -900,6 +904,12 @@ export function partitionApplyBatches(
   for (const batch of batches) {
     batch.files.sort();
     batch.findings.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
+  }
+  for (const batch of batches) {
+    batch.reservedFiles = batches
+      .filter((other) => other !== batch)
+      .flatMap((other) => other.files)
+      .sort();
   }
 
   return { batches, overflow: ranked.slice(MAX_APPLY_EDITS) };

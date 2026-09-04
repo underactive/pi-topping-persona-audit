@@ -68,6 +68,8 @@ export interface Finding {
 export interface ApplyBatch {
   index: number;
   files: string[];
+  /** Primary files owned by every other batch in this run; this agent must not edit them. */
+  reservedFiles: string[];
   findings: Finding[];
 }
 

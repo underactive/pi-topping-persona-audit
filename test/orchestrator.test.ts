@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   actionableFingerprint,
   annotateFindings,
+  buildApplyTask,
   buildRepairTask,
   buildReviewerTask,
   extractJsonArray,
@@ -488,6 +489,39 @@ test("partitionApplyBatches keeps every finding for one file in a single batch",
   const owners = batches.filter((b) => b.files.includes("src/a.ts"));
   assert.equal(owners.length, 1);
   assert.equal(owners[0]?.findings.filter((f) => f.file === "src/a.ts").length, 2);
+});
+
+test("partitionApplyBatches reserves every other batch's files for each batch", () => {
+  const accepted = Array.from({ length: 9 }, (_, i) => finding({ file: `src/f${i}.ts`, line: i }));
+  const { batches } = partitionApplyBatches(accepted);
+
+  assert.ok(batches.length > 1);
+  for (const batch of batches) {
+    const others = batches.filter((b) => b !== batch).flatMap((b) => b.files).sort();
+    assert.deepEqual(batch.reservedFiles, others);
+    for (const file of batch.files) assert.ok(!batch.reservedFiles.includes(file));
+  }
+
+  const single = partitionApplyBatches([finding({ file: "src/a.ts", line: 1 })]);
+  assert.equal(single.batches.length, 1);
+  assert.deepEqual(single.batches[0]?.reservedFiles, []);
+});
+
+test("buildApplyTask lists the batch's primary files and the files reserved by other batches", () => {
+  const accepted = Array.from({ length: 9 }, (_, i) => finding({ file: `src/f${i}.ts`, line: i }));
+  const { batches } = partitionApplyBatches(accepted);
+  const batch = batches[0]!;
+
+  const task = buildApplyTask(batch);
+
+  assert.ok(task.startsWith("You are in APPLY mode."));
+  assert.match(task, /## Your Primary Files\n\n\[/);
+  assert.match(task, /## Reserved Files\n\n\[/);
+  assert.doesNotMatch(task, /## Your Files/);
+  assert.ok(task.includes(`## Your Primary Files\n\n${JSON.stringify(batch.files)}`));
+  assert.ok(task.includes(`## Reserved Files\n\n${JSON.stringify(batch.reservedFiles)}`));
+  assert.ok(task.indexOf("## Your Primary Files") < task.indexOf("## Reserved Files"));
+  assert.ok(task.indexOf("## Reserved Files") < task.indexOf("## Accepted Findings (JSON)"));
 });
 
 test("partitionApplyBatches never exceeds the batch ceiling and leaves none empty", () => {

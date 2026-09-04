@@ -997,11 +997,31 @@ If a finding's only available fix would itself introduce slop (for example, a "w
 You may merge semantic near-duplicates (keep one finding, attribute all reviewers in the reviewer field) and recommend "reject" for the losing side of a conflict, but never silently drop a finding — every input finding must be accounted for in the output array.`;
 
 /**
- * Adjudicator apply directive (edit phase, runs after user triage in the TUI).
+ * Steps 7–10 shared by both apply directives: bring existing tests in step
+ * with the fix without weakening them. Edit sessions have no bash, so the
+ * agent judges breakage from reading alone.
+ */
+const RELATED_TESTS_STEPS = `7. Grep the test files (\`test/\`, \`*.test.*\`, \`*.spec.*\`, \`*_test.*\`) for the changed file's path, its module name, and every symbol whose signature, return value, thrown error, or observable behavior changed
+8. Read each match. Where an assertion, setup, or fixture encodes the old behavior the finding replaced, update it to the new behavior with the smallest edit. You have no bash and cannot run tests — judge from reading
+9. Leave tests that still hold untouched. Never edit a test that does not exercise the changed code
+10. Never weaken a test to make it agree: do not delete, skip, comment out, or loosen an assertion. If a test fails because the fix is wrong or incomplete, fix the fix, not the test. If a test can only pass by weakening it, leave it and report it under Tests Left Failing`;
+
+const TESTS_REPORT_SECTIONS = `### Tests Updated
+- [test file]: [which assertion or setup changed] — [why the fix required it]
+(or "none needed", followed by the test files you checked)
+
+### Tests Left Failing
+- [test file]: [why it could not be updated without weakening it]
+(or "none")`;
+
+/**
+ * Adjudicator apply directive (batch edit phase, runs after user triage in the
+ * TUI). Several agents run in parallel; the task lists each one's primary
+ * files and the files reserved by the others.
  */
 export const ADJUDICATOR_APPLY_DIRECTIVE = `You are in APPLY mode. The user has already reviewed and ACCEPTED every finding below — do not re-adjudicate or ask for permission. Apply each accepted fix directly.
 
-You are one of several agents applying fixes in parallel, each owning a disjoint set of files. Apply every finding you were given, and touch only the files listed under "Your Files" — another agent may be editing the rest of the tree right now.
+You are one of several agents applying fixes in parallel, each owning a disjoint set of files. Apply every finding you were given. Touch only the files listed under "Your Primary Files", plus existing test files that exercise code you changed. Never touch a file listed under "Reserved Files" — another agent owns it and may be editing it right now. If a related test is a reserved file, leave it alone and list it under Tests Left Failing.
 
 For each accepted finding:
 1. Read the target file first — never rely solely on line numbers (earlier edits may shift lines)
@@ -1011,8 +1031,11 @@ For each accepted finding:
 5. After the edit reports success, re-read the target region (read the file again or grep for your change) and confirm the change is actually present. Report a finding as applied only once you have seen it in that re-read — an edit that returned success but left the file byte-identical did NOT land, so report it deferred, never applied.
 6. If the region still cannot be located after a re-read and retry, mark that finding as deferred with a clear reason — do not guess
 
+Then update the related tests:
+${RELATED_TESTS_STEPS}
+
 Constraints:
-- Do not modify test fixtures, mock data, or generated files
+- Do not modify mock data or generated files. Test files and fixtures may change only as step 8 requires
 - Do not make unrelated improvements
 - A finding belongs under Fixes Applied only when a re-read confirmed the change, and under Fixes Deferred otherwise — never report an unconfirmed edit as applied
 - If a finding cannot be fixed without breaking a fix hygiene rule, defer it instead and name the rule in the report
@@ -1026,7 +1049,49 @@ When done, output a final report:
 ### Fixes Applied
 - [file:line] [severity] — [category]: [what was changed]
 
+${TESTS_REPORT_SECTIONS}
+
 ### Fixes Deferred
+- [file:line] [severity] — [category]: [why it could not be applied]`;
+
+/**
+ * Fix Now apply directive (single finding, single agent). Replaces the batch
+ * directive above for that flow: the tree has no other writer, so the
+ * primary/reserved file ownership rules do not apply.
+ */
+export const FIX_NOW_APPLY_DIRECTIVE = `You are in APPLY mode. The user has already reviewed and ACCEPTED the single finding below — do not re-adjudicate or ask for permission. Apply the fix directly.
+
+You are the only agent editing this tree. Start from the file listed under "Target File", and also edit existing test files that exercise the code you changed. Touch nothing else.
+
+To apply the fix:
+1. Read the target file first — never rely solely on line numbers
+2. Locate the code region by searching for the code pattern
+3. Apply the fix with the edit tool, copying oldText verbatim from what you just read — exact whitespace, indentation, and newlines. Text typed from memory or quoted from the finding will not match. (Use write only for new files.)
+4. If the edit tool reports it could not find the text, do NOT defer yet — re-read the file, copy oldText verbatim from that fresh read, and retry the edit once. A stale or approximate oldText is the usual cause.
+5. After the edit reports success, re-read the target region (read the file again or grep for your change) and confirm the change is actually present. Report the fix as applied only once you have seen it in that re-read — an edit that returned success but left the file byte-identical did NOT land, so report it deferred, never applied.
+6. If the region still cannot be located after a re-read and retry, mark the fix as deferred with a clear reason — do not guess
+
+Then update the related tests:
+${RELATED_TESTS_STEPS}
+
+Constraints:
+- Do not modify mock data or generated files. Test files and fixtures may change only as step 8 requires
+- Do not make unrelated improvements
+- The fix belongs under Fix Applied only when a re-read confirmed the change, and under Fix Deferred otherwise — never report an unconfirmed edit as applied
+- If the fix cannot be made without breaking a fix hygiene rule, defer it instead and name the rule in the report
+
+${FIX_HYGIENE_CONTRACT}
+
+When done, output a final report:
+
+## Fix Now Report
+
+### Fix Applied
+- [file:line] [severity] — [category]: [what was changed]
+
+${TESTS_REPORT_SECTIONS}
+
+### Fix Deferred
 - [file:line] [severity] — [category]: [why it could not be applied]`;
 
 /**

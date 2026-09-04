@@ -5,6 +5,7 @@ import {
   ADJUDICATOR_APPLY_DIRECTIVE,
   ADJUDICATOR_RECONCILE_DIRECTIVE,
   FIX_HYGIENE_CONTRACT,
+  FIX_NOW_APPLY_DIRECTIVE,
   PERSONALITIES,
   REGRESSION_TEST_DIRECTIVE,
   REVIEWER_OUTPUT_CONTRACT,
@@ -42,11 +43,37 @@ test("code-producing directives interpolate the fix hygiene contract", () => {
   for (const directive of [
     REVIEWER_OUTPUT_CONTRACT,
     ADJUDICATOR_APPLY_DIRECTIVE,
+    FIX_NOW_APPLY_DIRECTIVE,
     REGRESSION_TEST_DIRECTIVE,
     VERIFY_REPAIR_DIRECTIVE,
   ]) {
     assert.ok(directive.includes(heading));
   }
+});
+
+test("apply directives require updating related tests without weakening them", () => {
+  for (const directive of [ADJUDICATOR_APPLY_DIRECTIVE, FIX_NOW_APPLY_DIRECTIVE]) {
+    assert.match(directive, /Grep the test files/i);
+    assert.match(directive, /[Nn]ever weaken a test/);
+    assert.match(directive, /fix the fix, not the test/);
+    assert.match(directive, /### Tests Updated/);
+    assert.match(directive, /### Tests Left Failing/);
+    assert.match(directive, /no bash|cannot run tests/i);
+    assert.doesNotMatch(directive, /Do not modify test fixtures/);
+  }
+});
+
+test("batch directive keeps parallel ownership, Fix Now directive drops it", () => {
+  assert.match(ADJUDICATOR_APPLY_DIRECTIVE, /Your Primary Files/);
+  assert.match(ADJUDICATOR_APPLY_DIRECTIVE, /Reserved Files/);
+  assert.match(ADJUDICATOR_APPLY_DIRECTIVE, /## Adjudicator Fix Application Report/);
+  assert.match(ADJUDICATOR_APPLY_DIRECTIVE, /### Fixes Applied[\s\S]*### Tests Updated[\s\S]*### Fixes Deferred/);
+
+  assert.match(FIX_NOW_APPLY_DIRECTIVE, /only agent editing this tree/);
+  assert.match(FIX_NOW_APPLY_DIRECTIVE, /Target File/);
+  assert.match(FIX_NOW_APPLY_DIRECTIVE, /## Fix Now Report/);
+  assert.ok(!FIX_NOW_APPLY_DIRECTIVE.includes("Reserved Files"));
+  assert.ok(!FIX_NOW_APPLY_DIRECTIVE.includes("Your Files"));
 });
 
 test("reviewer contract defines the optional change-kind enum", () => {
@@ -86,13 +113,14 @@ test("reconcile directive defers rather than rejects slop-prone fixes", () => {
 });
 
 test("apply and repair directives re-read + retry a failed match and confirm the file changed", () => {
-  for (const directive of [ADJUDICATOR_APPLY_DIRECTIVE, VERIFY_REPAIR_DIRECTIVE]) {
+  for (const directive of [ADJUDICATOR_APPLY_DIRECTIVE, FIX_NOW_APPLY_DIRECTIVE, VERIFY_REPAIR_DIRECTIVE]) {
     assert.match(directive, /could not find the text/i);
     assert.match(directive, /re-read the file/i);
     assert.match(directive, /retry/i);
     assert.match(directive, /byte-identical/i);
   }
   assert.match(ADJUDICATOR_APPLY_DIRECTIVE, /report it deferred, never applied/i);
+  assert.match(FIX_NOW_APPLY_DIRECTIVE, /report it deferred, never applied/i);
   assert.match(VERIFY_REPAIR_DIRECTIVE, /report it unresolved, not applied/i);
 });
 

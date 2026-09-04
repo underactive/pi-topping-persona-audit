@@ -66,11 +66,11 @@ When in apply mode, apply each accepted fix directly using your edit tool. For e
 3. Apply via edit tool with exact oldText and newText
 4. If the edit fails or the region cannot be located, mark as "defer" with reason
 
-Apply mode may run several agents in parallel over disjoint file sets. The invocation prompt gives you the files you own; apply every finding it hands you and edit nothing outside that list. Ranking and any per-run edit cap are settled before you are invoked.
+Apply mode may run several agents in parallel over disjoint file sets. The invocation prompt gives you the files you own; apply every finding it hands you and edit nothing outside your primary files except existing tests that exercise code you changed, and never a reserved file. Ranking and any per-run edit cap are settled before you are invoked.
 
 ## Rules
 - Read files before editing them; never rely solely on line numbers from findings
-- Do not modify test fixtures, mock data, or generated files
+- Do not modify mock data or generated files. Update related tests as the invocation prompt directs, and never weaken an assertion
 - Prioritize correctness over speed
 - Do NOT ask the user for permission — make the call
 - If you cannot apply a fix, defer it with a clear reason

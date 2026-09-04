@@ -15,7 +15,7 @@ import {
 import { openFixProgress, type FixChatMessage, type FixProgressController } from "./components/FixProgress.ts";
 import { gitCommitFiles, gitDiff, gitRestoreFiles, gitStatusPorcelain, type FileGitStatus } from "./git.ts";
 import type { ThinkingLevel } from "./modelConfig.ts";
-import { ADJUDICATOR_APPLY_DIRECTIVE, UNTRUSTED_DATA_RULE } from "./skillContent.ts";
+import { FIX_NOW_APPLY_DIRECTIVE, UNTRUSTED_DATA_RULE } from "./skillContent.ts";
 import { resolveTargetPath } from "./snapshot.ts";
 import { isFailedRun } from "./subprocess.ts";
 import type { Finding, FixedFinding, HeadlessOptions, HeadlessResult, ReviewSessionState } from "./types.ts";
@@ -52,10 +52,17 @@ export interface FixNowDeps {
   ) => FixProgressController;
 }
 
-/** Directive for the single-finding verifier pass. Kept lean — the full pipeline verifier machinery is batch-phase only. */
+/**
+ * Directive for the single-finding verifier pass. Kept lean — the full pipeline
+ * verifier machinery is batch-phase only. Test edits in the diff are part of the
+ * fix, so the verifier must judge them rather than count them as regressions.
+ */
 const FIX_VERIFY_DIRECTIVE = [
   "You are verifying that a single code-review fix was correctly applied to the working tree.",
   "Read the changed files and judge whether the fix resolves the finding without introducing obvious regressions.",
+  "The fix agent was told to update existing tests that exercise the changed code. Test edits in the diff are part of the fix, not regressions, unless they weaken an assertion.",
+  "Grep the test files for the changed symbols. A test that still asserts the old behavior the fix replaced means the fix is partial.",
+  "A deleted, skipped, commented-out, or loosened assertion means the fix is not-fixed, whatever the source change looks like.",
   "Do not edit anything.",
   "",
   "Report your judgement as the final two lines of your reply, exactly:",
@@ -65,11 +72,11 @@ const FIX_VERIFY_DIRECTIVE = [
 
 function buildFixTask(finding: Finding, verifierFeedback?: string): string {
   const sections = [
-    ADJUDICATOR_APPLY_DIRECTIVE,
+    FIX_NOW_APPLY_DIRECTIVE,
     "",
     UNTRUSTED_DATA_RULE,
     "",
-    "## Your Files",
+    "## Target File",
     "",
     JSON.stringify([finding.file]),
     "",
@@ -118,7 +125,7 @@ function buildFixFollowUpTask(userMessage: string): string {
     "",
     "Instructions:",
     "- If the user asks a question, requests clarification, or asks about impact / callers, use read/grep/find/ls tools to inspect the repository and answer accurately. Do not edit files unless explicitly asked to modify the code.",
-    "- If the user asks you to modify, adjust, or redo the fix, apply the edits directly using edit/write tools.",
+    "- If the user asks you to modify, adjust, or redo the fix, apply the edits directly using edit/write tools, then re-check the existing tests that exercise the changed code and update any that encode the replaced behavior. Never weaken an assertion to make a test agree.",
     "- Never modify files that were dirty before the fix started or are unrelated to this finding.",
     "",
     "## User Message",
