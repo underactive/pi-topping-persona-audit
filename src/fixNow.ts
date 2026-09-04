@@ -195,7 +195,7 @@ export function fixCommitMessage(finding: Finding, summary?: string): string {
   const clipped = raw.length > budget ? `${raw.slice(0, budget - 1).trimEnd()}…` : raw;
   const subject = `${prefix}${clipped}`;
   const body = [
-    `Audit finding by ${finding.reviewer} (${finding.severity}).`,
+    `Audit finding (${finding.severity} priority) by ${finding.reviewer} persona.`,
     "",
     finding.suggestedChange,
     "",

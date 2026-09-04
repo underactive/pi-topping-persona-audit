@@ -433,7 +433,7 @@ test("fixCommitMessage carries category, rationale, and provenance without the l
   const message = fixCommitMessage(finding());
   const [subject] = message.split("\n");
   assert.equal(subject, "fix(bug): off-by-one in loop bound");
-  assert.match(message, /Security Engineer \(high\)/);
+  assert.match(message, /Audit finding \(high priority\) by Security Engineer persona\./);
   assert.match(message, /use < instead of <=/);
   assert.match(message, /Fix Now/);
 });
