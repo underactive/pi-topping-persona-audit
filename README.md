@@ -248,10 +248,14 @@ agent starts:
 4. **Pack** the file groups into at most 3 batches, heaviest group into the
    lightest batch, so agents finish at roughly the same time. Bounding the batch
    count also bounds the prompt overhead each extra agent session re-pays.
+5. **Reserve** every other batch's primary files as a per-agent "Reserved
+   Files" list, so each agent knows which files it must never touch.
 
-Each agent is told which files it owns and applies every finding it is handed;
-it never sees the other batches. The progress table shows one `Implement` row
-per batch:
+Each agent applies every finding it is handed, editing only its own primary
+files plus any existing test files that exercise the code it changed; if such
+a test file is on another agent's Reserved Files list, the agent leaves it
+alone and reports it under Tests Left Failing instead. The progress table
+shows one `Implement` row per batch:
 
 ```
   Implement
