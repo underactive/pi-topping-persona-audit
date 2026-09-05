@@ -6,6 +6,8 @@
  * restores only files that were clean before the fix started.
  */
 
+import { realpath } from "node:fs/promises";
+import * as path from "node:path";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import {
   createInteractiveAgentSession,
@@ -253,9 +255,19 @@ export async function runFixNow(
     return firstLine.length > 200 ? `${firstLine.slice(0, 199)}…` : firstLine || "unknown error";
   };
 
-  if (resolveTargetPath(ctx.cwd, finding.file) === undefined) {
+  const targetPath = resolveTargetPath(ctx.cwd, finding.file);
+  if (targetPath === undefined) {
     notify(`fix now unavailable — target path escapes project root: ${finding.file}`, "error");
     return;
+  }
+  const cwdReal = await realpath(path.resolve(ctx.cwd));
+  const targetReal = await realpath(targetPath).catch(() => undefined);
+  if (targetReal) {
+    const relToCwd = path.relative(cwdReal, targetReal);
+    if (relToCwd.startsWith("..") || path.isAbsolute(relToCwd)) {
+      notify(`fix now unavailable — target path escapes project root via symlink: ${finding.file}`, "error");
+      return;
+    }
   }
 
   // ── Dirty-target check ───────────────────────────────────────────────────
