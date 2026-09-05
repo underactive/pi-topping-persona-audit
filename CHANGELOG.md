@@ -6,9 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-09-04
+
 ### Changed
 
 - **Implement passes keep tests in step with the fix** — both the batch implement phase and Fix Now now grep for and update existing tests that exercise the changed code, and the Fix Now verifier treats those edits as part of the fix. Stale assertions no longer leave the verdict stuck at "partial" and no longer need a manual chat follow-up. Weakening an assertion is still forbidden and is reported under Tests Left Failing instead. Batch agents receive a Reserved Files list so parallel workers never edit each other's targets.
+
+- **Fix Now commit messages lead with severity** — the provenance line now reads "Audit finding (high priority) by Linus Torvalds persona."
+
+### Fixed
+
+- **Fix Now resolves symlinks before editing** — after the lexical path check, the target's real path must also stay inside the project root, mirroring the handoff containment guard; a target that escapes via a symlink is refused.
+
+- **Fix Now follow-up chats carry the untrusted-data rule** — the follow-up task now includes the same untrusted-data directive as the fix and verifier tasks.
+
+- **README describes batch ownership and Fix Now test edits accurately** — the implement section documents the Reserved Files list and related-test edits, and the Fix Now note no longer promises a user-visible Tests Updated section.
 
 ## [0.1.6] - 2026-09-02
 
