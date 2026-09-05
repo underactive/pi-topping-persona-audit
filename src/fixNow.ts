@@ -130,6 +130,8 @@ function buildFixFollowUpTask(userMessage: string): string {
     "- If the user asks you to modify, adjust, or redo the fix, apply the edits directly using edit/write tools, then re-check the existing tests that exercise the changed code and update any that encode the replaced behavior. Never weaken an assertion to make a test agree.",
     "- Never modify files that were dirty before the fix started or are unrelated to this finding.",
     "",
+    UNTRUSTED_DATA_RULE,
+    "",
     "## User Message",
     "",
     userMessage,
