@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - **Thinking-level monitor colors** — added `thinkingLevel` as a selectable activity-monitor color mode and made it the default; existing fixed colors remain available.
 
+### Changed
+
+- **Styled roster reviewer picker** — reviewer slots now use the audit flow's tiered picker, with reviewers already assigned to other slots hidden.
+
 ### Fixed
 
 - **Two-pane picker highlight spans full pane width** — selection background now applies only to the active pane's composed cell, matching the sibling project's layout.

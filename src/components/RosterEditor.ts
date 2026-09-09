@@ -1,5 +1,5 @@
-import type { ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
-import { Key, matchesKey, type Component, type SelectItem } from "@earendil-works/pi-tui";
+import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { Key, matchesKey } from "@earendil-works/pi-tui";
 import {
   MAX_ROSTER_COUNT,
   MAX_ROSTER_NAME_LENGTH,
@@ -7,11 +7,8 @@ import {
   ROSTER_NAME_PATTERN,
   type Roster,
 } from "../modelConfig.ts";
-import { ConsistentSelectList } from "./ModelPicker.ts";
-import { TIERS } from "./ReviewerData.ts";
+import { showExpertPicker } from "./ExpertPicker.ts";
 import { MenuComponent, showOverlayPrompt, type ActionMenuItem } from "./menuChrome.ts";
-
-const REVIEWER_NAMES = TIERS.flatMap((tier) => tier.reviewers.map((reviewer) => reviewer.name));
 
 type DraftRoster = { name: string; slots: Array<string | undefined> };
 type ListResult = { action: "create" } | { action: "edit"; index: number } | { action: "back" };
@@ -142,36 +139,21 @@ function showSlotEditor(
   });
 }
 
-class ReviewerSelectComponent implements Component {
-  private readonly list: ConsistentSelectList;
-  private filter = "";
-
-  constructor(items: SelectItem[], theme: Theme, done: (reviewer: string | undefined) => void) {
-    this.list = new ConsistentSelectList(items, 10, theme);
-    this.list.onSelect = (item) => done(item.value);
-    this.list.onCancel = () => done(undefined);
-  }
-  handleInput(data: string): void {
-    if (data === "\x7f" || data === "\b") {
-      this.filter = this.filter.slice(0, -1);
-      this.list.setFilter(this.filter);
-      return;
-    }
-    if (data.length === 1 && data >= " " && data !== "\x7f") {
-      this.filter += data;
-      this.list.setFilter(this.filter);
-      return;
-    }
-    this.list.handleInput(data);
-  }
-  render(width: number): string[] { return this.list.render(width); }
-  invalidate(): void { this.list.invalidate(); }
-}
-
-function showReviewerPicker(ctx: ExtensionCommandContext, draft: DraftRoster, slot: number): Promise<string | undefined> {
+async function showReviewerPicker(
+  ctx: ExtensionCommandContext,
+  draft: DraftRoster,
+  slot: number,
+): Promise<string | undefined> {
   const excluded = new Set(draft.slots.filter((name, index): name is string => index !== slot && name !== undefined));
-  const items = REVIEWER_NAMES.filter((name) => !excluded.has(name)).map((name) => ({ value: name, label: name }));
-  return showOverlayPrompt(ctx, (_tui, theme, finish) => new ReviewerSelectComponent(items, theme, finish));
+  const current = draft.slots[slot];
+  const selection = await showExpertPicker(
+    ctx,
+    undefined,
+    current ? { reviewers: [current], passes: 1 } : undefined,
+    [],
+    { single: true, excluded },
+  );
+  return selection?.reviewers[0];
 }
 
 async function editRoster(

@@ -72,6 +72,7 @@ test("roster manager creates ten-slot rosters, restores focus, excludes duplicat
   await harness.next();
   for (const char of "security") harness.send(char);
   assert.match(harness.render(), /Security Engineer/);
+  assert.match(harness.render(), /─ Specialist/);
   harness.send(ENTER);
   await harness.next();
   assert.match(harness.render(), /❯ Slot 1\s+Security Engineer/);
@@ -79,7 +80,7 @@ test("roster manager creates ten-slot rosters, restores focus, excludes duplicat
   harness.send(DOWN, ENTER);
   await harness.next();
   for (const char of "security") harness.send(char);
-  assert.match(harness.render(), /No matching commands/);
+  assert.match(harness.render(), /No reviewers match filter/);
   harness.send(ESCAPE);
   await harness.next();
   assert.match(harness.render(), /❯ Slot 2/);

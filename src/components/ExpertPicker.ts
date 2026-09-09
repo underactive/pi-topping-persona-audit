@@ -37,6 +37,11 @@ export interface ExpertPickerTheme {
   bold(text: string): string;
 }
 
+export interface ExpertPickerOptions {
+  single?: boolean;
+  excluded?: ReadonlySet<string>;
+}
+
 /** Reviewer picker with optional roster shortcuts followed by the unchanged tiered reviewer list. */
 export class ExpertPicker implements Component {
   private selected = new Set<string>();
@@ -47,6 +52,9 @@ export class ExpertPicker implements Component {
   private scrollOffset = 0;
   private entries: PickerEntry[] = [];
   private readonly rosters: Roster[];
+  private readonly reviewers: ReviewerInfo[];
+  private readonly single: boolean;
+  private readonly excluded: ReadonlySet<string>;
   private readonly theme: ExpertPickerTheme;
   private readonly done: (result: ReviewerSelection | null) => void;
   private readonly fileCount: number | undefined;
@@ -62,11 +70,15 @@ export class ExpertPicker implements Component {
     host?: ExpertPickerHost,
     initial?: ReviewerSelection,
     rosters: Roster[] = [],
+    options: ExpertPickerOptions = {},
   ) {
     this.theme = theme;
     this.done = done;
     this.fileCount = fileCount;
     this.host = host;
+    this.single = options.single ?? false;
+    this.excluded = options.excluded ?? new Set<string>();
+    this.reviewers = ALL_REVIEWERS.filter((reviewer) => !this.excluded.has(reviewer.name));
     this.rosters = rosters
       .map((roster) => ({ ...roster, reviewers: roster.reviewers.filter((name) => REVIEWER_NAMES.has(name)) }))
       .filter((roster) => roster.reviewers.length > 0)
@@ -98,8 +110,13 @@ export class ExpertPicker implements Component {
   private effectiveSelection(): ReviewerSelection {
     const roster = this.currentRoster();
     if (roster) return { reviewers: [...roster.reviewers], passes: 1 };
+    if (this.single) {
+      const entry = this.entries[this.entryIndex];
+      const currentReviewer = entry?.kind === "reviewer" ? entry.reviewer : undefined;
+      return { reviewers: currentReviewer ? [currentReviewer.name] : [], passes: 1 };
+    }
     return {
-      reviewers: ALL_REVIEWERS.filter((reviewer) => this.selected.has(reviewer.name)).map((reviewer) => reviewer.name),
+      reviewers: this.reviewers.filter((reviewer) => this.selected.has(reviewer.name)).map((reviewer) => reviewer.name),
       passes: this.passes,
     };
   }
@@ -114,7 +131,7 @@ export class ExpertPicker implements Component {
     const query = norm(this.query);
     const rosters = this.rosters.filter((roster) =>
       !query || norm(roster.name).includes(query) || roster.reviewers.some((name) => norm(name).includes(query)));
-    const reviewers = ALL_REVIEWERS.filter((reviewer) =>
+    const reviewers = this.reviewers.filter((reviewer) =>
       !query
       || norm(reviewer.name).includes(query)
       || norm(reviewer.description).includes(query)
@@ -190,6 +207,10 @@ export class ExpertPicker implements Component {
     if (matchesKey(data, Key.enter)) {
       const selection = this.effectiveSelection();
       if (selection.reviewers.length === 0) return;
+      if (this.single) {
+        this.done(selection);
+        return;
+      }
       if (this.needsCostConfirm() && !this.awaitingCostConfirm) {
         this.awaitingCostConfirm = true;
         this.invalidate();
@@ -199,6 +220,7 @@ export class ExpertPicker implements Component {
       return;
     }
     if (matchesKey(data, Key.space)) {
+      if (this.single) return;
       const entry = this.entries[this.entryIndex];
       if (entry?.kind !== "reviewer") return;
       const name = entry.reviewer.name;
@@ -220,7 +242,7 @@ export class ExpertPicker implements Component {
       return;
     }
     if (matchesKey(data, Key.left) || matchesKey(data, Key.right)) {
-      if (this.currentRoster()) return;
+      if (this.single || this.currentRoster()) return;
       const delta = matchesKey(data, Key.left) ? -1 : 1;
       this.passes = Math.min(5, Math.max(1, this.passes + delta));
       this.awaitingCostConfirm = false;
@@ -250,9 +272,13 @@ export class ExpertPicker implements Component {
     const roster = this.currentRoster();
     const effective = this.effectiveSelection();
     const lines = [
-      renderMenuTopBorder(t, width, `Select reviewers (${roster ? `${roster.name} roster` : `${this.selected.size} selected`})`),
+      renderMenuTopBorder(t, width, this.single
+        ? "Select a reviewer"
+        : `Select reviewers (${roster ? `${roster.name} roster` : `${this.selected.size} selected`})`),
       "",
-      " " + t.fg("dim", `↑↓ navigate · Space toggle · ←→ passes (${roster ? 1 : this.passes}) · Enter confirm · Esc cancel`),
+      " " + t.fg("dim", this.single
+        ? "↑↓ navigate · Enter confirm · Esc cancel"
+        : `↑↓ navigate · Space toggle · ←→ passes (${roster ? 1 : this.passes}) · Enter confirm · Esc cancel`),
       " " + (this.query ? t.fg("accent", `Filter: ${this.query}`) : t.fg("dim", "Type to filter…")),
       "",
     ];
@@ -280,7 +306,7 @@ export class ExpertPicker implements Component {
           }
         } else {
           const reviewer = entry.reviewer;
-          const checked = this.selected.has(reviewer.name);
+          const checked = this.single ? current : this.selected.has(reviewer.name);
           const checkbox = checked ? t.fg("success", "✓") : t.fg("dim", "○");
           const name = checked
             ? t.fg("success", t.bold(reviewer.name))
@@ -295,11 +321,13 @@ export class ExpertPicker implements Component {
         lines.push(" " + t.fg("dim", `  ${this.scrollOffset + 1}–${end} of ${this.entries.length}`));
       }
     }
-    lines.push(" " + t.fg(effective.reviewers.length ? "accent" : "dim", this.renderCostPreview()));
-    if (this.awaitingCostConfirm) {
-      lines.push(" " + t.fg("warning", "Press Enter again to launch this higher-cost run · Esc to revise"));
-    } else if (effective.reviewers.length > 0) {
-      lines.push(" " + t.fg("success", `✓ ${effective.reviewers.length} selected — press Enter to confirm${this.needsCostConfirm() ? " (confirmation required)" : ""}`));
+    if (!this.single) {
+      lines.push(" " + t.fg(effective.reviewers.length ? "accent" : "dim", this.renderCostPreview()));
+      if (this.awaitingCostConfirm) {
+        lines.push(" " + t.fg("warning", "Press Enter again to launch this higher-cost run · Esc to revise"));
+      } else if (effective.reviewers.length > 0) {
+        lines.push(" " + t.fg("success", `✓ ${effective.reviewers.length} selected — press Enter to confirm${this.needsCostConfirm() ? " (confirmation required)" : ""}`));
+      }
     }
     lines.push(t.fg("border", "═".repeat(width)));
     this.cachedViewport = this.viewportHeight();
@@ -313,7 +341,8 @@ export async function showExpertPicker(
   fileCount?: number,
   initial?: ReviewerSelection,
   rosters: Roster[] = [],
+  options: ExpertPickerOptions = {},
 ): Promise<ReviewerSelection | null> {
   return showOverlayPrompt<ReviewerSelection | null>(ctx, (tui, theme, finish) =>
-    new ExpertPicker(theme, finish, fileCount, tui, initial, rosters));
+    new ExpertPicker(theme, finish, fileCount, tui, initial, rosters, options));
 }

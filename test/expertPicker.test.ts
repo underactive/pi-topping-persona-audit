@@ -14,6 +14,8 @@ const ENTER = "\r";
 const ESCAPE = "\x1b";
 const CTRL_C = "\u0003";
 const DOWN = "\x1b[B";
+const LEFT = "\x1b[D";
+const RIGHT = "\x1b[C";
 const SPACE = " ";
 const BACKSPACE = "\u007f";
 const strip = (text: string): string => text.replace(/\x1b\[[0-9;]*m/g, "");
@@ -149,6 +151,56 @@ test("Enter on a roster returns one pass, ignores manual controls, and keeps the
   assert.equal(confirmed, undefined, "large roster requires the existing second Enter warning");
   picker.handleInput(ENTER);
   assert.deepEqual(confirmed, { reviewers: names, passes: 1 });
+});
+
+test("single reviewer picker excludes reviewers from the list and filter", () => {
+  const picker = new ExpertPicker(
+    theme,
+    () => {},
+    undefined,
+    { requestRender: () => {}, terminal: { rows: 1000 } },
+    undefined,
+    [],
+    { single: true, excluded: new Set(["Security Engineer"]) },
+  );
+  const initial = picker.render(WIDTH).map(strip).join("\n");
+  assert.doesNotMatch(initial, /Security Engineer/);
+
+  for (const char of "security") picker.handleInput(char);
+  const filtered = picker.render(WIDTH).map(strip).join("\n");
+  assert.match(filtered, /No reviewers match filter/);
+  assert.doesNotMatch(filtered, /Security Engineer/);
+});
+
+test("single reviewer picker confirms the highlighted reviewer on one Enter", () => {
+  let confirmed: ReviewerSelection | null | undefined;
+  const picker = new ExpertPicker(theme, (result) => { confirmed = result; }, undefined, undefined, undefined, [], { single: true });
+
+  picker.handleInput(ENTER);
+  assert.deepEqual(confirmed, { reviewers: ["Principal Engineer"], passes: 1 });
+});
+
+test("single reviewer picker ignores Space and pass controls", () => {
+  let confirmed: ReviewerSelection | null | undefined;
+  const picker = new ExpertPicker(theme, (result) => { confirmed = result; }, undefined, undefined, undefined, [], { single: true });
+
+  picker.handleInput(SPACE);
+  picker.handleInput(LEFT);
+  picker.handleInput(RIGHT);
+  picker.handleInput(ENTER);
+  assert.deepEqual(confirmed, { reviewers: ["Principal Engineer"], passes: 1 });
+});
+
+test("single reviewer picker uses single-select chrome without a cost footer", () => {
+  const picker = new ExpertPicker(theme, () => {}, undefined, undefined, undefined, [], { single: true });
+  const lines = picker.render(WIDTH);
+  const selected = highlighted(lines);
+  const rendered = lines.map(strip).join("\n");
+
+  assert.match(rendered, /Select a reviewer/);
+  assert.match(rendered, /↑↓ navigate · Enter confirm · Esc cancel/);
+  assert.match(strip(selected ?? ""), /❯ ✓ Principal Engineer/);
+  assert.doesNotMatch(rendered, /selected files|reviewer run|selected — press Enter/);
 });
 
 test("every picker reviewer resolves to a personality", () => {
