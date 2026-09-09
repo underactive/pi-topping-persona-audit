@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
 import { visibleWidth, type Component, type TUI } from "@earendil-works/pi-tui";
-import { showPhaseModelPicker, smartTruncateModelLabel, thinkingOffWarning, TwoPaneModelThinking, type PhaseModelPickerResult } from "../src/components/ModelPicker.ts";
-import { PROMPT_OVERLAY_OPTIONS, twoPaneWidths } from "../src/components/menuChrome.ts";
+import { modelThinkingPaneWidths, showPhaseModelPicker, smartTruncateModelLabel, thinkingOffWarning, TwoPaneModelThinking, type PhaseModelPickerResult } from "../src/components/ModelPicker.ts";
+import { PROMPT_OVERLAY_OPTIONS } from "../src/components/menuChrome.ts";
 import { PHASE_SLOTS, type ThinkingLevel } from "../src/modelConfig.ts";
 
 const HIGHLIGHT = "\x1b[48;5;236m";
@@ -111,11 +111,32 @@ test("model picker normalizes SelectList rows to the persona-audit marker and hi
 
   assert.ok(selected);
   assert.equal(visibleWidth(selected), 50);
-  const { left, right } = twoPaneWidths(50);
-  assert.deepEqual(bgWidths, [left, Math.max(0, right - 1)]);
+  const { left } = modelThinkingPaneWidths(50);
+  assert.deepEqual(bgWidths, [left]);
   assert.match(selected, /❯ test\/model/);
   assert.match(selected, /❯ off/);
   assert.doesNotMatch(selected, /→/);
+});
+
+test("model picker moves the selection highlight with pane focus", () => {
+  const picker = new TwoPaneModelThinking(
+    tui,
+    theme,
+    [{ provider: "test", id: "model" }],
+    {},
+    currentThinking,
+    context,
+  );
+  const { left, right } = modelThinkingPaneWidths(50);
+
+  bgWidths.length = 0;
+  picker.render(50);
+  assert.deepEqual(bgWidths, [left]);
+
+  picker.handleInput(RIGHT);
+  bgWidths.length = 0;
+  picker.render(50);
+  assert.deepEqual(bgWidths, [right]);
 });
 
 test("thinkingOffWarning flags off and no-thinking models, stays quiet on real levels", () => {

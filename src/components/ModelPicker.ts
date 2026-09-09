@@ -36,6 +36,7 @@ import {
   phaseModelChoiceLabel,
   PHASE_SLOTS,
   savePersonaAuditConfig,
+  THINKING_LEVELS,
   thinkingOptionsForModel,
   type ModelRef,
   type PhaseModelChoice,
@@ -52,7 +53,6 @@ import {
   renderMenuTopBorder,
   SELECTOR,
   showOverlayPrompt,
-  twoPaneWidths,
   wrapText,
   type MenuFooterContents,
   type MenuItem,
@@ -88,13 +88,14 @@ export class ConsistentSelectList extends SelectList {
     this.pickerTheme = theme;
   }
 
-  override render(width: number): string[] {
+  override render(width: number, highlight = true): string[] {
     return super.render(width).map((line) => {
       if (!line.startsWith(SELECTED_ROW_SENTINEL)) return line;
       const row = line.slice(SELECTED_ROW_SENTINEL.length)
         .replace(/^((?:\x1b\[[0-9;]*m)*)\u2192 /, `$1${SELECTOR} `);
       const clipped = truncateToWidth(row, width, "…");
-      return this.pickerTheme.bg("selectedBg", clipped + " ".repeat(Math.max(0, width - visibleWidth(clipped))));
+      const padded = clipped + " ".repeat(Math.max(0, width - visibleWidth(clipped)));
+      return highlight ? this.pickerTheme.bg("selectedBg", padded) : padded;
     });
   }
 }
@@ -158,6 +159,15 @@ export function smartTruncateModelLabel(text: string, maxWidth: number): string 
 const MODEL_LIST_LAYOUT: SelectListLayoutOptions = {
   truncatePrimary: ({ text, maxWidth }) => smartTruncateModelLabel(text, maxWidth),
 };
+
+export function modelThinkingPaneWidths(bodyWidth: number): { left: number; right: number } {
+  const divider = 1;
+  const longestLevel = THINKING_LEVELS.reduce((longest, level) => level.length > longest.length ? level : longest);
+  // One composed inset plus SelectList's two safety columns after its selector.
+  const rightMin = Math.max(visibleWidth(" Thinking"), visibleWidth(`${SELECTOR} ${longestLevel}`) + 3);
+  const right = Math.max(1, Math.min(rightMin, Math.max(1, bodyWidth - divider - 1)));
+  return { left: Math.max(1, bodyWidth - divider - right), right };
+}
 
 function parseRef(value: string): ModelRef {
   const idx = value.indexOf("/");
@@ -331,30 +341,35 @@ export class TwoPaneModelThinking {
   }
 
   render(bodyWidth: number): string[] {
-    const { left: leftWidth, right: rightWidth } = twoPaneWidths(bodyWidth);
+    const { left: leftWidth, right: rightWidth } = modelThinkingPaneWidths(bodyWidth);
     const column = (text: string, width: number) => truncateToWidth(text, width, "", true);
     const paneDivider = this.theme.fg("border", "│");
     const headers = column(
-      this.activePane === "model" ? this.theme.bold(this.theme.fg("accent", "Models")) : this.theme.bold("Models"),
+      this.activePane === "model" ? this.theme.bold(this.theme.fg("accent", " Models")) : this.theme.bold(" Models"),
       leftWidth,
     ) + paneDivider + column(
       ` ${this.activePane === "level" ? this.theme.bold(this.theme.fg("accent", "Thinking")) : this.theme.bold("Thinking")}`,
       rightWidth,
     );
-    const modelLines = this.modelList.render(leftWidth);
-    // Keep the gutter before thinking rows inside the pane width; the list itself
-    // owns only the columns after that leading space.
-    const levelLines = this.levelList.render(Math.max(0, rightWidth - 1));
+    const modelLines = this.modelList.render(Math.max(1, leftWidth - 1), false);
+    const levelLines = this.levelList.render(Math.max(1, rightWidth - 1), false);
     const rows = Math.max(modelLines.length, levelLines.length);
     const lines = [
-      ...(this.filter ? [column(this.theme.fg("muted", `filter: ${this.filter}`), bodyWidth)] : []),
+      ...(this.filter ? [column(this.theme.fg("muted", ` filter: ${this.filter}`), bodyWidth)] : []),
       headers,
     ];
     for (let index = 0; index < rows; index++) {
-      const line = column(modelLines[index] ?? "", leftWidth)
-        + paneDivider
-        + column(` ${levelLines[index] ?? ""}`, rightWidth);
-      lines.push(line);
+      const modelLine = modelLines[index] ?? "";
+      const levelLine = levelLines[index] ?? "";
+      let leftCell = column(` ${modelLine}`, leftWidth);
+      let rightCell = column(` ${levelLine}`, rightWidth);
+      if (this.activePane === "model" && modelLine.includes(SELECTOR)) {
+        leftCell = this.theme.bg("selectedBg", leftCell);
+      }
+      if (this.activePane === "level" && levelLine.includes(SELECTOR)) {
+        rightCell = this.theme.bg("selectedBg", rightCell);
+      }
+      lines.push(leftCell + paneDivider + rightCell);
     }
     const selectedLevel = this.levelList.getSelectedItem()?.value;
     if (selectedLevel && isThinkingLevel(selectedLevel)) {

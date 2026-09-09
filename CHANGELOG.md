@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Two-pane picker highlight spans full pane width** — selection background now applies only to the active pane's composed cell, matching the sibling project's layout.
+- **Thinking pane sized to longest level** — content-aware width calculation replaces the fixed 50/50 split, giving models the remaining width.
+
 ## [0.1.7] - 2026-09-04
 
 ### Changed
