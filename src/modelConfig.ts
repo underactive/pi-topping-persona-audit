@@ -37,9 +37,32 @@ export interface PhaseModelChoice {
 
 export type PhaseModelSelection = Record<PhaseSlot, PhaseModelChoice>;
 
-/** Meter cell colours, matching pi-topping's option list. `satisfies` proves each names a real theme colour. */
-export const METER_COLORS = ["accent", "border", "borderAccent", "success", "error", "warning"] as const satisfies readonly ThemeColor[];
+/** Fixed meter cell colours, matching pi-topping's option list. */
+const FIXED_METER_COLORS = ["accent", "border", "borderAccent", "success", "error", "warning"] as const satisfies readonly ThemeColor[];
+/** Monitor color options. `thinkingLevel` is a mode resolved per-phase at render time, not a static theme color. */
+export const METER_COLORS = ["thinkingLevel", ...FIXED_METER_COLORS] as const;
 export type MeterColor = (typeof METER_COLORS)[number];
+
+const THINKING_METER_COLORS: Record<ThinkingLevel, ThemeColor> = {
+  off: "thinkingOff",
+  minimal: "thinkingMinimal",
+  low: "thinkingLow",
+  medium: "thinkingMedium",
+  high: "thinkingHigh",
+  xhigh: "thinkingXhigh",
+  max: "thinkingMax",
+};
+
+/** Resolve a ThinkingLevel to its meter theme color, falling back to accent. */
+export function thinkingColorFor(thinking: ThinkingLevel | undefined): ThemeColor {
+  return thinking !== undefined ? THINKING_METER_COLORS[thinking] : "accent";
+}
+
+/** Resolve a MeterColor to a concrete ThemeColor for rendering. */
+export function resolveMeterColor(color: MeterColor, thinking: ThinkingLevel | undefined): ThemeColor {
+  if (color === "thinkingLevel") return thinkingColorFor(thinking);
+  return color;
+}
 
 export const METER_DIRECTIONS = ["ltr", "rtl"] as const;
 export type MeterDirection = (typeof METER_DIRECTIONS)[number];
@@ -51,7 +74,7 @@ export interface MeterSettings {
 }
 
 /** The appearance the table used before it became configurable. */
-export const DEFAULT_METER_SETTINGS: MeterSettings = { color: "accent", direction: "rtl" };
+export const DEFAULT_METER_SETTINGS: MeterSettings = { color: "thinkingLevel", direction: "rtl" };
 
 /**
  * Register levels for the Linus Torvalds reviewer, ordered coolest first.

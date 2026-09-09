@@ -14,7 +14,7 @@ import {
   type ActivityMeterLevel,
 } from "../activityMeter.ts";
 import { normalizeFindingText } from "../dedup.ts";
-import { DEFAULT_METER_SETTINGS, type MeterSettings } from "../modelConfig.ts";
+import { DEFAULT_METER_SETTINGS, resolveMeterColor, type MeterSettings, type ThinkingLevel } from "../modelConfig.ts";
 import { shimmerString, type ShimmerTheme } from "../shimmer.ts";
 import type { Finding, HeadlessProgress } from "../types.ts";
 import { wrapText } from "./menuChrome.ts";
@@ -201,6 +201,8 @@ export interface AuditProgressView {
   readonly baseHash: string | undefined;
   /** Model assigned to each phase, for the band above the table header. */
   phaseModels(): Partial<Record<AuditPhase, string>>;
+  /** Thinking level assigned to each phase, for per-phase meter coloring. */
+  phaseThinking(): Partial<Record<AuditPhase, ThinkingLevel>>;
   /** The phase currently highlighted in the band; undefined highlights none (e.g. a frozen, finished run). */
   activePhase(): AuditPhase | undefined;
   /** Whether any row is still working — lets the ticker skip progressRows() while idle. */
@@ -219,6 +221,8 @@ export interface AuditProgressSnapshot {
   /** Absent on entries persisted before the total-time footer existed. */
   totalMs?: number;
   phaseModels: Partial<Record<AuditPhase, string>>;
+  /** Absent on entries persisted before per-phase meter coloring was added. */
+  phaseThinking?: Partial<Record<AuditPhase, ThinkingLevel>>;
   rows: AuditProgressRow[];
   meterLevels: Record<string, ActivityMeterLevel[]>;
 }
@@ -283,6 +287,7 @@ export class AuditProgressWidget implements AuditProgressView {
   private summary = "";
   private mounted = false;
   private models: Partial<Record<AuditPhase, string>> = {};
+  private thinking: Partial<Record<AuditPhase, ThinkingLevel>> = {};
   private active: AuditPhase | undefined;
   private activeRowCount = 0;
   private table: AuditProgressTable | undefined;
@@ -501,6 +506,15 @@ export class AuditProgressWidget implements AuditProgressView {
     return this.models;
   }
 
+  /** Assign the thinking level used to color each phase's activity meter. */
+  setPhaseThinking(thinking: Partial<Record<AuditPhase, ThinkingLevel>>): void {
+    this.thinking = thinking;
+  }
+
+  phaseThinking(): Partial<Record<AuditPhase, ThinkingLevel>> {
+    return this.thinking;
+  }
+
   /** Mark which phase is highlighted in the band. Undefined highlights none. */
   setActivePhase(phase: AuditPhase | undefined): void {
     this.active = phase;
@@ -522,6 +536,7 @@ export class AuditProgressWidget implements AuditProgressView {
       summary: this.summary,
       totalMs: this.totalMs(),
       phaseModels: this.models,
+      phaseThinking: this.thinking,
       // Live fix-now detail (cancel hints, settling states) is transient UI
       // state, not run history — never freeze it into the transcript.
       rows: this.progressRows().map((row) => ({ ...row, fixNowDetail: undefined })),
@@ -759,10 +774,11 @@ export class AuditProgressTable implements Component {
     }
   }
 
-  private renderMeter(key: string, active: boolean): string {
+  private renderMeter(key: string, active: boolean, phase: AuditPhase): string {
     const meter = this.meters.get(key)?.meter;
     if (!meter) return this.theme.fg("dim", "⢀".repeat(ACTIVITY_METER_WIDTH));
-    return meter.render((level, char) => ActivityMeter.colorizeCell(level, char, this.theme, this.meterSettings.color, !active));
+    const color = resolveMeterColor(this.meterSettings.color, this.view.phaseThinking()[phase]);
+    return meter.render((level, char) => ActivityMeter.colorizeCell(level, char, this.theme, color, !active));
   }
 
   /** How many lines the table may use, so it never crowds out the editor below it. */
@@ -942,7 +958,7 @@ export class AuditProgressTable implements Component {
           icon,
           label,
           ctx: contextCell(r.contextTokens, r.contextWindow),
-          meter: this.renderMeter(r.key, active),
+          meter: this.renderMeter(r.key, active, r.phase),
           activity: status,
           turns: String(r.turns),
           toolCalls: String(r.toolCalls ?? 0),
@@ -1086,6 +1102,7 @@ export function renderAuditSnapshot(
     scope: snapshot.scope,
     baseHash: snapshot.baseHash,
     phaseModels: () => snapshot.phaseModels,
+    phaseThinking: () => snapshot.phaseThinking ?? {},
     activePhase: () => undefined,
     hasActiveRows: () => false,
   };

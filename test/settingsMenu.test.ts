@@ -113,13 +113,13 @@ test("Save resolves the cycled values and settles the overlay", async () => {
 test("cycling wraps around every value list", async () => {
   const menu = mount(config({ color: "accent", direction: "rtl" }));
   menu.send(LEFT, DOWN, RIGHT);
-  assert.match(menu.render(), /‹ warning ›/);
+  assert.match(menu.render(), /‹ thinkingLevel ›/);
 
   menu.send(DOWN, LEFT);
   assert.match(menu.render(), /‹ LKML \(max\) ›/);
 
   menu.send(TAB, ENTER);
-  assert.deepEqual(await menu.result, { action: "save", draft: config({ color: "warning", direction: "ltr" }, "lkml") });
+  assert.deepEqual(await menu.result, { action: "save", draft: config({ color: "thinkingLevel", direction: "ltr" }, "lkml") });
 });
 
 test("the max-rounds row renders the saved count and cycles to a new one on Save", async () => {
@@ -143,7 +143,7 @@ test("Reviewer rosters action carries the complete staged draft", async () => {
   menu.send(RIGHT, DOWN, DOWN, DOWN, DOWN, ENTER);
   assert.deepEqual(await menu.result, {
     action: "rosters",
-    draft: { ...initial, meter: { color: "border", direction: "rtl" } },
+    draft: { ...initial, meter: { color: "accent", direction: "rtl" } },
   });
 });
 

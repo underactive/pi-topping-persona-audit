@@ -11,6 +11,8 @@ import {
   MAX_VERIFY_ROUNDS,
   MIN_VERIFY_ROUNDS,
   parsePersonaAuditSettings,
+  resolveMeterColor,
+  thinkingColorFor,
   thinkingOptionsForModel,
   type PersonaAuditConfig,
 } from "../src/modelConfig.ts";
@@ -22,7 +24,7 @@ test("parsePersonaAuditSettings round-trips a well-formed settings file", () => 
       triage: { ref: { provider: "openai", id: "gpt-5" }, thinking: "medium" },
     },
     thinkingOverrides: { "anthropic/claude-opus-4-6": "high" },
-    meter: { color: "warning", direction: "ltr" },
+    meter: { color: "thinkingLevel", direction: "ltr" },
     temperament: "lkml",
     maxVerifyRounds: 5,
     rosters: [{ name: "Core5", reviewers: ["Architecture", "Security"] }],
@@ -77,14 +79,23 @@ test("parsePersonaAuditSettings defaults an unknown temperament", () => {
 
 test("parsePersonaAuditSettings defaults the meter and rejects each invalid field independently", () => {
   assert.deepEqual(parsePersonaAuditSettings("{}").meter, DEFAULT_METER_SETTINGS);
+  assert.equal(parsePersonaAuditSettings("{}").meter.color, "thinkingLevel");
   assert.deepEqual(
     parsePersonaAuditSettings(JSON.stringify({ meter: { color: "chartreuse", direction: "sideways" } })).meter,
     DEFAULT_METER_SETTINGS,
   );
   assert.deepEqual(
     parsePersonaAuditSettings(JSON.stringify({ meter: { color: "chartreuse", direction: "ltr" } })).meter,
-    { color: DEFAULT_METER_SETTINGS.color, direction: "ltr" },
+    { color: "thinkingLevel", direction: "ltr" },
   );
+});
+
+test("thinking-level meter colors resolve to native theme colors", () => {
+  assert.equal(thinkingColorFor("high"), "thinkingHigh");
+  assert.equal(thinkingColorFor(undefined), "accent");
+  assert.equal(resolveMeterColor("thinkingLevel", "high"), "thinkingHigh");
+  assert.equal(resolveMeterColor("thinkingLevel", undefined), "accent");
+  assert.equal(resolveMeterColor("warning", "high"), "warning");
 });
 
 test("parsePersonaAuditSettings drops unknown thinking levels and malformed phase entries", () => {

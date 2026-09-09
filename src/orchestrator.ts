@@ -1426,6 +1426,12 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
       Implement: implementModel.model,
       Verify: verifyModel.model,
     });
+    progress?.setPhaseThinking({
+      ...(input.resume ? {} : { Review: reviewModel.thinking }),
+      Triage: triageModel.thinking,
+      Implement: implementModel.thinking,
+      Verify: verifyModel.thinking,
+    });
 
     // ── Step b: reviewer passes (cache-aware, concurrency-limited) ──────
     const cachedOutputs = input.cacheKey ? await loadCache(ctx.cwd, input.cacheKey) : [];
@@ -1575,7 +1581,10 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
           label: phaseModelChoiceLabel(decision.model),
         };
         reportCtx.phaseModels = { ...reportCtx.phaseModels, Review: reviewModel.label };
-        if (progress) progress.setPhaseModels({ ...progress.phaseModels(), Review: reviewModel.model });
+        if (progress) {
+          progress.setPhaseModels({ ...progress.phaseModels(), Review: reviewModel.model });
+          progress.setPhaseThinking({ ...progress.phaseThinking(), Review: reviewModel.thinking });
+        }
       }
       for (const task of decision.retries) {
         if (decision.model) uncacheable.add(`${task.reviewer}\u0000${task.pass}`);
@@ -1708,7 +1717,10 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
           label: phaseModelChoiceLabel(decision.model),
         };
         reportCtx.phaseModels = { ...reportCtx.phaseModels, Triage: triageModel.label };
-        if (progress) progress.setPhaseModels({ ...progress.phaseModels(), Triage: triageModel.model });
+        if (progress) {
+          progress.setPhaseModels({ ...progress.phaseModels(), Triage: triageModel.model });
+          progress.setPhaseThinking({ ...progress.phaseThinking(), Triage: triageModel.thinking });
+        }
       };
 
       const reconcileOptions = (): HeadlessOptions => ({
@@ -2088,7 +2100,10 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
             const label = modelRefLabel(decision.model.ref);
             verifyModel = { model: label, thinking: decision.model.thinking, label: phaseModelChoiceLabel(decision.model) };
             reportCtx.phaseModels = { ...reportCtx.phaseModels, Verify: verifyModel.label };
-            if (progress) progress.setPhaseModels({ ...progress.phaseModels(), Verify: verifyModel.model });
+            if (progress) {
+              progress.setPhaseModels({ ...progress.phaseModels(), Verify: verifyModel.model });
+              progress.setPhaseThinking({ ...progress.phaseThinking(), Verify: verifyModel.thinking });
+            }
           };
           // A verifier failure is usually provider-level (credits, rate limit),
           // and skipping it leaves every accepted finding at "cannot-verify", so

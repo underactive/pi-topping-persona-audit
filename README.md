@@ -96,7 +96,7 @@ Exactly one of `--diff` or `--full` is required.
 
 | Setting | Values | Default |
 | --- | --- | --- |
-| Token activity monitor color | `accent`, `border`, `borderAccent`, `success`, `error`, `warning` | `accent` |
+| Token activity monitor color | `thinkingLevel`, `accent`, `border`, `borderAccent`, `success`, `error`, `warning` | `thinkingLevel` |
 | Token activity monitor direction | Left to Right, Right to Left | Right to Left |
 | Linus Torvalds temperament | neutral (min), caustic, LKML (max) | neutral (min) |
 | Max fix + verify rounds | `1`–`10` | `3` |
@@ -430,7 +430,9 @@ for the whole run and is torn down on completion, cancellation, `/reload`, and
 - **MONITOR** — an eight-cell meter driven by generated-output rate. Providers
   that stream `usage.output` drive it exactly; otherwise it is estimated from
   streamed text/thinking deltas. Its color and scroll direction are set in
-  [`/persona-audit-settings`](#settings).
+  [`/persona-audit-settings`](#settings). The `thinkingLevel` color mode tints
+  each row by the thinking level assigned to its phase, falling back to
+  `accent` when the level is unknown.
 - **ACTIVITY** — the row's status, with the tool call currently executing on an
   indented `↳` sub-row beneath it.
 - **TURNS / TOOLS / COST / TIME** — assistant turns completed, cumulative tool

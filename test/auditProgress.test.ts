@@ -673,6 +673,7 @@ test("snapshot survives a JSON round-trip and renderAuditSnapshot redraws the se
   widget.startRow("a", "reviewing…");
   widget.applyProgress("a", progressSnapshot({ outputTokens: 500 }));
   widget.setPhaseModels({ Review: "anthropic/claude-opus-4" });
+  widget.setPhaseThinking({ Review: "high" });
   widget.setSummary("1/1 reviewer passes · 3 findings");
   widget.mount();
   await new Promise((resolve) => setTimeout(resolve, 250));
@@ -683,6 +684,7 @@ test("snapshot survives a JSON round-trip and renderAuditSnapshot redraws the se
   widget.stop();
 
   assert.equal(roundTripped.meterLevels.a?.length, ACTIVITY_METER_WIDTH, "the meter trace round-trips at full width");
+  assert.deepEqual(roundTripped.phaseThinking, { Review: "high" });
 
   const theme: ProgressTheme = { fg: (_color, text) => text };
   const frozenLines = renderAuditSnapshot(roundTripped, theme).render(120).map(strip);
@@ -693,11 +695,12 @@ test("snapshot survives a JSON round-trip and renderAuditSnapshot redraws the se
   assert.ok(frozenLines.some((l) => l.includes("claude-opus-4")), "band survives the round trip");
 });
 
-test("the meter renders in the configured colour, defaulting to accent", () => {
+test("the meter resolves thinking-level colours per phase and preserves fixed colours", () => {
   const tagged: ProgressTheme = { fg: (color, text) => `<${color}>${text}` };
   const snapshot: AuditProgressSnapshot = {
     summary: "done",
     phaseModels: {},
+    phaseThinking: { Review: "high", Triage: "low" },
     rows: [{
       key: "a",
       phase: "Review",
@@ -709,17 +712,41 @@ test("the meter renders in the configured colour, defaulting to accent", () => {
       outputTokens: 500,
       outputRevision: 0,
       firstOfPhase: true,
+    }, {
+      key: "b",
+      phase: "Triage",
+      label: "collection",
+      state: "done",
+      statusText: "done",
+      elapsedMs: 1_000,
+      turns: 0,
+      outputTokens: 0,
+      outputRevision: 0,
+      firstOfPhase: true,
     }],
     // A non-idle cell is the only one that takes the configured colour; idle cells stay dim.
-    meterLevels: { a: [0, 0, 0, 0, 0, 0, 0, 7] },
+    meterLevels: {
+      a: [0, 0, 0, 0, 0, 0, 0, 7],
+      b: [0, 0, 0, 0, 0, 0, 0, 7],
+    },
   };
+
+  const thinking = renderAuditSnapshot(snapshot, tagged, { color: "thinkingLevel", direction: "ltr" }).render(120).join("\n");
+  assert.match(thinking, /<thinkingHigh>⣿/);
+  assert.match(thinking, /<thinkingLow>⣿/);
 
   const configured = renderAuditSnapshot(snapshot, tagged, { color: "error", direction: "ltr" }).render(120).join("\n");
   assert.match(configured, /<error>⣿/);
 
-  const fallback = renderAuditSnapshot(snapshot, tagged).render(120).join("\n");
+  const legacySnapshot: AuditProgressSnapshot = {
+    summary: snapshot.summary,
+    phaseModels: snapshot.phaseModels,
+    rows: snapshot.rows,
+    meterLevels: snapshot.meterLevels,
+  };
+  const fallback = renderAuditSnapshot(legacySnapshot, tagged).render(120).join("\n");
   assert.match(fallback, /<accent>⣿/);
-  const legacy = renderAuditSnapshot(snapshot, { fg: (_color, text) => text }).render(120).join("\n");
+  const legacy = renderAuditSnapshot(legacySnapshot, { fg: (_color, text) => text }).render(120).join("\n");
   assert.match(legacy, /Security Engineer.*0.*—.*0:01/, "legacy rows default missing telemetry to 0 and —");
 });
 
