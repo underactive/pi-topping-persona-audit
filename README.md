@@ -2,6 +2,8 @@
 
 A [Pi coding agent](https://github.com/earendil-works/pi) extension that implements **`/persona-audit`** — multi-persona code reviews with interactive TUI expert selection and findings triage.
 
+<img src="https://raw.githubusercontent.com/underactive/pi-topping-persona-audit/main/media/persona-audit-workflow-animated.svg" alt="/persona-audit workflow: scope fans out to isolated reviewer personas, an adjudicator dedups and reconciles their findings, you triage each one, up to three fix agents apply accepted fixes in parallel, and a verifier judges every fix and runs the check/lint/test gate, looping failures back for repair" width="100%">
+
 ![Phase Model Selection](https://raw.githubusercontent.com/underactive/pi-topping-persona-audit/main/media/phase_models.png)
 ![Persona Audit Demo](https://raw.githubusercontent.com/underactive/pi-topping-persona-audit/main/media/persona_audit_demo.png)
 ![Findings Review](https://raw.githubusercontent.com/underactive/pi-topping-persona-audit/main/media/findings_review.png)
