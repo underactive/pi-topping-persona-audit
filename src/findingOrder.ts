@@ -5,7 +5,7 @@ import {
   type Finding,
 } from "./types.ts";
 
-export function exploitabilityIndex(finding: Finding): number {
+function exploitabilityIndex(finding: Finding): number {
   return finding.exploitability
     ? EXPLOITABILITY_ORDER.indexOf(finding.exploitability)
     : EXPLOITABILITY_ORDER.length;
