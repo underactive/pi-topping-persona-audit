@@ -402,13 +402,17 @@ function firstJsonArray(texts: string[]): unknown[] | null {
  * the earliest candidate (final message first), preserving firstJsonArray's
  * behavior when scoring cannot separate them.
  */
-function bestJsonArray(texts: string[], score: (items: unknown[]) => number): unknown[] | null {
+function bestJsonArray(
+  texts: string[],
+  score: (items: unknown[]) => number,
+  allowEmpty = false,
+): unknown[] | null {
   let best: unknown[] | null = null;
   let bestScore = -1;
   for (const text of texts) {
     if (!text.trim()) continue;
     for (const items of extractJsonArrayCandidates(text)) {
-      if (items.length === 0) continue;
+      if (!allowEmpty && items.length === 0) continue;
       const s = score(items);
       if (s > bestScore) {
         best = items;
@@ -443,34 +447,24 @@ export function crossExaminationInputFindings(deduped: Finding[], reviewer: stri
 
 /** Empty arrays are valid cross-examination output, unlike the other structured-output passes. */
 function crossExaminationItems(texts: string[]): unknown[] | null {
-  let best: unknown[] | null = null;
-  let bestScore = -1;
-  for (const text of texts) {
-    if (!text.trim()) continue;
-    for (const items of extractJsonArrayCandidates(text)) {
-      const score = items.reduce<number>((count, raw) => {
-        if (!isRecord(raw)) return count;
-        if (raw.kind === "dispute") {
-          const verdict = normalizeFindingText(raw.verdict).toLowerCase();
-          return count + (Number.isFinite(raw.index) && DISPUTE_VERDICT_SET.has(verdict) ? 1 : 0);
-        }
-        if (
-          raw.kind === "composite" &&
-          Array.isArray(raw.basedOn) &&
-          raw.basedOn.length > 0 &&
-          coerceFinding(raw, "cross-examination scorer")
-        ) {
-          return count + 1;
-        }
-        return count;
-      }, 0);
-      if (score > bestScore) {
-        best = items;
-        bestScore = score;
+  const scorer = (items: unknown[]) =>
+    items.reduce<number>((count, raw) => {
+      if (!isRecord(raw)) return count;
+      if (raw.kind === "dispute") {
+        const verdict = normalizeFindingText(raw.verdict).toLowerCase();
+        return count + (Number.isFinite(raw.index) && DISPUTE_VERDICT_SET.has(verdict) ? 1 : 0);
       }
-    }
-  }
-  return best;
+      if (
+        raw.kind === "composite" &&
+        Array.isArray(raw.basedOn) &&
+        raw.basedOn.length > 0 &&
+        coerceFinding(raw, "cross-examination scorer")
+      ) {
+        return count + 1;
+      }
+      return count;
+    }, 0);
+  return bestJsonArray(texts, scorer, true);
 }
 
 const crossExaminationFindingKey = (finding: Pick<Finding, "file" | "line" | "category">): string =>
