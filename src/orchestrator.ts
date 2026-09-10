@@ -2073,7 +2073,7 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
 
           progress?.settleRow(rowKey, "done", `${formatTokens(result.usage.outputTokens)} tokens`);
           freshCrossExaminations.set(reviewer, {
-            texts: [result.finalText, result.allText],
+            texts: [...new Set([result.finalText, result.allText].filter((text) => text.trim()))],
             cacheOutput: result.allText,
           });
         });
