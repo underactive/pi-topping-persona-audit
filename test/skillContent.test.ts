@@ -8,6 +8,7 @@ import {
   FIX_NOW_APPLY_DIRECTIVE,
   PERSONALITIES,
   REGRESSION_TEST_DIRECTIVE,
+  CROSS_EXAMINATION_DIRECTIVE,
   REVIEWER_OUTPUT_CONTRACT,
   REVOICE_DIRECTIVE,
   VERIFIER_DIRECTIVE,
@@ -196,6 +197,18 @@ test("register enforcement rides only hot Linus registers and reads as contract"
     assert.match(block, /COMPLIANT — always write/);
   }
   assert.notEqual(hot[0], hot[1]);
+});
+
+test("cross-examination directive permits silence and caps output", () => {
+  assert.match(CROSS_EXAMINATION_DIRECTIVE, /empty array `\[\]` is a valid and expected answer/i);
+  assert.match(CROSS_EXAMINATION_DIRECTIVE, /at most 10 items/i);
+});
+
+test("reconcile directive carries cross-examination evidence and orders exploitability", () => {
+  assert.match(ADJUDICATOR_RECONCILE_DIRECTIVE, /disputes/);
+  assert.match(ADJUDICATOR_RECONCILE_DIRECTIVE, /derivedFrom/);
+  assert.match(ADJUDICATOR_RECONCILE_DIRECTIVE, /exploitability/);
+  assert.match(ADJUDICATOR_RECONCILE_DIRECTIVE, /direct.*conditional.*theoretical.*none/s);
 });
 
 test("revoice directive is voice-only, freezes severity, and states its contract", () => {

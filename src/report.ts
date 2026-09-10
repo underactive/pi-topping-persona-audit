@@ -10,6 +10,7 @@ import { lstat, mkdir, realpath, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 import { normalizeFindingText, normalizeMultilineText } from "./dedup.ts";
 import { HANDOFF_SCHEMA_VERSION, renderHandoffResumeBlock } from "./handoff.ts";
+import { compareFindingsByExploitability } from "./findingOrder.ts";
 import { MIN_WAIT_DISPLAY_MS } from "./runClock.ts";
 import type {
   AuditMode,
@@ -66,6 +67,8 @@ export interface CollectionDiagnostics {
   annotationNote?: string;
   /** Set when the register re-voice pass was degraded or unavailable. */
   revoiceNote?: string;
+  /** Non-fatal degradation notes from reviewer cross-examination passes. */
+  crossExaminationNotes?: string[];
   /** Accepted findings dropped because their file sits outside the audited manifest. */
   outOfScope?: Finding[];
 }
@@ -281,6 +284,15 @@ function findingLines(finding: Finding, extra?: string): string[] {
   if (finding.recommendationReason) {
     lines.push(`  - Adjudicator: ${finding.recommendationReason}`);
   }
+  if (finding.exploitability) {
+    lines.push(
+      `  - Exploitability: ${finding.exploitability}${finding.exploitabilityReason ? ` — ${finding.exploitabilityReason}` : ""}`,
+    );
+  }
+  for (const dispute of finding.disputes ?? []) {
+    lines.push(`  - Disputed by ${dispute.reviewer} (${dispute.verdict}): ${dispute.reason}`);
+  }
+  if (finding.derivedFrom?.length) lines.push(`  - Derived from: ${finding.derivedFrom.join(", ")}`);
   if (extra) lines.push(`  - ${extra}`);
   return lines;
 }
@@ -288,7 +300,35 @@ function findingLines(finding: Finding, extra?: string): string[] {
 function findingsSection(title: string, findings: Finding[], emptyText: string): string {
   const header = `### ${title} (${findings.length})`;
   if (findings.length === 0) return `${header}\n\n${emptyText}`;
-  return `${header}\n\n${findings.flatMap((f) => findingLines(f)).join("\n")}`;
+  return `${header}\n\n${[...findings].sort(compareFindingsByExploitability).flatMap((f) => findingLines(f)).join("\n")}`;
+}
+
+function crossExaminationsSection(findings: Finding[]): string[] {
+  const disputed = findings.filter((finding) => finding.disputes?.length);
+  const composites = findings.filter((finding) => finding.derivedFrom?.length);
+  if (disputed.length === 0 && composites.length === 0) return [];
+  return [
+    "### Cross-examinations",
+    "",
+    "#### Disputes",
+    "",
+    ...(disputed.length > 0
+      ? disputed.flatMap((finding) => [
+          `- **${findingRef(finding)}** — ${finding.category}`,
+          ...(finding.disputes ?? []).map(
+            (dispute) => `  - ${dispute.reviewer} (${dispute.verdict}): ${dispute.reason}`,
+          ),
+        ])
+      : ["None."]),
+    "",
+    "#### Composite findings",
+    "",
+    ...(composites.length > 0
+      ? composites.map(
+          (finding) => `- **${findingRef(finding)}** — ${finding.category}; derived from ${finding.derivedFrom!.join(", ")}`,
+        )
+      : ["None."]),
+  ];
 }
 
 /** Findings fixed one at a time through the review overlay's Fix Now flow, each with its commit. */
@@ -405,6 +445,9 @@ function collectionSection(ctx: ReportContext, diag: CollectionDiagnostics): str
   }
   if (diag.revoiceNote) {
     lines.push(`- Register re-voice degradation: ${diag.revoiceNote}`);
+  }
+  for (const note of diag.crossExaminationNotes ?? []) {
+    lines.push(`- Cross-examination degradation: ${normalizeFindingText(note)}`);
   }
   return lines.join("\n");
 }
@@ -564,6 +607,12 @@ export function renderCompactReport(
   },
 ): string {
   const fixed = opts.fixed ?? [];
+  const crossExaminationLines = crossExaminationsSection([
+    ...opts.deferred,
+    ...opts.rejected,
+    ...fixed.map((entry) => entry.finding),
+    ...(opts.diagnostics.outOfScope ?? []),
+  ]);
   const reasonText =
     opts.reason === "no-findings"
       ? "No findings were reported by any reviewer pass."
@@ -584,6 +633,8 @@ export function renderCompactReport(
     "",
     findingsSection("Rejected", opts.rejected, "None."),
     "",
+    ...crossExaminationLines,
+    ...(crossExaminationLines.length > 0 ? [""] : []),
     noFindingsReviewersSection(opts.diagnostics),
     "",
     collectionSection(ctx, opts.diagnostics),
@@ -638,6 +689,13 @@ export function renderFullReport(
   },
 ): string {
   const modelsLine = phaseModelsLine(ctx.phaseModels);
+  const crossExaminationLines = crossExaminationsSection([
+    ...opts.accepted,
+    ...opts.deferred,
+    ...opts.rejected,
+    ...(opts.fixed ?? []).map((entry) => entry.finding),
+    ...(opts.diagnostics.outOfScope ?? []),
+  ]);
   return [
     frontmatter(ctx, `Persona audit of ${ctx.scope}`),
     "",
@@ -655,6 +713,8 @@ export function renderFullReport(
     "",
     findingsSection("Rejected", opts.rejected, "None."),
     "",
+    ...crossExaminationLines,
+    ...(crossExaminationLines.length > 0 ? [""] : []),
     noFindingsReviewersSection(opts.diagnostics),
     "",
     collectionSection(ctx, opts.diagnostics),
@@ -725,6 +785,7 @@ export function renderChatSummary(summary: AuditSummary): string {
   if (summary.implementFailedNote) lines.push(`Note: ${summary.implementFailedNote}`);
   if (summary.annotationNote) lines.push(`Note: ${summary.annotationNote}`);
   if (summary.revoiceNote) lines.push(`Note: ${summary.revoiceNote}`);
+  for (const note of summary.crossExaminationNotes ?? []) lines.push(`Note: ${normalizeFindingText(note)}`);
   lines.push(
     "",
     "### Reviewers Used",

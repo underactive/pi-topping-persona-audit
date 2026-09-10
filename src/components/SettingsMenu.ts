@@ -2,9 +2,10 @@
  * Settings menu for /persona-audit-settings.
  *
  * Covers the progress table's activity meter — the MONITOR column — the Linus
- * Torvalds reviewer's register, the fix→verify round cap, reviewer rosters,
- * and the dispatch model that inspects the repo to recommend reviewers. Values
- * are chosen inline with the left/right keys and committed with the Save
+ * Torvalds reviewer's register, reviewer cross-examinations, the fix→verify round cap,
+ * reviewer rosters, and the dispatch model that inspects the repo to recommend
+ * reviewers. Values are chosen inline with the left/right keys and committed
+ * with the Save
  * button; Esc closes without writing, since this is the only screen and has
  * nowhere to step back to. The dispatch row opens the same two-pane
  * model/thinking selector the phase picker uses, and Esc there returns here.
@@ -21,10 +22,12 @@ import {
   METER_DIRECTIONS,
   MIN_VERIFY_ROUNDS,
   phaseModelChoiceLabel,
+  CROSS_EXAMINATION_MODES,
   TEMPERAMENTS,
   type MeterDirection,
   type ModelRef,
   type PersonaAuditConfig,
+  type CrossExaminationMode,
   type Temperament,
   type ThinkingLevel,
 } from "../modelConfig.ts";
@@ -40,6 +43,13 @@ const TEMPERAMENT_LABELS: Record<Temperament, string> = {
   calibrated: "neutral (min)",
   caustic: "caustic",
   lkml: "LKML (max)",
+};
+
+/** Cross-examination-pass labels, keyed by the persisted mode. */
+const CROSS_EXAMINATION_LABELS: Record<CrossExaminationMode, string> = {
+  off: "off",
+  "red-team": "red team specialists",
+  all: "all reviewers",
 };
 
 /** The selectable round counts, MIN..MAX, as the display strings the row cycles through. */
@@ -141,6 +151,17 @@ class SettingsMenuComponent implements Component {
         compact: true,
         onChange: (index: number) => {
           draft.maxVerifyRounds = index + MIN_VERIFY_ROUNDS;
+        },
+      },
+      {
+        id: "crossExamination",
+        label: "Cross-examination pass",
+        description: "Second pass where reviewers dispute or extend each other's findings.",
+        values: CROSS_EXAMINATION_MODES.map((mode) => CROSS_EXAMINATION_LABELS[mode]),
+        valueIndex: CROSS_EXAMINATION_MODES.indexOf(draft.crossExamination),
+        compact: true,
+        onChange: (index: number) => {
+          draft.crossExamination = CROSS_EXAMINATION_MODES[index]!;
         },
       },
       {

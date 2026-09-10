@@ -7,8 +7,21 @@
  * owns that block's serialization, parsing, and validation.
  */
 
-import { CATEGORY_PRIORITY, SEVERITY_ORDER } from "./types.ts";
-import type { ChangeKind, Finding, FindingCategory, FindingSeverity } from "./types.ts";
+import {
+  CATEGORY_PRIORITY,
+  DISPUTE_VERDICTS,
+  EXPLOITABILITY_ORDER,
+  SEVERITY_ORDER,
+} from "./types.ts";
+import type {
+  ChangeKind,
+  DisputeVerdict,
+  Exploitability,
+  Finding,
+  FindingCategory,
+  FindingDispute,
+  FindingSeverity,
+} from "./types.ts";
 
 export const HANDOFF_SCHEMA_VERSION = 1;
 
@@ -62,6 +75,24 @@ function isChangeKind(value: unknown): value is ChangeKind {
   return value === "signature" || value === "behavior" || value === "internal" || value === "cosmetic";
 }
 
+function isDisputeVerdict(value: unknown): value is DisputeVerdict {
+  return typeof value === "string" && (DISPUTE_VERDICTS as readonly string[]).includes(value);
+}
+
+function isExploitability(value: unknown): value is Exploitability {
+  return typeof value === "string" && (EXPLOITABILITY_ORDER as readonly string[]).includes(value);
+}
+
+function isFindingDispute(value: unknown): value is FindingDispute {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const dispute = value as Record<string, unknown>;
+  return typeof dispute.reviewer === "string"
+    && dispute.reviewer.length > 0
+    && isDisputeVerdict(dispute.verdict)
+    && typeof dispute.reason === "string"
+    && dispute.reason.length > 0;
+}
+
 function validateFinding(raw: unknown, index: number): Finding {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     throw new Error(`Handoff resume data is invalid: findings[${index}] is not an object.`);
@@ -97,6 +128,22 @@ function validateFinding(raw: unknown, index: number): Finding {
   }
   if (typeof f.recommendationReason === "string" && f.recommendationReason) {
     finding.recommendationReason = f.recommendationReason;
+  }
+  const disputes = Array.isArray(f.disputes) ? f.disputes.filter(isFindingDispute) : [];
+  if (disputes.length > 0) {
+    finding.disputes = disputes;
+  }
+  const derivedFrom = Array.isArray(f.derivedFrom)
+    ? f.derivedFrom.filter((source): source is string => typeof source === "string" && source.length > 0)
+    : [];
+  if (derivedFrom.length > 0) {
+    finding.derivedFrom = derivedFrom;
+  }
+  if (isExploitability(f.exploitability)) {
+    finding.exploitability = f.exploitability;
+  }
+  if (typeof f.exploitabilityReason === "string" && f.exploitabilityReason) {
+    finding.exploitabilityReason = f.exploitabilityReason;
   }
   return finding;
 }

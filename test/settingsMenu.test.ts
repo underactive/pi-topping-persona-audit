@@ -6,10 +6,12 @@ import { showSettingsMenu, type SettingsMenuResult } from "../src/components/Set
 import { PROMPT_OVERLAY_OPTIONS } from "../src/components/menuChrome.ts";
 import {
   DEFAULT_METER_SETTINGS,
+  DEFAULT_CROSS_EXAMINATION_MODE,
   DEFAULT_TEMPERAMENT,
   DEFAULT_VERIFY_ROUNDS,
   type MeterSettings,
   type PersonaAuditConfig,
+  type CrossExaminationMode,
   type Temperament,
 } from "../src/modelConfig.ts";
 
@@ -29,8 +31,8 @@ const TAB = "\t";
 const ENTER = "\r";
 const ESCAPE = "\x1b";
 const BACKSPACE = "\x7f";
-/** Row 6: color, direction, temperament, max-rounds, rosters, then the dispatch model. */
-const TO_DISPATCH_ROW = [DOWN, DOWN, DOWN, DOWN, DOWN];
+/** Row 7: color, direction, temperament, max-rounds, crossExamination, rosters, then dispatch. */
+const TO_DISPATCH_ROW = [DOWN, DOWN, DOWN, DOWN, DOWN, DOWN];
 
 interface Mounted {
   send(...keys: string[]): void;
@@ -44,11 +46,13 @@ const config = (
   meter: MeterSettings,
   temperament: Temperament = DEFAULT_TEMPERAMENT,
   maxVerifyRounds: number = DEFAULT_VERIFY_ROUNDS,
+  crossExamination: CrossExaminationMode = DEFAULT_CROSS_EXAMINATION_MODE,
 ): PersonaAuditConfig => ({
   phases: {},
   thinkingOverrides: {},
   meter,
   temperament,
+  crossExamination,
   maxVerifyRounds,
   rosters: [],
 });
@@ -139,13 +143,25 @@ test("the max-rounds row renders the saved count and cycles to a new one on Save
   assert.deepEqual(await menu.result, { action: "save", draft: config(DEFAULT_METER_SETTINGS, DEFAULT_TEMPERAMENT, 6) });
 });
 
+test("the cross-examination row renders, cycles, and saves", async () => {
+  const menu = mount();
+  assert.match(menu.render(), /Cross-examination pass\s+‹ red team specialists ›/);
+  menu.send(DOWN, DOWN, DOWN, DOWN, RIGHT);
+  assert.match(menu.render(), /Cross-examination pass\s+‹ all reviewers ›/);
+  menu.send(TAB, ENTER);
+  assert.deepEqual(
+    await menu.result,
+    { action: "save", draft: config(DEFAULT_METER_SETTINGS, DEFAULT_TEMPERAMENT, DEFAULT_VERIFY_ROUNDS, "all") },
+  );
+});
+
 test("Reviewer rosters action carries the complete staged draft", async () => {
   const initial = config(DEFAULT_METER_SETTINGS);
   initial.rosters = [{ name: "Core5", reviewers: ["Principal Engineer"] }];
   const menu = mount(initial);
   assert.match(menu.render(), /Reviewer rosters\s+1 configured/);
 
-  menu.send(RIGHT, DOWN, DOWN, DOWN, DOWN, ENTER);
+  menu.send(RIGHT, DOWN, DOWN, DOWN, DOWN, DOWN, ENTER);
   assert.deepEqual(await menu.result, {
     action: "rosters",
     draft: { ...initial, meter: { color: "accent", direction: "rtl" } },

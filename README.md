@@ -100,6 +100,7 @@ Exactly one of `--diff` or `--full` is required.
 | Token activity monitor color | `thinkingLevel`, `accent`, `border`, `borderAccent`, `success`, `error`, `warning` | `thinkingLevel` |
 | Token activity monitor direction | Left to Right, Right to Left | Right to Left |
 | Linus Torvalds temperament | neutral (min), caustic, LKML (max) | neutral (min) |
+| Cross-examination pass | off, red team specialists, all reviewers | red team specialists |
 | Max fix + verify rounds | `1`–`10` | `3` |
 | Reviewer rosters | Up to 20 named reviewer combinations | None |
 | Dispatch model | Any available model plus a thinking level | Session model |
@@ -111,6 +112,7 @@ In `/persona-audit`, choosing **Load reviewer roster** on the source menu opens 
 **Dispatch model** is the model behind **Inspect repo + recommend reviewers**. Open the row to pick any available model and thinking level with the same two-pane selector the phase picker uses; `Backspace` clears it. When unset, the dispatcher runs on the session's current model and thinking level and the audit warns you once. The dispatcher receives a deterministic repo fingerprint (languages by file count, root manifests such as `package.json`, `Cargo.toml`, `go.mod`, and `Dockerfile`, detected frameworks, and signals such as auth, database, containers, native code, or an AI surface) plus read-only tools to spot-check, and returns 3–10 reviewers with a one-line reason each. The recommendation is cached for the rest of that command, so backing out and choosing it again does not re-run the agent.
 
 The first two control the progress table's MONITOR column (see [Progress table](#progress-table)).
+Cross-examination mode controls whether selected reviewers get a second pass over the other reviewers' deduped findings to file disputes or raise composite findings. **red team specialists** limits this pass to that tier; **all reviewers** runs one per selected reviewer; **off** disables it. Each enabled reviewer adds one extra Review-slot session and receives all other reviewers' findings. Disputes carry a verdict (`false-positive`, `unreachable`, `overstated`) and a reason; they are evidence for the adjudicator and never drop or downgrade a finding. Composite findings reference their source findings by `file:line:category` key. Failed or degraded cross-examination sessions are noted in the report rather than silently skipped.
 Max fix + verify rounds caps the automatic gate-repair loop (see [Fix + verify rounds](#fix--verify-rounds)):
 round 1 is the initial verify, and each round after it is one auto-repair attempt, so `1` turns
 auto-repair off and `10` allows up to nine repairs before the run gives up.
@@ -220,7 +222,8 @@ flowchart TD
   D3 --> E[Incremental cache check]
   E --> F[Reviewer agent sessions × passes]
   F --> G[Deterministic collection + dedup]
-  G --> H[Adjudicator reconcile agent session]
+  G --> G1[Cross-examination passes — dispute + composite]
+  G1 --> H[Adjudicator reconcile agent session]
   H --> I[Findings review TUI]
   I --> J[Adjudicator apply agent session]
   J --> K1[Verify: fix-landed check + verifier agent session + regression tests]
@@ -234,7 +237,7 @@ flowchart TD
 2. **Importer scanning** — heuristic JS/TS relative-path matching finds direct importers of changed modules in `--diff` mode and computes per-module fan-in for blast-radius scoring.
 3. **Reviewer selection and summary** — the source menu offers three routes: a cheap dispatcher agent fingerprints the repo and recommends 3–10 personas (opened pre-checked in the picker), a saved roster expands to its members, or you choose personas and passes in the TUI picker — one cross-tier list, `Space` toggles, typing filters by name, description, or focus area. `Esc` on any picker returns to the source menu. Then assign a model and thinking level per phase. A final summary lists the run and accepts optional shared reviewer guidance. A line containing an existing image path attaches that image; relative paths resolve from the audited working directory. Missing, unsupported, oversized, and over-limit files remain visible as text with a warning. Back returns to the model picker without losing the draft. Handoff resumes skip this reviewer-only step.
 4. **Parallel review** — spawn isolated in-process agent sessions per reviewer×pass (cache-aware, concurrency 5). Shared context guides reviewer priorities but cannot override audit scope, safety rules, or the output contract. Context changes invalidate reviewer cache entries; context-free audits retain their prior keys. If any reviewer pass fails, the ReviewerRetry checkpoint lets you retry failed passes (optionally on a different model) or skip them before triage begins.
-5. **Collection & adjudication** — parse/dedup findings deterministically, then a read-only adjudicator agent session adds recommendations.
+5. **Collection, cross-examination & adjudication** — parse and deduplicate findings deterministically. Each cross-examination reviewer (Red Team Specialists by default) then reads only the other reviewers' findings with read-only tools and may dispute them or raise a composite finding in its own domain. Disputes attach as evidence and never drop a finding; composites deduplicate into the finding set. Finally, the read-only adjudicator adds recommendations and exploitability grades, ordering apply findings by exploitability.
 6. **Findings review** — accept, reject, or defer findings in the TUI. Each item shows a simplified-technical-English Summary, the full authoritative Rationale, and a Suggested Change; `↑`/`↓` navigate, `PageUp`/`PageDown` move by a page, `S` cycles sorting by file, severity priority, reviewer, and blast radius, `A`, `R`, and `D` set the selected status directly, `Space` cycles statuses, `F` fixes the selected finding now, and `H` writes current deferred findings to `.pi/persona-audit/handoffs/`. Blast-radius mode orders by the computed 0–100 risk score and shows its bucket plus the top reasons inline.
 7. **Fix & verify** — accepted fixes are partitioned by file and applied by up to 3 edit-capable adjudicator agent sessions running in parallel (see [Parallel fix application](#parallel-fix-application)); the extension then verifies each fix individually and runs the project's verification scripts. If the verifier run itself fails, the VerifierRetry checkpoint lets you re-run it on a different model or skip verification.
 8. **Gate repair (rounds 2+)** — a round that does not pass `passed` is handed to a repair agent, then every verification layer re-runs from scratch (see [Fix + verify rounds](#fix--verify-rounds)). This repeats automatically, no checkpoint required, until a round passes or the configured round cap (**Max fix + verify rounds**, default 3) is hit.
@@ -246,14 +249,17 @@ When multiple reviewers flag findings that touch the same code region — the sa
 function or expression, or within 20 lines of each other — the adjudicator
 reconciles them using a fixed precedence chain:
 
-1. **Category** — `security > bug > performance > maintainability > style/documentation`
-2. **Severity** (tie-break within the same category) — `critical > high > medium > low > info`
-3. **Root cause over symptom**
+1. **Exploitability** (for findings recommended for apply) — `direct > conditional > theoretical > none`
+2. **Category** — `security > bug > performance > maintainability > style/documentation`
+3. **Severity** (tie-break within the same category) — `critical > high > medium > low > info`
+4. **Root cause over symptom**
 
-For example, a HIGH security fix and a HIGH performance fix that both target the
-same region: the security fix wins on category priority alone (rule 1 decides it
-before severity is consulted). The losing fix is recommended for rejection, with
-the adjudicator's reason shown against that finding in the report.
+For example, two HIGH security fixes that both target the same region: the one
+graded `direct` exploitability wins over the one graded `theoretical` (rule 1
+decides it before category is consulted). A `direct` performance fix outranks a
+`theoretical` security fix on exploitability alone. The losing fix is recommended
+for rejection, with the adjudicator's reason shown against that finding in the
+report.
 
 Fixes that touch the same file but different regions (different functions, more
 than 20 lines apart) are not contradictory — both are applied, with the
@@ -443,8 +449,8 @@ for the whole run and is torn down on completion, cancellation, `/reload`, and
   assigned model, or when the terminal is too narrow to keep all four columns
   readable.
 - **AGENT** — each non-empty phase group starts with a dim phase heading, then
-  its rows (`Review` has one row per reviewer×pass, `Triage` has deterministic
-  collection and adjudication, `Implement` has adjudicator fix application, and
+  its rows (`Review` has one row per reviewer×pass plus one `cross-examination` row per
+  cross-examining reviewer, `Triage` has deterministic collection and adjudication, `Implement` has adjudicator fix application, and
   `Verify` has fix-landed, verifier, regression-test, and script rows). A round
   that does not pass adds a `gate repair N` row under `Verify`, followed by a
   fresh set of verification rows (see [Fix + verify rounds](#fix--verify-rounds)).
@@ -509,7 +515,7 @@ isolated in-process agent sessions: reviewer passes, adjudicator reconcile,
 adjudicator implement, the per-finding verifier, and regression-test authoring:
 
 - **Command shell** (`src/index.ts`) — `/persona-audit` and `/persona-audit-settings` arg parsing, git diff scan + importer scan (`--diff`) or deterministic whole-tree scan (`--full`, no git required), cache-key computation, ExpertPicker TUI, progress-widget mounting and context-window resolution, and the final chat summary.
-- **Orchestrator** (`src/orchestrator.ts`) — the audit state machine: cache load/merge, reviewer agent-session batches, deterministic collection, adjudicator agent sessions, FindingsReview TUI, verification (including the automatic gate-repair round loop, see [Fix + verify rounds](#fix--verify-rounds)), and report writing. Writes a durable partial report after every reviewer pass and on cancellation/failure.
+- **Orchestrator** (`src/orchestrator.ts`) — the audit state machine: cache load/merge, reviewer agent-session batches, deterministic collection, optional cross-examination pass, adjudicator agent sessions (including exploitability grading), FindingsReview TUI, verification (including the automatic gate-repair round loop, see [Fix + verify rounds](#fix--verify-rounds)), and report writing. Writes a durable partial report after every reviewer pass and on cancellation/failure.
 - **Agent runner** (`src/agentRunner.ts`) — runs each LLM task as an isolated in-process agent session via `createAgentSession()`, with model resolution, extension-provider replay, idle-timeout abort, and live telemetry.
 - **Agent discovery & telemetry** (`src/subprocess.ts`) — agent-config discovery from `*.md` frontmatter (`tools`/`model`), concurrency helper, and shared output-activity tracking used by agentRunner.ts.
 - **Progress surface** (`src/components/AuditProgress.ts`, `src/components/ReportViewer.ts`, `src/components/SettingsMenu.ts`, `src/activityMeter.ts`) — the phased `aboveEditor` table, post-audit report overlay, the activity monitor's settings menu, and output-rate meter. The table and meter are ported from pi-moa-plan's fan-out widget so the two extensions stay visually consistent while remaining independently installable.

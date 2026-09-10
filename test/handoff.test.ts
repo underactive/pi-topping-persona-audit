@@ -164,3 +164,29 @@ test("filterExistingFindings splits kept and dropped by file existence", () => {
   assert.deepEqual(kept, [a, c]);
   assert.deepEqual(dropped, [b]);
 });
+
+test("handoff round-trip preserves cross-examination evidence and exploitability", () => {
+  const enriched = finding({
+    disputes: [{ reviewer: "Concurrency Specialist", verdict: "overstated", reason: "A lock limits impact." }],
+    derivedFrom: ["src/source.ts:4:bug"],
+    exploitability: "conditional",
+    exploitabilityReason: "Requires a concurrent request.",
+  });
+  const parsed = parseHandoffPayload(renderHandoffResumeBlock(payload([enriched])));
+  assert.deepEqual(parsed.findings[0], enriched);
+});
+
+test("handoff validation drops malformed disputes without throwing", () => {
+  const malformed = {
+    ...finding(),
+    disputes: [
+      { reviewer: "", verdict: "overstated", reason: "bad" },
+      { reviewer: "Valid", verdict: "unknown", reason: "bad" },
+      { reviewer: "Valid", verdict: "unreachable", reason: "Guarded." },
+    ],
+  } as unknown as Finding;
+  const parsed = parseHandoffPayload(renderHandoffResumeBlock(payload([malformed])));
+  assert.deepEqual(parsed.findings[0]?.disputes, [
+    { reviewer: "Valid", verdict: "unreachable", reason: "Guarded." },
+  ]);
+});

@@ -935,6 +935,7 @@ export default function (pi: ExtensionAPI): void {
           phaseModels,
           additionalContext,
           temperament: settings.temperament,
+          crossExamination: settings.crossExamination,
           maxVerifyRounds: settings.maxVerifyRounds,
           signal: auditController.signal,
           resume,
@@ -1068,7 +1069,7 @@ export default function (pi: ExtensionAPI): void {
 
   // ── /persona-audit-settings command ───────────────────────────
   pi.registerCommand("persona-audit-settings", {
-    description: "Configure persona-audit rosters, dispatch model, activity monitor, reviewer temperament, and verification rounds",
+    description: "Configure persona-audit rosters, dispatch model, activity monitor, reviewer temperament, cross-examinations, and verification rounds",
     handler: async (_args, ctx) => {
       if (ctx.mode !== "tui") {
         ctx.ui.notify("persona-audit-settings requires TUI mode", "error");

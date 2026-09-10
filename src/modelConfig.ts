@@ -87,6 +87,17 @@ export type Temperament = (typeof TEMPERAMENTS)[number];
 export const DEFAULT_TEMPERAMENT: Temperament = "calibrated";
 
 /**
+ * Which selected reviewers get a cross-examination pass over the other reviewers'
+ * deduped findings. "red-team" limits it to the Red Team Specialists tier;
+ * "all" runs one per selected reviewer. Every cross-examination still receives the
+ * findings of all other reviewers as input.
+ */
+export const CROSS_EXAMINATION_MODES = ["off", "red-team", "all"] as const;
+export type CrossExaminationMode = (typeof CROSS_EXAMINATION_MODES)[number];
+
+export const DEFAULT_CROSS_EXAMINATION_MODE: CrossExaminationMode = "red-team";
+
+/**
  * Bounds for the fix→verify round cap set in `/persona-audit-settings`. Round 1
  * is the original implement + verify pass; the rest are automatic gate-repair
  * rounds. `MIN_VERIFY_ROUNDS` of 1 means round 1 only — auto-repair off. The
@@ -115,6 +126,8 @@ export interface PersonaAuditConfig {
   thinkingOverrides: Record<string, ThinkingLevel>;
   meter: MeterSettings;
   temperament: Temperament;
+  /** Which reviewers run a cross-examination pass after collection. */
+  crossExamination: CrossExaminationMode;
   /** Total fix→verify rounds allowed, clamped to [MIN_VERIFY_ROUNDS, MAX_VERIFY_ROUNDS]. */
   maxVerifyRounds: number;
   rosters: Roster[];
@@ -128,6 +141,7 @@ function emptyConfig(): PersonaAuditConfig {
     thinkingOverrides: {},
     meter: { ...DEFAULT_METER_SETTINGS },
     temperament: DEFAULT_TEMPERAMENT,
+    crossExamination: DEFAULT_CROSS_EXAMINATION_MODE,
     maxVerifyRounds: DEFAULT_VERIFY_ROUNDS,
     rosters: [],
   };
@@ -161,6 +175,10 @@ function isMeterDirection(value: unknown): value is MeterDirection {
 
 function isTemperament(value: unknown): value is Temperament {
   return (TEMPERAMENTS as readonly unknown[]).includes(value);
+}
+
+function isCrossExaminationMode(value: unknown): value is CrossExaminationMode {
+  return (CROSS_EXAMINATION_MODES as readonly unknown[]).includes(value);
 }
 
 function isPhaseModelChoice(value: unknown): value is PhaseModelChoice {
@@ -199,6 +217,7 @@ export function parsePersonaAuditSettings(raw: string): PersonaAuditConfig {
     }
 
     const temperament = isTemperament(parsed.temperament) ? parsed.temperament : DEFAULT_TEMPERAMENT;
+    const crossExamination = isCrossExaminationMode(parsed.crossExamination) ? parsed.crossExamination : DEFAULT_CROSS_EXAMINATION_MODE;
     const maxVerifyRounds = clampVerifyRounds(parsed.maxVerifyRounds);
 
     const rosters: Roster[] = [];
@@ -236,7 +255,7 @@ export function parsePersonaAuditSettings(raw: string): PersonaAuditConfig {
 
     // Conditional spread: an absent slot must stay absent, not become `dispatch: undefined`.
     const dispatch = isPhaseModelChoice(parsed.dispatch) ? parsed.dispatch : undefined;
-    return { phases, thinkingOverrides, meter, temperament, maxVerifyRounds, rosters, ...(dispatch ? { dispatch } : {}) };
+    return { phases, thinkingOverrides, meter, temperament, crossExamination, maxVerifyRounds, rosters, ...(dispatch ? { dispatch } : {}) };
   } catch {
     return emptyConfig();
   }

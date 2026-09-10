@@ -882,3 +882,69 @@ test("chat summary counts interactive fixes only when present", () => {
   assert.ok(renderChatSummary(base).includes("2 fixed interactively"));
   assert.ok(!renderChatSummary({ ...base, fixedCount: 0 }).includes("fixed interactively"));
 });
+
+test("reports render cross-examination evidence, exploitability ordering, and degradation notes", () => {
+  const disputed = finding({
+    file: "src/theoretical.ts",
+    exploitability: "theoretical",
+    exploitabilityReason: "No reachable path was established.",
+    disputes: [{ reviewer: "Concurrency Specialist", verdict: "unreachable", reason: "The sink is guarded." }],
+    derivedFrom: ["src/source.ts:4:bug"],
+  });
+  const direct = finding({ file: "src/direct.ts", exploitability: "direct", exploitabilityReason: "Any caller can reach it." });
+  const diag = { ...diagnostics, crossExaminationNotes: ["one reviewer timed out"] };
+  const full = renderFullReport(ctx, {
+    accepted: [disputed, direct],
+    deferred: [],
+    rejected: [],
+    applyReport: "done",
+    verification: verificationOutcome(),
+    diagnostics: diag,
+  });
+  assert.ok(full.includes("Exploitability: theoretical — No reachable path was established."));
+  assert.ok(full.includes("Disputed by Concurrency Specialist (unreachable): The sink is guarded."));
+  assert.ok(full.includes("Derived from: src/source.ts:4:bug"));
+  assert.ok(full.includes("### Cross-examinations"));
+  assert.ok(full.includes("Cross-examination degradation: one reviewer timed out"));
+  assert.ok(full.indexOf("src/direct.ts") < full.indexOf("src/theoretical.ts"));
+
+  const compact = renderCompactReport(ctx, {
+    reason: "none-accepted",
+    deferred: [disputed],
+    rejected: [],
+    diagnostics: diag,
+  });
+  assert.ok(compact.includes("### Cross-examinations"));
+  assert.ok(compact.includes("Disputed by Concurrency Specialist"));
+  const plain = renderCompactReport(ctx, { reason: "none-accepted", deferred: [finding()], rejected: [], diagnostics });
+  assert.ok(!plain.includes("### Cross-examinations"));
+});
+
+test("chat summary renders each cross-examination note", () => {
+  const summary: AuditSummary = {
+    status: "completed",
+    scope: ".",
+    fileCount: 1,
+    totalMs: 1,
+    reviewers: ["Security Engineer"],
+    passes: 1,
+    findingsCount: 1,
+    acceptedCount: 1,
+    rejectedCount: 0,
+    deferredCount: 0,
+    verification: "passed",
+    verifyResults: [],
+    reportPath: "report.md",
+    expectedRuns: 1,
+    receivedRuns: 1,
+    malformedCount: 0,
+    missingCount: 0,
+    cacheHits: 0,
+    freshRuns: 1,
+    crossExaminationNotes: ["first degradation", "second degradation"],
+    ...summaryBase,
+  };
+  const text = renderChatSummary(summary);
+  assert.ok(text.includes("Note: first degradation"));
+  assert.ok(text.includes("Note: second degradation"));
+});

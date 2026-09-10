@@ -3,18 +3,29 @@ import { Key, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/
 import type { ExtensionCommandContext, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { handoffRelPath, renderDeferredHandoff, writeReportFile } from "../report.ts";
 import { gitHeadCommit } from "../git.ts";
+import { compareFindingsByExploitability } from "../findingOrder.ts";
 import { SEVERITY_ORDER } from "../types.ts";
 import type { Finding, FindingRecommendation, FindingsReviewOutcome, FindingsReviewResult, FindingStatus, FixedFinding, ReviewSessionState, ReviewSortMode } from "../types.ts";
 import { sanitizeTerminalText } from "./AuditProgress.ts";
 import { FALLBACK_TERMINAL_ROWS, OVERLAY_HEIGHT_PERCENT, renderFramedBottom, renderFramedRow, renderFramedTop, SELECTOR, showOverlayPrompt } from "./menuChrome.ts";
+
+interface WrappedFindingDetails {
+  summary: string[];
+  rationale: string[];
+  suggestedChange: string[];
+  reason?: string[];
+  exploitability?: string[];
+  disputes?: string[][];
+  derivedFrom?: string[];
+}
 
 interface ReviewItem {
   finding: Finding;
   /** Position in the original findings array — flatGroups reorders, and Fix Now must name the source finding. */
   originalIndex: number;
   status: FindingStatus;
-  /** Wrapped summary/rationale/suggested-change/reason lines, cached per width — arrow-key navigation invalidates the render cache on every keystroke, so this avoids re-wrapping every finding just to redraw the visible window. */
-  wrapCache?: { width: number; headCols: number; summary: string[]; rationale: string[]; suggestedChange: string[]; reason?: string[] };
+  /** Wrapped detail lines, cached per width — arrow-key navigation invalidates the render cache on every keystroke, so this avoids re-wrapping every finding just to redraw the visible window. */
+  wrapCache?: WrappedFindingDetails & { width: number; headCols: number };
 }
 
 /** Body-line range a single finding occupies, used to keep the selection on screen. */
@@ -159,7 +170,7 @@ export class FindingsReview implements Component {
       case "file":
         return file || line || severity || original;
       case "priority":
-        return severity || file || line || original;
+        return compareFindingsByExploitability(left.finding, right.finding) || original;
       case "reviewer": {
         const reviewer = left.finding.reviewer.localeCompare(right.finding.reviewer, undefined, { sensitivity: "base" });
         return reviewer || severity || file || line || original;
@@ -384,18 +395,36 @@ export class FindingsReview implements Component {
     return result.length > 0 ? result : [text];
   }
 
-  private wrapItem(item: ReviewItem, width: number, headCols: number): { summary: string[]; rationale: string[]; suggestedChange: string[]; reason?: string[] } {
+  private wrapItem(item: ReviewItem, width: number, headCols: number): WrappedFindingDetails {
     if (item.wrapCache && item.wrapCache.width === width && item.wrapCache.headCols === headCols) return item.wrapCache;
     // Section content is indented 6; rationale's opening line also pays for its location head.
-    const summary = this.wordWrap(sanitizeTerminalText(item.finding.summary || item.finding.rationale), Math.max(2, width - 6));
-    const rationale = this.wordWrap(sanitizeTerminalText(item.finding.rationale), Math.max(2, width - 6), Math.max(2, width - 6 - headCols));
-    const suggestedChange = this.wordWrap(sanitizeTerminalText(item.finding.suggestedChange), Math.max(2, width - 6));
+    const detailWidth = Math.max(2, width - 6);
+    const summary = this.wordWrap(sanitizeTerminalText(item.finding.summary || item.finding.rationale), detailWidth);
+    const rationale = this.wordWrap(sanitizeTerminalText(item.finding.rationale), detailWidth, Math.max(2, detailWidth - headCols));
+    const suggestedChange = this.wordWrap(sanitizeTerminalText(item.finding.suggestedChange), detailWidth);
     let reason: string[] | undefined;
     if (item.finding.recommendationReason && item.finding.recommendation !== "apply") {
       const reasonLabel = item.finding.recommendation === "reject" ? "Why reject" : "Why defer";
-      reason = this.wordWrap(`⚑ ${reasonLabel}: ${sanitizeTerminalText(item.finding.recommendationReason)}`, Math.max(2, width - 6), Math.max(2, width - 4));
+      reason = this.wordWrap(`⚑ ${reasonLabel}: ${sanitizeTerminalText(item.finding.recommendationReason)}`, detailWidth, Math.max(2, width - 4));
     }
-    const cache = { width, headCols, summary, rationale, suggestedChange, reason };
+    const exploitability = item.finding.exploitability
+      ? this.wordWrap(
+          `Exploitability: ${item.finding.exploitability}${item.finding.exploitabilityReason ? ` — ${sanitizeTerminalText(item.finding.exploitabilityReason)}` : ""}`,
+          detailWidth,
+        )
+      : undefined;
+    const disputes = item.finding.disputes?.map((dispute) =>
+      this.wordWrap(
+        `Disputed by ${sanitizeTerminalText(dispute.reviewer)} (${dispute.verdict}): ${sanitizeTerminalText(dispute.reason)}`,
+        detailWidth,
+      ));
+    const derivedFrom = item.finding.derivedFrom?.length
+      ? this.wordWrap(
+          `Derived from: ${item.finding.derivedFrom.map((source) => sanitizeTerminalText(source)).join(", ")}`,
+          detailWidth,
+        )
+      : undefined;
+    const cache = { width, headCols, summary, rationale, suggestedChange, reason, exploitability, disputes, derivedFrom };
     item.wrapCache = cache;
     return cache;
   }
@@ -571,6 +600,23 @@ export class FindingsReview implements Component {
         }
       }
       lines.push("");
+
+      if (wrapped.exploitability) {
+        for (const [lineIndex, detail] of wrapped.exploitability.entries()) {
+          lines.push(`${lineIndex === 0 ? "    " : "      "}${t.fg("warning", detail)}`);
+        }
+      }
+      for (const dispute of wrapped.disputes ?? []) {
+        for (const [lineIndex, detail] of dispute.entries()) {
+          lines.push(`${lineIndex === 0 ? "    " : "      "}${t.fg("warning", detail)}`);
+        }
+      }
+      if (wrapped.derivedFrom) {
+        for (const [lineIndex, detail] of wrapped.derivedFrom.entries()) {
+          lines.push(`${lineIndex === 0 ? "    " : "      "}${t.fg("dim", detail)}`);
+        }
+      }
+      if (wrapped.exploitability || wrapped.disputes?.length || wrapped.derivedFrom) lines.push("");
 
       lines.push(`    ${t.fg("accent", "Suggested Change:")}`);
       for (const change of wrapped.suggestedChange) {

@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   defaultThinkingForModel,
   DEFAULT_METER_SETTINGS,
+  DEFAULT_CROSS_EXAMINATION_MODE,
   DEFAULT_TEMPERAMENT,
   DEFAULT_VERIFY_ROUNDS,
   MAX_ROSTER_COUNT,
@@ -26,6 +27,7 @@ test("parsePersonaAuditSettings round-trips a well-formed settings file", () => 
     thinkingOverrides: { "anthropic/claude-opus-4-6": "high" },
     meter: { color: "thinkingLevel", direction: "ltr" },
     temperament: "lkml",
+    crossExamination: "all",
     maxVerifyRounds: 5,
     rosters: [{ name: "Core5", reviewers: ["Architecture", "Security"] }],
   };
@@ -50,6 +52,7 @@ test("parsePersonaAuditSettings falls back to an empty config on malformed JSON"
     thinkingOverrides: {},
     meter: DEFAULT_METER_SETTINGS,
     temperament: DEFAULT_TEMPERAMENT,
+    crossExamination: DEFAULT_CROSS_EXAMINATION_MODE,
     maxVerifyRounds: DEFAULT_VERIFY_ROUNDS,
     rosters: [],
   };
@@ -86,6 +89,14 @@ test("parsePersonaAuditSettings defaults an unknown temperament", () => {
   assert.equal(parsePersonaAuditSettings("{}").temperament, DEFAULT_TEMPERAMENT);
   assert.equal(parsePersonaAuditSettings(JSON.stringify({ temperament: "vintage" })).temperament, DEFAULT_TEMPERAMENT);
   assert.equal(parsePersonaAuditSettings(JSON.stringify({ temperament: "caustic" })).temperament, "caustic");
+});
+
+test("parsePersonaAuditSettings validates crossExamination modes", () => {
+  assert.equal(parsePersonaAuditSettings("{}").crossExamination, DEFAULT_CROSS_EXAMINATION_MODE);
+  for (const crossExamination of ["off", "red-team", "all"] as const) {
+    assert.equal(parsePersonaAuditSettings(JSON.stringify({ crossExamination })).crossExamination, crossExamination);
+  }
+  assert.equal(parsePersonaAuditSettings(JSON.stringify({ crossExamination: "unknown" })).crossExamination, DEFAULT_CROSS_EXAMINATION_MODE);
 });
 
 test("parsePersonaAuditSettings defaults the meter and rejects each invalid field independently", () => {

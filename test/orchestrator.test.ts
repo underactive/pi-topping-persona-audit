@@ -257,6 +257,19 @@ test("annotateFindings ignores invalid recommendation values and tries later tex
   assert.equal(second.findings[0]?.recommendation, "defer");
 });
 
+test("annotateFindings parses valid exploitability fields and ignores invalid grades", () => {
+  const base = [finding(), finding({ file: "src/b.ts", line: 3, category: "bug" })];
+  const output = JSON.stringify([
+    { ...annotated("apply"), exploitability: "DIRECT", exploitabilityReason: "No precondition is required." },
+    { ...annotated("defer", undefined, { file: "src/b.ts", line: 3, category: "bug" }), exploitability: "likely" },
+  ]);
+  const { findings } = annotateFindings(base, [output]);
+  assert.equal(findings[0]?.exploitability, "direct");
+  assert.equal(findings[0]?.exploitabilityReason, "No precondition is required.");
+  assert.equal(findings[1]?.exploitability, undefined);
+  assert.equal(annotateFindings([finding()], [JSON.stringify([annotated("apply")])]).findings[0]?.exploitability, undefined);
+});
+
 // ── parseFixVerdicts ──────────────────────────────────────────────────
 
 function evidenceFor(entries: Record<string, FileChangeState | FileChangeEvidence>): Map<string, FileChangeEvidence> {
@@ -569,6 +582,16 @@ test("partitionApplyBatches ranks by category, then severity, then blast radius"
     [...accepted, ...Array.from({ length: 37 }, (_, i) => finding({ file: `src/pad${i}.ts`, category: "bug" }))],
   );
   assert.deepEqual(overflow.map((f) => f.file), ["src/style.ts"]);
+});
+
+test("partitionApplyBatches ranks direct findings ahead of conditional peers", () => {
+  const direct = finding({ file: "src/direct.ts", exploitability: "direct" });
+  const conditional = finding({ file: "src/conditional.ts", exploitability: "conditional" });
+  const padding = Array.from({ length: 39 }, (_, index) =>
+    finding({ file: `src/pad-direct-${index}.ts`, exploitability: "direct" }),
+  );
+  const { overflow } = partitionApplyBatches([conditional, direct, ...padding]);
+  assert.deepEqual(overflow.map((item) => item.file), ["src/conditional.ts"]);
 });
 
 // ── buildRepairTask ───────────────────────────────────────────

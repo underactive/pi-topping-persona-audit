@@ -41,6 +41,21 @@ export interface BlastRadius {
 /** Status assigned to a finding during the findings review overlay. */
 export type FindingStatus = FindingRecommendation | "fixed";
 
+/** Adjudicator's exploitability grade — ordered most to least exploitable. */
+export const EXPLOITABILITY_ORDER = ["direct", "conditional", "theoretical", "none"] as const;
+export type Exploitability = (typeof EXPLOITABILITY_ORDER)[number];
+
+/** Verdict a cross-examining reviewer can attach to another reviewer's finding. */
+export const DISPUTE_VERDICTS = ["false-positive", "unreachable", "overstated"] as const;
+export type DisputeVerdict = (typeof DISPUTE_VERDICTS)[number];
+
+/** One reviewer's cross-examination-pass objection to a finding. Evidence for the adjudicator, never a verdict. */
+export interface FindingDispute {
+  reviewer: string;
+  verdict: DisputeVerdict;
+  reason: string;
+}
+
 /** A single finding from a reviewer subagent. */
 export interface Finding {
   reviewer: string;
@@ -56,6 +71,14 @@ export interface Finding {
   blastRadius?: BlastRadius; // deterministic risk estimate computed before review
   recommendation?: FindingRecommendation; // adjudicator's recommended action
   recommendationReason?: string; // why the adjudicator recommends reject/defer
+  /** Cross-examination-pass disputes from other reviewers; the finding is never dropped or downgraded by them. */
+  disputes?: FindingDispute[];
+  /** For composite findings raised in the cross-examination pass: `file:line:category` keys of the source findings. */
+  derivedFrom?: string[];
+  /** Adjudicator's exploitability grade; orders "apply" findings ahead of category/severity. */
+  exploitability?: Exploitability;
+  /** Why the adjudicator graded exploitability as it did (max 120 chars). */
+  exploitabilityReason?: string;
 }
 
 /**
@@ -398,6 +421,8 @@ export interface AuditSummary {
   annotationNote?: string;
   /** Set when the register re-voice pass was degraded or unavailable. */
   revoiceNote?: string;
+  /** Cross-examination-pass degradation notes: failed sessions, unparsable output. */
+  crossExaminationNotes?: string[];
   /** Set when the adjudicator's implement agent session failed — no accepted fixes were written despite acceptedCount > 0. */
   implementFailedNote?: string;
 }

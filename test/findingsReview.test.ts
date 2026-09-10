@@ -429,3 +429,26 @@ test("the keybind help lists direct triage keys, sorting, and fix now", () => {
   assert.doesNotMatch(help, /Esc Esc cancel/);
   assert.doesNotMatch(help, /O defer-override/);
 });
+
+test("priority sort leads with exploitability while default remains file-grouped", () => {
+  const findings = [
+    finding(1, { file: "src/a.ts", severity: "critical", exploitability: "theoretical" }),
+    finding(2, { file: "src/z.ts", severity: "low", exploitability: "direct" }),
+  ];
+  const ui = harness(findings, 50);
+  assert.match(strip(ui.selected() ?? ""), /Reviewer 01/, "default file mode selects a.ts first");
+  ui.press("S");
+  ui.press(UP);
+  assert.match(strip(ui.selected() ?? ""), /Reviewer 02/, "direct outranks higher-severity theoretical");
+});
+
+test("finding details render exploitability and disputes", () => {
+  const ui = harness([finding(1, {
+    exploitability: "conditional",
+    exploitabilityReason: "Requires admin configuration.",
+    disputes: [{ reviewer: "Reviewer B", verdict: "overstated", reason: "The default disables it." }],
+  })], 50);
+  const text = ui.visible().map(strip).join("\n");
+  assert.match(text, /Exploitability: conditional — Requires admin configuration\./);
+  assert.match(text, /Disputed by Reviewer B \(overstated\): The default disables it\./);
+});

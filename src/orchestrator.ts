@@ -20,9 +20,10 @@ import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir, withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { collectReviewerFindings } from "./findingsTransport.ts";
 import { computeBlastRadius, hasCorrespondingTest, sensitivityTags } from "./blastRadius.ts";
-import { isRecord, normalizeFindingText } from "./dedup.ts";
+import { coerceFinding, dedupFindings, isRecord, normalizeFindingText } from "./dedup.ts";
 import { fallbackSteSummary, MAX_FINDING_SUMMARY_LENGTH } from "./findingSummary.ts";
 import { type AuditProgressWidget, formatTokens } from "./components/AuditProgress.ts";
+import { TIERS } from "./components/ReviewerData.ts";
 import { RunClock } from "./runClock.ts";
 import type { ReviewerFailurePrompt } from "./components/ReviewerRetry.ts";
 import type { AdjudicatorFailurePrompt, AdjudicatorRetryDecision } from "./components/AdjudicatorRetry.ts";
@@ -31,6 +32,8 @@ import {
   ADJUDICATOR_APPLY_DIRECTIVE,
   ADJUDICATOR_RECONCILE_DIRECTIVE,
   LINUS_TORVALDS,
+  MAX_CROSS_EXAMINATION_ITEMS,
+  CROSS_EXAMINATION_DIRECTIVE,
   REGRESSION_TEST_DIRECTIVE,
   REVIEWER_OUTPUT_CONTRACT,
   REVOICE_DIRECTIVE,
@@ -81,8 +84,20 @@ import {
   selectRegressionCandidates,
   type RegressionPlan,
 } from "./regression.ts";
-import { DEFAULT_TEMPERAMENT, DEFAULT_VERIFY_ROUNDS, modelRefLabel, phaseModelChoiceLabel, type PhaseModelChoice, type PhaseSlot, type Temperament, type ThinkingLevel } from "./modelConfig.ts";
-import { CATEGORY_PRIORITY, SEVERITY_ORDER } from "./types.ts";
+import {
+  DEFAULT_CROSS_EXAMINATION_MODE,
+  DEFAULT_TEMPERAMENT,
+  DEFAULT_VERIFY_ROUNDS,
+  modelRefLabel,
+  phaseModelChoiceLabel,
+  type PhaseModelChoice,
+  type PhaseSlot,
+  type CrossExaminationMode,
+  type Temperament,
+  type ThinkingLevel,
+} from "./modelConfig.ts";
+import { compareFindingsByExploitability } from "./findingOrder.ts";
+import { DISPUTE_VERDICTS, EXPLOITABILITY_ORDER } from "./types.ts";
 import type {
   ApplyBatch,
   AuditMode,
@@ -90,9 +105,11 @@ import type {
   AuditSummary,
   CollectReviewerFindingsResult,
   ContestedVerdict,
+  Exploitability,
   FileChangeEvidence,
   Finding,
   FindingCategory,
+  FindingDispute,
   FindingRecommendation,
   FindingStatus,
   FindingsReviewResult,
@@ -118,11 +135,17 @@ const REVIEWER_AGENT = "persona-audit-reviewer";
 const ADJUDICATOR_AGENT = "persona-audit-adjudicator";
 const VERIFIER_AGENT = "persona-audit-verifier";
 
+const RED_TEAM_SPECIALISTS: ReadonlySet<string> = new Set(
+  TIERS.find((tier) => tier.tier === "redTeamSpecialists")?.reviewers.map((reviewer) => reviewer.name) ?? [],
+);
+const DISPUTE_VERDICT_SET: ReadonlySet<string> = new Set(DISPUTE_VERDICTS);
+
 const COLLECT_ROW = "triage:collect";
 const REVOICE_ROW = "triage:revoice";
 const RECONCILE_ROW = "triage:reconcile";
 
 const reviewRowKey = (reviewer: string, pass: number): string => `review:${reviewer}:${pass}`;
+const crossExaminationRowKey = (reviewer: string): string => `crossExamination:${reviewer}`;
 const applyRowKey = (index: number): string => `implement:apply:${index}`;
 const fixRowKey = (f: { file: string; line: number; category: string }): string =>
   `verify:fix:${f.file}:${f.line}:${f.category}`;
@@ -175,6 +198,8 @@ export interface AuditInput {
   additionalContext?: AdditionalContext;
   /** Reviewer register from `/persona-audit-settings`; omitted means the default level. */
   temperament?: Temperament;
+  /** Cross-examination-pass mode from `/persona-audit-settings`; omitted (tests) defaults to DEFAULT_CROSS_EXAMINATION_MODE. */
+  crossExamination?: CrossExaminationMode;
   /**
    * Total fix→verify rounds allowed (round 1 + up to N-1 gate repairs), from
    * `/persona-audit-settings`. Omitted (as in tests) uses DEFAULT_VERIFY_ROUNDS.
@@ -184,7 +209,7 @@ export interface AuditInput {
   signal?: AbortSignal;
   /**
    * Resume from a deferred-findings handoff: skip reviewer passes, collection,
-   * re-voice, and adjudication, and seed triage with these findings (already
+   * cross-examination, re-voice, and adjudication, and seed triage with these findings (already
    * validated, staleness-filtered, and status-normalized by the caller).
    */
   resume?: { handoffPath: string; findings: Finding[]; notes: string[] };
@@ -308,7 +333,16 @@ export function annotateFindings(
     };
   }
 
-  const annotations = new Map<string, { rec: FindingRecommendation; reason?: string; summary?: string }>();
+  const annotations = new Map<
+    string,
+    {
+      rec: FindingRecommendation;
+      reason?: string;
+      summary?: string;
+      exploitability?: Exploitability;
+      exploitabilityReason?: string;
+    }
+  >();
   for (const raw of items) {
     if (!isRecord(raw)) continue;
     const rec = normalizeFindingText(raw.recommendation).toLowerCase();
@@ -320,7 +354,12 @@ export function annotateFindings(
     const key = `${file}\u0000${Number.isFinite(lineNum) ? lineNum : -1}\u0000${category}`;
     const reason = normalizeFindingText(raw.recommendationReason, 120) || undefined;
     const summary = normalizeFindingText(raw.summary, MAX_FINDING_SUMMARY_LENGTH).replace(/\s+/g, " ") || undefined;
-    annotations.set(key, { rec, reason, summary });
+    const exploitabilityValue = normalizeFindingText(raw.exploitability).toLowerCase();
+    const exploitability = EXPLOITABILITY_ORDER.includes(exploitabilityValue as Exploitability)
+      ? exploitabilityValue as Exploitability
+      : undefined;
+    const exploitabilityReason = normalizeFindingText(raw.exploitabilityReason, 120) || undefined;
+    annotations.set(key, { rec, reason, summary, exploitability, exploitabilityReason });
   }
 
   let matched = 0;
@@ -333,6 +372,8 @@ export function annotateFindings(
       ...finding,
       recommendation: annotation.rec,
       ...(annotation.summary ? { summary: annotation.summary } : {}),
+      ...(annotation.exploitability ? { exploitability: annotation.exploitability } : {}),
+      ...(annotation.exploitabilityReason ? { exploitabilityReason: annotation.exploitabilityReason } : {}),
     };
     if (annotation.reason && annotation.rec !== "apply") {
       annotated.recommendationReason = annotation.reason;
@@ -376,6 +417,174 @@ function bestJsonArray(texts: string[], score: (items: unknown[]) => number): un
     }
   }
   return best;
+}
+
+// ── Reviewer cross-examination (read-only cross-review pass) ───────────
+
+export function selectCrossExaminationReviewers(
+  reviewers: string[],
+  mode: CrossExaminationMode | undefined,
+): string[] {
+  const selected = [...new Set(reviewers)];
+  if (mode === "off") return [];
+  if (mode === "all") return selected;
+  return selected.filter((reviewer) => RED_TEAM_SPECIALISTS.has(reviewer));
+}
+
+/**
+ * Build one reviewer's index space from the round-one deduped findings.
+ * mergeCrossExaminations must receive the same round-one array used to build tasks.
+ */
+export function crossExaminationInputFindings(deduped: Finding[], reviewer: string): Finding[] {
+  return deduped.filter(
+    (finding) => !finding.reviewer.split(",").map((name) => name.trim()).includes(reviewer),
+  );
+}
+
+/** Empty arrays are valid cross-examination output, unlike the other structured-output passes. */
+function crossExaminationItems(texts: string[]): unknown[] | null {
+  let best: unknown[] | null = null;
+  let bestScore = -1;
+  for (const text of texts) {
+    if (!text.trim()) continue;
+    for (const items of extractJsonArrayCandidates(text)) {
+      const score = items.reduce<number>((count, raw) => {
+        if (!isRecord(raw)) return count;
+        if (raw.kind === "dispute") {
+          const verdict = normalizeFindingText(raw.verdict).toLowerCase();
+          return count + (Number.isFinite(raw.index) && DISPUTE_VERDICT_SET.has(verdict) ? 1 : 0);
+        }
+        if (
+          raw.kind === "composite" &&
+          Array.isArray(raw.basedOn) &&
+          raw.basedOn.length > 0 &&
+          coerceFinding(raw, "cross-examination scorer")
+        ) {
+          return count + 1;
+        }
+        return count;
+      }, 0);
+      if (score > bestScore) {
+        best = items;
+        bestScore = score;
+      }
+    }
+  }
+  return best;
+}
+
+const crossExaminationFindingKey = (finding: Pick<Finding, "file" | "line" | "category">): string =>
+  `${finding.file}\u0000${finding.line}\u0000${finding.category}`;
+const crossExaminationSourceKey = (finding: Pick<Finding, "file" | "line" | "category">): string =>
+  `${finding.file}:${finding.line}:${finding.category}`;
+
+export function mergeCrossExaminations(
+  deduped: Finding[],
+  crossExaminations: { reviewer: string; texts: string[] }[],
+): { findings: Finding[]; notes: string[] } {
+  const disputesByKey = new Map<string, FindingDispute[]>();
+  const derivedFromByKey = new Map<string, string[]>();
+  const composites: Finding[] = [];
+  const notes: string[] = [];
+
+  for (const { reviewer, texts } of crossExaminations) {
+    const input = crossExaminationInputFindings(deduped, reviewer);
+    const items = crossExaminationItems(texts);
+    if (items === null) {
+      notes.push(`cross-examination output from ${reviewer} was unparsable — skipped`);
+      continue;
+    }
+
+    if (items.length > MAX_CROSS_EXAMINATION_ITEMS) {
+      notes.push(
+        `cross-examination from ${reviewer} returned ${items.length} items — capped at ${MAX_CROSS_EXAMINATION_ITEMS}`,
+      );
+    }
+
+    let malformed = 0;
+    for (const raw of items.slice(0, MAX_CROSS_EXAMINATION_ITEMS)) {
+      if (!isRecord(raw)) {
+        malformed++;
+        continue;
+      }
+
+      if (raw.kind === "dispute") {
+        const index = raw.index;
+        const verdict = normalizeFindingText(raw.verdict).toLowerCase();
+        const reason = normalizeFindingText(raw.reason, 200);
+        const target = typeof index === "number" && Number.isInteger(index) && index >= 0 && index < input.length
+          ? input[index]
+          : undefined;
+        if (!target || !DISPUTE_VERDICT_SET.has(verdict) || !reason) {
+          malformed++;
+          continue;
+        }
+
+        const key = crossExaminationFindingKey(target);
+        const dispute: FindingDispute = {
+          reviewer,
+          verdict: verdict as FindingDispute["verdict"],
+          reason,
+        };
+        const disputes = disputesByKey.get(key);
+        if (!disputes) {
+          disputesByKey.set(key, [dispute]);
+          continue;
+        }
+        const prior = disputes.findIndex((candidate) => candidate.reviewer === reviewer);
+        if (prior === -1) disputes.push(dispute);
+        else disputes[prior] = dispute;
+        continue;
+      }
+
+      if (raw.kind === "composite" && Array.isArray(raw.basedOn)) {
+        const basedOn = [...new Set(raw.basedOn.filter(
+          (index): index is number =>
+            typeof index === "number" && Number.isInteger(index) && index >= 0 && index < input.length,
+        ))];
+        const composite = basedOn.length > 0 ? coerceFinding(raw, reviewer) : null;
+        if (!composite) {
+          malformed++;
+          continue;
+        }
+
+        composites.push(composite);
+        const key = crossExaminationFindingKey(composite);
+        const sources = derivedFromByKey.get(key) ?? [];
+        for (const index of basedOn) {
+          const source = input[index];
+          if (!source) continue;
+          const sourceKey = crossExaminationSourceKey(source);
+          if (!sources.includes(sourceKey)) sources.push(sourceKey);
+        }
+        derivedFromByKey.set(key, sources);
+        continue;
+      }
+
+      malformed++;
+    }
+
+    if (malformed > 0) {
+      notes.push(`cross-examination from ${reviewer}: skipped ${malformed} malformed items`);
+    }
+  }
+
+  const second = dedupFindings([...deduped, ...composites]).findings;
+  const findings = second.map((finding) => {
+    const key = crossExaminationFindingKey(finding);
+    const reviewer = [...new Set(finding.reviewer.split(",").map((name) => name.trim()).filter(Boolean))].join(", ");
+    const disputes = disputesByKey.get(key);
+    const selfKey = crossExaminationSourceKey(finding);
+    const derivedFrom = (derivedFromByKey.get(key) ?? []).filter((source) => source !== selfKey);
+    return {
+      ...finding,
+      reviewer,
+      ...(disputes && disputes.length > 0 ? { disputes } : {}),
+      ...(derivedFrom.length > 0 ? { derivedFrom } : {}),
+    };
+  });
+
+  return { findings, notes };
 }
 
 // ── Register re-voice (voice-only rewrite of hot-register findings) ──────
@@ -650,6 +859,10 @@ export function parseRegressionPlans(
 interface ReviewerCache {
   cacheKey: string;
   outputs: ReviewerOutput[];
+  crossExaminations?: {
+    key: string;
+    outputs: { reviewer: string; output: string }[];
+  };
 }
 
 /** User-owned cache location, keyed by repo path + cacheKey — a repo-controlled `.pi/persona-audit/cache` file could otherwise smuggle in forged "clean" reviewer output. */
@@ -662,31 +875,84 @@ function cacheFilePath(cwd: string, cacheKey: string): string {
   return path.join(repoCacheDir(cwd), `${cacheKey}.json`);
 }
 
-async function loadCache(cwd: string, cacheKey: string): Promise<ReviewerOutput[]> {
+async function loadCache(cwd: string, cacheKey: string): Promise<Omit<ReviewerCache, "cacheKey">> {
   try {
     const raw = await readFile(cacheFilePath(cwd, cacheKey), "utf-8");
-    const parsed = JSON.parse(raw) as Partial<ReviewerCache>;
-    if (parsed.cacheKey !== cacheKey || !Array.isArray(parsed.outputs)) return [];
-    return parsed.outputs.filter(
+    const parsed: unknown = JSON.parse(raw);
+    if (!isRecord(parsed) || parsed.cacheKey !== cacheKey || !Array.isArray(parsed.outputs)) {
+      return { outputs: [] };
+    }
+    const outputs = parsed.outputs.filter(
       (output): output is ReviewerOutput =>
         isRecord(output) &&
         typeof output.reviewer === "string" &&
         Number.isFinite(Number(output.pass)) &&
         typeof output.output === "string",
     );
+
+    let crossExaminations: ReviewerCache["crossExaminations"];
+    const cachedCrossExaminations = parsed.crossExaminations;
+    if (
+      isRecord(cachedCrossExaminations) &&
+      typeof cachedCrossExaminations.key === "string" &&
+      Array.isArray(cachedCrossExaminations.outputs)
+    ) {
+      const crossExaminationOutputs: { reviewer: string; output: string }[] = [];
+      let malformed = false;
+      for (const output of cachedCrossExaminations.outputs) {
+        if (!isRecord(output) || typeof output.reviewer !== "string" || typeof output.output !== "string") {
+          malformed = true;
+          break;
+        }
+        crossExaminationOutputs.push({ reviewer: output.reviewer, output: output.output });
+      }
+      if (!malformed) {
+        crossExaminations = { key: cachedCrossExaminations.key, outputs: crossExaminationOutputs };
+      }
+    }
+
+    return { outputs, ...(crossExaminations ? { crossExaminations } : {}) };
   } catch {
-    return [];
+    return { outputs: [] };
   }
 }
 
-async function saveCache(cwd: string, cacheKey: string, outputs: ReviewerOutput[]): Promise<void> {
+async function saveCache(
+  cwd: string,
+  cacheKey: string,
+  outputs: ReviewerOutput[],
+  crossExaminations?: NonNullable<ReviewerCache["crossExaminations"]>,
+): Promise<void> {
   try {
     const absPath = cacheFilePath(cwd, cacheKey);
     await mkdir(path.dirname(absPath), { recursive: true });
-    await writeFile(absPath, JSON.stringify({ cacheKey, outputs } satisfies ReviewerCache), "utf-8");
+    const cache: ReviewerCache = { cacheKey, outputs, ...(crossExaminations ? { crossExaminations } : {}) };
+    await writeFile(absPath, JSON.stringify(cache), "utf-8");
   } catch {
     /* cache write failures are non-fatal */
   }
+}
+
+function crossExaminationCacheKey(
+  mode: CrossExaminationMode,
+  reviewers: string[],
+  deduped: Finding[],
+  reviewModel: { model: string | undefined; thinking: ThinkingLevel | undefined },
+): string {
+  return createHash("sha256")
+    .update(CROSS_EXAMINATION_DIRECTIVE)
+    .update("\u0000")
+    .update(mode)
+    .update("\u0000")
+    .update(JSON.stringify([...reviewers].sort()))
+    .update("\u0000")
+    .update(reviewModel.model ?? "")
+    .update("\u0000")
+    .update(reviewModel.thinking ?? "")
+    .update("\u0000")
+    .update(JSON.stringify(deduped))
+    .digest("hex")
+    .slice(0, 16);
 }
 
 // ── Prompt composition ─────────────────────────────────────────────────────
@@ -758,6 +1024,57 @@ export function buildReviewerTask(input: AuditInput, cwd: string, baseLabel: str
   ].join("\n");
 }
 
+export function buildCrossExaminationTask(
+  input: AuditInput,
+  cwd: string,
+  baseLabel: string,
+  reviewer: string,
+  othersFindings: Finding[],
+): string {
+  const personality = getPersonality(reviewer, input.temperament);
+  if (!personality) {
+    throw new Error(`Unknown reviewer personality: "${reviewer}"`);
+  }
+  const enforcement = registerEnforcement(reviewer, input.temperament);
+  const additionalContext = formatAdditionalContextPrompt(input.additionalContext);
+  const findings = crossExaminationInputFindings(othersFindings, reviewer);
+  return [
+    CROSS_EXAMINATION_DIRECTIVE,
+    "",
+    "## Your Reviewer Personality",
+    "",
+    personality,
+    "",
+    UNTRUSTED_DATA_RULE,
+    "",
+    "## Audit Scope",
+    "",
+    `- Working directory: ${cwd}`,
+    ...scopeDescriptionLines(input, baseLabel),
+    "",
+    "Audit the following files (JSON array of relative paths):",
+    "",
+    JSON.stringify(input.fileManifest),
+    ...(additionalContext ? ["", additionalContext] : []),
+    "",
+    "## Findings From The Other Reviewers (JSON — index is the only handle you may cite)",
+    "",
+    JSON.stringify(
+      findings.map((finding, index) => ({
+        index,
+        reviewer: finding.reviewer,
+        file: finding.file,
+        line: finding.line,
+        category: finding.category,
+        severity: finding.severity,
+        rationale: finding.rationale,
+        suggestedChange: finding.suggestedChange,
+      })),
+    ),
+    ...(enforcement ? ["", enforcement] : []),
+  ].join("\n");
+}
+
 function buildRevoiceTask(
   targets: { index: number; finding: Finding }[],
   temperament: Temperament,
@@ -799,6 +1116,11 @@ function buildReconcileTask(
   baseLabel: string,
   dedupedFindings: Finding[],
 ): string {
+  const disputeCount = dedupedFindings.reduce(
+    (count, finding) => count + (finding.disputes?.length ?? 0),
+    0,
+  );
+  const compositeCount = dedupedFindings.filter((finding) => (finding.derivedFrom?.length ?? 0) > 0).length;
   return [
     ADJUDICATOR_RECONCILE_DIRECTIVE,
     "",
@@ -813,6 +1135,14 @@ function buildReconcileTask(
     "",
     JSON.stringify(input.fileManifest),
     "",
+    ...(disputeCount > 0 || compositeCount > 0
+      ? [
+          "## Cross-examination Context",
+          "",
+          `- Cross-examination evidence: ${disputeCount} dispute${disputeCount === 1 ? "" : "s"}; ${compositeCount} composite finding${compositeCount === 1 ? "" : "s"}`,
+          "",
+        ]
+      : []),
     "## Deduplicated Findings (JSON)",
     "",
     JSON.stringify(dedupedFindings),
@@ -866,20 +1196,14 @@ export function scopeAcceptedFindings(
  *
  * The cap the adjudicator used to self-enforce is applied here instead: once
  * findings are split across agents no single agent can see the global count, so
- * the ranking (category → severity, the reconciliation order)
+ * the ranking (exploitability → category → severity, the reconciliation order)
  * has to happen before distribution. Whatever falls past the cap comes back as
  * `overflow` so the report can account for it rather than dropping it silently.
  */
 export function partitionApplyBatches(
   accepted: Finding[],
 ): { batches: ApplyBatch[]; overflow: Finding[] } {
-  const ranked = [...accepted].sort(
-    (a, b) =>
-      CATEGORY_PRIORITY.indexOf(a.category) - CATEGORY_PRIORITY.indexOf(b.category) ||
-      SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity) ||
-      a.file.localeCompare(b.file) ||
-      a.line - b.line,
-  );
+  const ranked = [...accepted].sort(compareFindingsByExploitability);
 
   const byFile = new Map<string, Finding[]>();
   for (const finding of ranked.slice(0, MAX_APPLY_EDITS)) {
@@ -1383,6 +1707,7 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
     implementFailedNote,
     annotationNote: diagnostics.annotationNote,
     revoiceNote: diagnostics.revoiceNote,
+    ...(diagnostics.crossExaminationNotes ? { crossExaminationNotes: diagnostics.crossExaminationNotes } : {}),
     handoffPath,
   });
 
@@ -1440,7 +1765,10 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
     });
 
     // ── Step b: reviewer passes (cache-aware, concurrency-limited) ──────
-    const cachedOutputs = input.cacheKey ? await loadCache(ctx.cwd, input.cacheKey) : [];
+    const reviewerCache: Omit<ReviewerCache, "cacheKey"> = input.cacheKey
+      ? await loadCache(ctx.cwd, input.cacheKey)
+      : { outputs: [] };
+    const cachedOutputs = reviewerCache.outputs;
     const cachedByKey = new Map(cachedOutputs.map((o) => [`${o.reviewer}\u0000${o.pass}`, o]));
 
     const pendingTasks: { reviewer: string; pass: number }[] = [];
@@ -1615,7 +1943,7 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
       await saveCache(ctx.cwd, input.cacheKey, [...cachedOutputs, ...cacheableFresh]);
     }
 
-    // ── Steps c–e: collection, re-voice, adjudication — skipped on resume ──
+    // ── Steps c–e: collection, cross-examination, re-voice, adjudication — skipped on resume ──
     let annotatedFindings: Finding[];
     if (input.resume) {
       // Findings were already collected, deduped, and adjudicated in the
@@ -1665,6 +1993,146 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
         );
         await supersedePartial();
         return makeSummary("no-findings", relPath, { findings: 0 }, skippedVerification());
+      }
+
+      // ── Step d1: reviewer cross-examination pass ─────────────────────────────────
+      const roundOneFindings = collection.dedupedFindings;
+      const crossExaminationMode = input.crossExamination ?? DEFAULT_CROSS_EXAMINATION_MODE;
+      const crossExaminationReviewers = selectCrossExaminationReviewers(selection.reviewers, crossExaminationMode).filter(
+        (reviewer) => crossExaminationInputFindings(roundOneFindings, reviewer).length > 0,
+      );
+      if (crossExaminationReviewers.length > 0 && !input.signal?.aborted) {
+        progress?.setActivePhase("Review");
+        notifyPhase(
+          `running ${crossExaminationReviewers.length} cross-examination pass${crossExaminationReviewers.length === 1 ? "" : "es"}…`,
+        );
+
+        const cacheKey = crossExaminationCacheKey(
+          crossExaminationMode,
+          crossExaminationReviewers,
+          roundOneFindings,
+          reviewModel,
+        );
+        const cachedCrossExaminationEntry = reviewerCache.crossExaminations;
+        const cachedCandidates = new Map(
+          (cachedCrossExaminationEntry?.outputs ?? []).map(
+            (output): [string, string] => [output.reviewer, output.output],
+          ),
+        );
+        const reuseCachedCrossExaminations =
+          pendingTasks.length === 0 &&
+          uncacheable.size === 0 &&
+          cachedCrossExaminationEntry?.key === cacheKey &&
+          crossExaminationReviewers.every((reviewer) => cachedCandidates.has(reviewer));
+        const cachedCrossExaminations = reuseCachedCrossExaminations
+          ? cachedCandidates
+          : new Map<string, string>();
+
+        for (const reviewer of crossExaminationReviewers) {
+          const rowKey = crossExaminationRowKey(reviewer);
+          if (cachedCrossExaminations.has(reviewer)) {
+            progress?.addRow("Review", rowKey, `cross-examination · ${reviewer}`, {
+              state: "done",
+              statusText: "cached",
+            });
+          } else {
+            progress?.addRow("Review", rowKey, `cross-examination · ${reviewer}`);
+          }
+        }
+
+        const toRun = crossExaminationReviewers.filter((reviewer) => !cachedCrossExaminations.has(reviewer));
+        const freshCrossExaminations = new Map<string, { texts: string[]; cacheOutput: string }>();
+        const failureNotes = new Map<string, string>();
+        await mapWithConcurrencyLimit(toRun, REVIEWER_CONCURRENCY, async (reviewer) => {
+          const rowKey = crossExaminationRowKey(reviewer);
+          progress?.startRow(rowKey, "cross-examining…");
+          const others = crossExaminationInputFindings(roundOneFindings, reviewer);
+          const result = await runAgentSession({
+            agentName: `${reviewer} cross-examination`,
+            systemPrompt: buildReviewerSystemPrompt(reviewerAgent, reviewer, input.temperament),
+            tools: READ_ONLY_TOOLS,
+            model: reviewModel.model,
+            thinking: reviewModel.thinking,
+            task: buildCrossExaminationTask(input, ctx.cwd, baseLabel, reviewer, others),
+            images: input.additionalContext?.images,
+            cwd: ctx.cwd,
+            modelRegistry: ctx.modelRegistry,
+            signal: input.signal,
+            idleTimeoutMs: AGENT_IDLE_TIMEOUT_MS,
+            onProgress: (snapshot) => progress?.applyProgress(rowKey, snapshot),
+          });
+
+          if (isFailedRun(result) || !result.allText.trim()) {
+            const detail = normalizeFindingText(
+              result.errorMessage || (result.aborted ? "aborted" : result.stopReason) || "no output",
+            ) || "no output";
+            const aborted = result.aborted || input.signal?.aborted;
+            progress?.settleRow(rowKey, aborted ? "cancelled" : "error", detail);
+            failureNotes.set(reviewer, `cross-examination pass failed for ${reviewer} (${detail}) — skipped`);
+            return;
+          }
+
+          progress?.settleRow(rowKey, "done", `${formatTokens(result.usage.outputTokens)} tokens`);
+          freshCrossExaminations.set(reviewer, {
+            texts: [result.finalText, result.allText],
+            cacheOutput: result.allText,
+          });
+        });
+
+        await writePartial("partial");
+        const orderedCrossExaminations: { reviewer: string; texts: string[] }[] = [];
+        for (const reviewer of crossExaminationReviewers) {
+          const cached = cachedCrossExaminations.get(reviewer);
+          if (cached !== undefined) {
+            orderedCrossExaminations.push({ reviewer, texts: [cached] });
+            continue;
+          }
+          const fresh = freshCrossExaminations.get(reviewer);
+          if (fresh) orderedCrossExaminations.push({ reviewer, texts: fresh.texts });
+        }
+
+        const previousCount = roundOneFindings.length;
+        const merged = mergeCrossExaminations(roundOneFindings, orderedCrossExaminations);
+        collection.dedupedFindings = merged.findings;
+        const phaseNotes = crossExaminationReviewers.flatMap((reviewer) => {
+          const note = failureNotes.get(reviewer);
+          return note ? [note] : [];
+        });
+        const crossExaminationNotes = [...phaseNotes, ...merged.notes];
+        if (crossExaminationNotes.length > 0) {
+          diagnostics.crossExaminationNotes = [...(diagnostics.crossExaminationNotes ?? []), ...crossExaminationNotes];
+        }
+        if (collection.dedupedFindings.length !== previousCount) {
+          runSummary.findings = collection.dedupedFindings.length;
+          refreshSummary();
+        }
+
+        if (input.cacheKey && toRun.length > 0 && uncacheable.size === 0) {
+          const outputs: { reviewer: string; output: string }[] = [];
+          for (const reviewer of crossExaminationReviewers) {
+            const cached = cachedCrossExaminations.get(reviewer);
+            if (cached !== undefined) {
+              outputs.push({ reviewer, output: cached });
+              continue;
+            }
+            const fresh = freshCrossExaminations.get(reviewer);
+            if (fresh) outputs.push({ reviewer, output: fresh.cacheOutput });
+          }
+          await saveCache(ctx.cwd, input.cacheKey, allOutputs, { key: cacheKey, outputs });
+        }
+
+        progress?.setActivePhase("Triage");
+      }
+
+      if (input.signal?.aborted) {
+        const relPath = await writePartial("cancelled", "Run aborted during the cross-examination pass.");
+        progress?.settleOpenRows("cancelled", "aborted");
+        return makeSummary(
+          "cancelled",
+          relPath,
+          { findings: collection.dedupedFindings.length },
+          skippedVerification(),
+        );
       }
 
       // ── Step d2: register re-voice (hot registers only, voice-only rewrite) ─
