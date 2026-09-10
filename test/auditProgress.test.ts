@@ -825,6 +825,21 @@ test("the footer moves total run time to its own line rather than truncating a l
   );
 });
 
+test("the footer shows excluded user wait and preserves legacy snapshots", () => {
+  const waiting = footerOf(
+    { summary: "3/3 reviewer passes · 12 findings", totalMs: 697_000, waitingMs: 125_000, phaseModels: {}, rows: [], meterLevels: {} },
+    120,
+  );
+  assert.ok(waiting[0]?.trimEnd().endsWith("total cost $0.000  total 11:37 (+2:05 waiting)"));
+
+  const legacy = footerOf(
+    { summary: "3/3 reviewer passes · 12 findings", totalMs: 697_000, phaseModels: {}, rows: [], meterLevels: {} },
+    120,
+  );
+  assert.ok(legacy[0]?.trimEnd().endsWith("total cost $0.000  total 11:37"));
+  assert.ok(!legacy[0]?.includes("waiting"));
+});
+
 test("the footer shows complete and partial aggregate costs for live and frozen rows", () => {
   const { ctx } = fakeCtx();
   const widget = new AuditProgressWidget(ctx);
@@ -875,6 +890,26 @@ test("total run time keeps running while mounted and freezes once the widget sto
   await new Promise((resolve) => setTimeout(resolve, 30));
   assert.equal(widget.totalMs(), frozen, "the clock is frozen after stop()");
   assert.ok((captured ?? 0) >= running, "the snapshot captures the run's duration");
+});
+
+test("row and total clocks exclude a paused user-decision span", async () => {
+  const { ctx } = fakeCtx();
+  const widget = new AuditProgressWidget(ctx);
+  widget.addRow("Review", "r", "Security Engineer");
+  widget.mount();
+  widget.startRow("r");
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  const beforePause = widget.totalMs();
+  widget.clock.pause();
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.ok(widget.totalMs() - beforePause < 10, "the live total stays frozen while waiting");
+  widget.clock.resume();
+
+  const elapsed = widget.progressRows()[0]?.elapsedMs ?? 0;
+  assert.ok(elapsed < 40, `the row excludes the paused span: ${elapsed}`);
+  assert.ok(Math.abs(widget.totalMs() - beforePause) < 15, "the total excludes the paused span");
+  widget.stop();
 });
 
 // ── fix-now nested detail ──────────────────────────────────────────────────

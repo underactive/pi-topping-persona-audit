@@ -96,6 +96,7 @@ const verificationOutcome = (overrides: Partial<VerificationOutcome> = {}): Veri
 
 const summaryBase = {
   fixedCount: 0,
+  waitingMs: 0,
   fixVerifications: [] as FixVerification[],
   regressions: [] as RegressionResult[],
   verificationNotes: [] as string[],
@@ -558,6 +559,7 @@ test("chat summary renders counts, verification, and report path", () => {
       { script: "check", command: "npm run check", status: "pass", exitCode: 0, relevantOutput: "" },
     ],
     ...summaryBase,
+    waitingMs: 3_733_000,
     reportPath: reportRelPath(ctx.slug),
     expectedRuns: 4,
     receivedRuns: 4,
@@ -569,7 +571,7 @@ test("chat summary renders counts, verification, and report path", () => {
   const text = renderChatSummary(summary);
   assert.ok(text.includes("## Audit Summary"));
   assert.ok(text.includes("3 issues found | 2 applied | 0 deferred | 1 rejected"));
-  assert.ok(text.includes("Total time: 11m 37s"));
+  assert.ok(text.includes("Total time: 11m 37s (excludes 1h 02m 13s waiting on user input)"));
   assert.ok(text.includes("Verification: passed | Scripts run: check"));
   assert.ok(text.includes("Collection: 4/4 reviewer passes received"));
   assert.ok(text.includes("Security Engineer, Kent Beck"));
@@ -604,6 +606,8 @@ test("chat summary includes the handoff report path when a handoff was written",
   const text = renderChatSummary(summary);
   assert.ok(text.includes("### Audit Report"));
   assert.ok(text.includes(reportRelPath(ctx.slug)));
+  assert.ok(text.includes("Total time: 11m 37s\n"), "a zero wait keeps the original total-time line");
+  assert.ok(!text.includes("waiting on user input"));
   assert.ok(text.includes("### Handoff Report"));
   assert.ok(text.includes(handoffRelPath(ctx.slug)));
 });
@@ -672,6 +676,7 @@ test("chat summary renders verdict counts, the regression line, and verification
     scope: ".",
     fileCount: 5,
     totalMs: 697_000,
+    waitingMs: 0,
     reviewers: ["Security Engineer"],
     passes: 1,
     findingsCount: 3,
@@ -771,6 +776,19 @@ test("the overview omits total time until the run reports one", () => {
     { reason: "no-findings", deferred: [], rejected: [], diagnostics: { failedRuns: [] } },
   );
   assert.ok(timed.includes("- Total time: 11m 37s"));
+
+  const withWait = renderCompactReport(
+    { ...ctx, totalMs: 697_000, waitingMs: 3_733_000 },
+    { reason: "no-findings", deferred: [], rejected: [], diagnostics: { failedRuns: [] } },
+  );
+  assert.ok(withWait.includes("- Total time: 11m 37s"));
+  assert.ok(withWait.includes("- Waiting on user input: 1h 02m 13s"));
+
+  const shortWait = renderCompactReport(
+    { ...ctx, totalMs: 697_000, waitingMs: 999 },
+    { reason: "no-findings", deferred: [], rejected: [], diagnostics: { failedRuns: [] } },
+  );
+  assert.ok(!shortWait.includes("- Waiting on user input:"));
 });
 
 test("an in-progress partial report marks its total time as still running", () => {

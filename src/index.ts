@@ -14,6 +14,7 @@ import { gitHeadCommit } from "./git.ts";
 import { resolveTargetPath } from "./snapshot.ts";
 import { REVIEWER_OUTPUT_CONTRACT, getPersonality } from "./skillContent.ts";
 import { renderChatSummary } from "./report.ts";
+import { bindUIPromptWaits } from "./runClock.ts";
 import {
   AUDIT_PROGRESS_ENTRY_TYPE,
   AUDIT_PROGRESS_WIDGET_KEY,
@@ -826,6 +827,7 @@ export default function (pi: ExtensionAPI): void {
           selection,
           cacheKey,
           progress,
+          clock: progress.clock,
           phaseModels,
           additionalContext,
           temperament: settings.temperament,
@@ -1068,6 +1070,10 @@ export default function (pi: ExtensionAPI): void {
       }
     },
   });
+
+  // Prompt lifecycle events are notification-only and bracket every focused
+  // ctx.ui prompt used by the audit. Prompts outside an active run are ignored.
+  bindUIPromptWaits(pi, () => activeProgress?.clock);
 
   // ── Session lifecycle: tear down pipeline on shutdown/reload ─────────
   //

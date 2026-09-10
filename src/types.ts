@@ -365,8 +365,10 @@ export interface AuditSummary {
   status: AuditStatus;
   scope: string;
   fileCount: number;
-  /** Wall-clock duration of the whole run. */
+  /** Work time: wall clock minus the spans spent blocked on a user decision. */
   totalMs: number;
+  /** Time excluded from totalMs for the triage overlay, Fix Now gates, and retry prompts. */
+  waitingMs: number;
   reviewers: string[];
   passes: number;
   findingsCount: number;

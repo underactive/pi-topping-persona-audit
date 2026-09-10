@@ -440,7 +440,10 @@ for the whole run and is torn down on completion, cancellation, `/reload`, and
   calls, cumulative model cost at `$0.000` precision (`—` when the model cannot be
   resolved), and elapsed time. All four freeze when the row settles and are
   dropped together when the table body is narrower than 96 columns (roughly a
-  100-column terminal).
+  100-column terminal). The footer's `total` is work time only — it excludes
+  time spent on user-decision spans (checkpoints, findings review, the
+  pre-audit summary) — and any excluded wait is shown separately as
+  `(+M:SS waiting)`.
 
 The fixed row layout is status icon + gap + agent label + gap + CTX + gap +
 monitor + gap, followed by ACTIVITY and, when eligible, the four stats columns.
@@ -559,6 +562,7 @@ pi-topping-persona-audit/
 │   ├── dedup.ts              # Deterministic finding dedup (pure)
 │   ├── skillContent.ts       # 40 personalities + agent-session prompt contracts
 │   ├── activityMeter.ts      # Vendored output-rate meter + streaming word counter
+│   ├── runClock.ts           # Pause-aware run clock: excludes user-decision spans from work time
 │   ├── types.ts              # Shared types
 │   └── components/
 │       ├── AuditProgress.ts  # Live phased progress table (aboveEditor widget)

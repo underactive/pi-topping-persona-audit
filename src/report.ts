@@ -10,6 +10,7 @@ import { lstat, mkdir, realpath, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 import { normalizeFindingText, normalizeMultilineText } from "./dedup.ts";
 import { HANDOFF_SCHEMA_VERSION, renderHandoffResumeBlock } from "./handoff.ts";
+import { MIN_WAIT_DISPLAY_MS } from "./runClock.ts";
 import type {
   AuditMode,
   AuditSummary,
@@ -48,8 +49,10 @@ export interface ReportContext {
   additionalContext?: string;
   /** Per-phase model + thinking labels from the post-ExpertPicker picker, keyed by phase display name. */
   phaseModels?: Partial<Record<string, string>>;
-  /** Wall-clock duration of the run at the moment the report is rendered. */
+  /** Work duration of the run at the moment the report is rendered, excluding user-decision spans. */
   totalMs?: number;
+  /** Time excluded from totalMs while the run waited for user input. */
+  waitingMs?: number;
   /** Handoff file a resumed run loaded its findings from (handoff mode only). */
   handoffSource?: string;
   /** Resume degradation notes: HEAD mismatch, dropped findings (handoff mode only). */
@@ -253,6 +256,9 @@ function overviewSection(ctx: ReportContext, opts: { inProgress?: boolean } = {}
   }
   if (ctx.totalMs !== undefined) {
     lines.push(`- Total time: ${formatDuration(ctx.totalMs)}${opts.inProgress ? " (in progress)" : ""}`);
+    if (ctx.waitingMs !== undefined && ctx.waitingMs >= MIN_WAIT_DISPLAY_MS) {
+      lines.push(`- Waiting on user input: ${formatDuration(ctx.waitingMs)}`);
+    }
   }
   if (ctx.mode === "full" && ctx.truncated) {
     lines.push(
@@ -669,6 +675,10 @@ function verdictCounts(fixes: FixVerification[]): string {
   return `${tally("fixed")} fixed, ${tally("partial")} partial, ${tally("not-fixed")} not fixed, ${tally("cannot-verify")} unverified`;
 }
 
+function waitingSuffix(waitingMs: number): string {
+  return waitingMs >= MIN_WAIT_DISPLAY_MS ? ` (excludes ${formatDuration(waitingMs)} waiting on user input)` : "";
+}
+
 /** Step 7 — chat summary rendered by the command handler after runAudit(). */
 export function renderChatSummary(summary: AuditSummary): string {
   const statusLabel: Record<AuditSummary["status"], string> = {
@@ -685,7 +695,7 @@ export function renderChatSummary(summary: AuditSummary): string {
     `Status: ${statusLabel[summary.status]}`,
     `Scope: ${summary.scope}`,
     `Files audited: ${summary.fileCount}`,
-    `Total time: ${formatDuration(summary.totalMs)}`,
+    `Total time: ${formatDuration(summary.totalMs)}${waitingSuffix(summary.waitingMs)}`,
     `${summary.findingsCount} issue${summary.findingsCount === 1 ? "" : "s"} found | ${summary.acceptedCount} ${appliedLabel}${summary.fixedCount > 0 ? ` | ${summary.fixedCount} fixed interactively` : ""} | ${summary.deferredCount} deferred | ${summary.rejectedCount} rejected`,
     `Verification: ${summary.verification}` +
       (summary.fixVerifications.length > 0 ? ` | ${verdictCounts(summary.fixVerifications)}` : "") +

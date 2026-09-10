@@ -23,6 +23,7 @@ import { computeBlastRadius, hasCorrespondingTest, sensitivityTags } from "./bla
 import { isRecord, normalizeFindingText } from "./dedup.ts";
 import { fallbackSteSummary, MAX_FINDING_SUMMARY_LENGTH } from "./findingSummary.ts";
 import { type AuditProgressWidget, formatTokens } from "./components/AuditProgress.ts";
+import { RunClock } from "./runClock.ts";
 import type { ReviewerFailurePrompt } from "./components/ReviewerRetry.ts";
 import type { AdjudicatorFailurePrompt, AdjudicatorRetryDecision } from "./components/AdjudicatorRetry.ts";
 import type { VerifierFailurePrompt, VerifierRetryDecision } from "./components/VerifierRetry.ts";
@@ -166,6 +167,8 @@ export interface AuditInput {
   cacheKey?: string;
   /** Optional progress widget — row updates are no-ops when omitted. */
   progress?: AuditProgressWidget;
+  /** Run clock shared with the progress widget; omitted in tests uses a private wall clock that never pauses. */
+  clock?: RunClock;
   /** Per-phase model + thinking overrides from the post-ExpertPicker picker, if confirmed. */
   phaseModels?: Partial<Record<PhaseSlot, PhaseModelChoice>>;
   /** Shared user guidance attached only to reviewer passes. */
@@ -1243,7 +1246,8 @@ export function actionableFingerprint(round: VerificationRound): string {
 // ── Audit driver ───────────────────────────────────────────────────────────
 
 export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput): Promise<AuditSummary> {
-  const runStartedAt = Date.now();
+  const clock = input.clock ?? new RunClock();
+  clock.start();
   const { slug, iso } = makeSlug();
   const baseLabel = input.baseCommit || "merge-base with main";
   const selection: ReviewerSelection = input.selection;
@@ -1277,9 +1281,10 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
 
   const progress = input.progress;
 
-  /** Stamp the run's wall-clock duration into the context. Call at every report render site. */
+  /** Stamp the run's work duration and excluded user-wait time into the context. Call at every report render site. */
   const report = (): ReportContext => {
-    reportCtx.totalMs = Date.now() - runStartedAt;
+    reportCtx.totalMs = clock.activeMs();
+    reportCtx.waitingMs = clock.waitingMs();
     return reportCtx;
   };
 
@@ -1352,7 +1357,8 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
     status,
     scope: input.scope,
     fileCount: input.fileCount,
-    totalMs: Date.now() - runStartedAt,
+    totalMs: clock.activeMs(),
+    waitingMs: clock.waitingMs(),
     reviewers: selection.reviewers,
     passes: selection.passes,
     findingsCount: counts.findings ?? 0,

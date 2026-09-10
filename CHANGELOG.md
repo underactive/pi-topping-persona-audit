@@ -19,6 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - **Two-pane picker highlight spans full pane width** — selection background now applies only to the active pane's composed cell, matching the sibling project's layout.
 - **Thinking pane sized to longest level** — content-aware width calculation replaces the fixed 50/50 split, giving models the remaining width.
+- **Audit time excludes user waiting** — the audit no longer counts time spent waiting on the user toward its elapsed time; the excluded wait is now shown separately in the report, the chat summary, and the progress-table footer.
 
 ## [0.1.7] - 2026-09-04
 

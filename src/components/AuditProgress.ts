@@ -17,6 +17,7 @@ import { normalizeFindingText } from "../dedup.ts";
 import { highlightActivity } from "../toolActivity.ts";
 import { DEFAULT_METER_SETTINGS, resolveMeterColor, type MeterSettings, type ThinkingLevel } from "../modelConfig.ts";
 import { shimmerString, type ShimmerTheme } from "../shimmer.ts";
+import { MIN_WAIT_DISPLAY_MS, RunClock } from "../runClock.ts";
 import type { Finding, HeadlessProgress } from "../types.ts";
 import { wrapText } from "./menuChrome.ts";
 
@@ -192,8 +193,10 @@ export interface AuditProgressView {
   progressRows(): AuditProgressRow[];
   /** Compact live run summary, shown in the footer. */
   footerSummary(): string;
-  /** Wall-clock duration of the whole run, shown at the footer's right edge. */
+  /** Work duration of the whole run, excluding spans blocked on a user decision. */
   totalMs(): number;
+  /** Time the run sat blocked on a user decision. */
+  waitingMs(): number;
   /** Aggregate model cost across every row, including whether the total is partial. */
   totalCost(): TotalCost;
   /** Audit scope, shown right-aligned in the title bar. */
@@ -221,6 +224,8 @@ export interface AuditProgressSnapshot {
   summary: string;
   /** Absent on entries persisted before the total-time footer existed. */
   totalMs?: number;
+  /** Absent on entries persisted before the footer showed excluded user waits. */
+  waitingMs?: number;
   phaseModels: Partial<Record<AuditPhase, string>>;
   /** Absent on entries persisted before per-phase meter coloring was added. */
   phaseThinking?: Partial<Record<AuditPhase, ThinkingLevel>>;
@@ -279,6 +284,7 @@ interface RowRecord {
 export class AuditProgressWidget implements AuditProgressView {
   readonly scope: string | undefined;
   readonly baseHash: string | undefined;
+  readonly clock = new RunClock();
 
   private readonly ctx: AuditProgressContext;
   private readonly resolveContextWindow: ContextWindowResolver;
@@ -293,8 +299,6 @@ export class AuditProgressWidget implements AuditProgressView {
   private active: AuditPhase | undefined;
   private activeRowCount = 0;
   private table: AuditProgressTable | undefined;
-  private runStartedAt: number | undefined;
-  private runEndedAt: number | undefined;
 
   constructor(
     ctx: AuditProgressContext,
@@ -314,7 +318,7 @@ export class AuditProgressWidget implements AuditProgressView {
   mount(): void {
     if (this.mounted) return;
     this.mounted = true;
-    this.runStartedAt ??= Date.now();
+    this.clock.start();
     this.ctx.ui.setWidget(
       AUDIT_PROGRESS_WIDGET_KEY,
       (tui, theme) => {
@@ -328,7 +332,7 @@ export class AuditProgressWidget implements AuditProgressView {
   /** Tear down the progress surface, disposing the table's ticker. Safe to call multiple times. */
   stop(): void {
     this.mounted = false;
-    this.runEndedAt ??= Date.now();
+    this.clock.stop();
     this.table = undefined;
     this.ctx.ui.setWidget(AUDIT_PROGRESS_WIDGET_KEY, undefined);
   }
@@ -491,8 +495,11 @@ export class AuditProgressWidget implements AuditProgressView {
   }
 
   totalMs(): number {
-    if (this.runStartedAt === undefined) return 0;
-    return (this.runEndedAt ?? Date.now()) - this.runStartedAt;
+    return this.clock.activeMs();
+  }
+
+  waitingMs(): number {
+    return this.clock.waitingMs();
   }
 
   totalCost(): TotalCost {
@@ -537,6 +544,7 @@ export class AuditProgressWidget implements AuditProgressView {
       baseHash: this.baseHash,
       summary: this.summary,
       totalMs: this.totalMs(),
+      waitingMs: this.waitingMs(),
       phaseModels: this.models,
       phaseThinking: this.thinking,
       // Live fix-now detail (cancel hints, settling states) is transient UI
@@ -568,7 +576,7 @@ export class AuditProgressWidget implements AuditProgressView {
       contextTokens: row.contextTokens,
       contextWindow: this.resolvedContextWindow(row.provider, row.model),
       activity: row.activity,
-      elapsedMs: row.startedAt === undefined ? 0 : (row.endedAt ?? now) - row.startedAt,
+      elapsedMs: row.startedAt === undefined ? 0 : this.clock.workedBetween(row.startedAt, row.endedAt ?? now),
       turns: row.turns ?? 0,
       toolCalls: row.toolCalls ?? 0,
       costUsd: row.costUsd,
@@ -988,15 +996,17 @@ export class AuditProgressTable implements Component {
   }
 
   /**
-   * Run summary on the left; whole-run cost and wall clock on the right. The
+   * Run summary on the left; whole-run cost and work time on the right. The
    * elapsed time is the run's own duration, not the sum of row clocks, which
-   * overlap whenever passes run concurrently.
+   * overlap whenever passes run concurrently, and excludes user-decision spans.
    */
   private footerLines(bodyWidth: number, cost: TotalCost): string[] {
     const dim = (s: string) => this.theme.fg("dim", s);
     const summary = sanitizeTerminalText(this.view.footerSummary());
     // An asterisk means at least one row has unavailable or invalid cost telemetry.
-    const total = `total cost ${formatCost(cost.costUsd)}${cost.incomplete ? "*" : ""}  total ${formatElapsed(this.view.totalMs())}`;
+    const waiting = this.view.waitingMs();
+    const waitingSuffix = waiting >= MIN_WAIT_DISPLAY_MS ? ` (+${formatElapsed(waiting)} waiting)` : "";
+    const total = `total cost ${formatCost(cost.costUsd)}${cost.incomplete ? "*" : ""}  total ${formatElapsed(this.view.totalMs())}${waitingSuffix}`;
     const rhs = this.frozen ? dim(total) : `${dim(total)}  ${dim("ctrl+shift+c: cancel")}`;
     const gap = bodyWidth - visibleWidth(summary) - visibleWidth(rhs);
     if (gap >= MIN_FOOTER_TOTAL_GAP) return [dim(summary) + " ".repeat(gap) + rhs];
@@ -1100,6 +1110,7 @@ export function renderAuditSnapshot(
     progressRows: () => snapshot.rows,
     footerSummary: () => snapshot.summary,
     totalMs: () => snapshot.totalMs ?? 0,
+    waitingMs: () => snapshot.waitingMs ?? 0,
     totalCost: () => totalCost(snapshot.rows),
     scope: snapshot.scope,
     baseHash: snapshot.baseHash,
