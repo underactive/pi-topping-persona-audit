@@ -2046,14 +2046,13 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
         await mapWithConcurrencyLimit(toRun, REVIEWER_CONCURRENCY, async (reviewer) => {
           const rowKey = crossExaminationRowKey(reviewer);
           progress?.startRow(rowKey, "cross-examining…");
-          const others = crossExaminationInputFindings(roundOneFindings, reviewer);
           const result = await runAgentSession({
             agentName: `${reviewer} cross-examination`,
             systemPrompt: buildReviewerSystemPrompt(reviewerAgent, reviewer, input.temperament),
             tools: READ_ONLY_TOOLS,
             model: reviewModel.model,
             thinking: reviewModel.thinking,
-            task: buildCrossExaminationTask(input, ctx.cwd, baseLabel, reviewer, others),
+            task: buildCrossExaminationTask(input, ctx.cwd, baseLabel, reviewer, roundOneFindings),
             images: input.additionalContext?.images,
             cwd: ctx.cwd,
             modelRegistry: ctx.modelRegistry,
