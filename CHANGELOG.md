@@ -8,12 +8,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Reviewer source menu** — `/persona-audit` now opens on a choice between inspecting the repo for a recommendation, loading a saved roster, or selecting reviewers manually. The new dispatcher agent receives a deterministic repo fingerprint (languages, root manifests, frameworks, and auth/database/container/native/AI signals) plus read-only tools, and returns 3–10 reviewers with reasons; they open pre-checked in the expert picker. The recommendation is cached for the rest of the command, and `ctrl+shift+c` cancels the dispatcher.
+- **Dispatch model setting** — `/persona-audit-settings` gains a Dispatch model row that opens the two-pane model/thinking selector; `Backspace` clears it, and an unset slot falls back to the session model with a warning.
+
 - **Red Team reviewer tiers** — 13 security reviewers in two new picker tiers after Persona. Red Team Core covers authorization and tenancy, authentication and sessions, injection and input handling, the browser trust boundary, business logic and abuse, secrets/data/exposure, and infrastructure and supply chain. Red Team Specialists covers cryptography and protocols, memory safety and native code, embedded systems and hardware, concurrency and state machines, client and IPC surfaces, and AI and agent surfaces. The extension now includes 53 reviewers; the README notes which slots justify the strongest Review-phase model.
 
 - **Thinking-level monitor colors** — added `thinkingLevel` as a selectable activity-monitor color mode and made it the default; existing fixed colors remain available.
 
 ### Changed
 
+- **Rosters moved out of the expert picker** — saved rosters now have their own picker behind the source menu's Load reviewer roster option, rendered as before (name, members, second-`Enter` cost confirmation). The expert picker lists only individual reviewers.
+- **Esc steps back in the expert picker** — `Esc` in the multi-select picker returns to the source menu with the selection intact instead of cancelling the audit; the source menu's `Esc` cancels.
 - **Color-coded tool activity** — progress-table `↳` sub-rows now color the tool name bold `toolTitle` and the argument `accent`, matching the sibling/pi renderers.
 - **Styled roster reviewer picker** — reviewer slots now use the audit flow's tiered picker, with reviewers already assigned to other slots hidden.
 

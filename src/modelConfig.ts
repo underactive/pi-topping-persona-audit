@@ -118,6 +118,8 @@ export interface PersonaAuditConfig {
   /** Total fix→verify rounds allowed, clamped to [MIN_VERIFY_ROUNDS, MAX_VERIFY_ROUNDS]. */
   maxVerifyRounds: number;
   rosters: Roster[];
+  /** Model that inspects the repo and recommends reviewers; unset means the session's current model. */
+  dispatch?: PhaseModelChoice;
 }
 
 function emptyConfig(): PersonaAuditConfig {
@@ -232,7 +234,9 @@ export function parsePersonaAuditSettings(raw: string): PersonaAuditConfig {
       }
     }
 
-    return { phases, thinkingOverrides, meter, temperament, maxVerifyRounds, rosters };
+    // Conditional spread: an absent slot must stay absent, not become `dispatch: undefined`.
+    const dispatch = isPhaseModelChoice(parsed.dispatch) ? parsed.dispatch : undefined;
+    return { phases, thinkingOverrides, meter, temperament, maxVerifyRounds, rosters, ...(dispatch ? { dispatch } : {}) };
   } catch {
     return emptyConfig();
   }

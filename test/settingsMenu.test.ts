@@ -28,6 +28,9 @@ const DOWN = "\x1b[B";
 const TAB = "\t";
 const ENTER = "\r";
 const ESCAPE = "\x1b";
+const BACKSPACE = "\x7f";
+/** Row 6: color, direction, temperament, max-rounds, rosters, then the dispatch model. */
+const TO_DISPATCH_ROW = [DOWN, DOWN, DOWN, DOWN, DOWN];
 
 interface Mounted {
   send(...keys: string[]): void;
@@ -58,7 +61,9 @@ function mount(initial: PersonaAuditConfig = config(DEFAULT_METER_SETTINGS)): Mo
   // Focused-overlay fake: Pi dispatches input straight to the component and
   // settles the overlay when the component calls done.
   const ctx = {
+    modelRegistry: { getAvailable: () => [{ provider: "test", id: "model", reasoning: false }] },
     ui: {
+      notify: () => {},
       custom: (
         factory: (host: TUI, currentTheme: Theme, keybindings: unknown, done: (value: SettingsMenuResult) => void) => Component,
         options?: unknown,
@@ -74,7 +79,7 @@ function mount(initial: PersonaAuditConfig = config(DEFAULT_METER_SETTINGS)): Mo
     },
   } as unknown as ExtensionCommandContext;
 
-  const result = showSettingsMenu(ctx, initial);
+  const result = showSettingsMenu(ctx, initial, "medium");
   return {
     send: (...keys: string[]) => {
       for (const key of keys) component?.handleInput?.(key);
@@ -145,6 +150,58 @@ test("Reviewer rosters action carries the complete staged draft", async () => {
     action: "rosters",
     draft: { ...initial, meter: { color: "accent", direction: "rtl" } },
   });
+});
+
+test("the dispatch row shows the session fallback until a model is chosen", async () => {
+  const menu = mount();
+  assert.match(menu.render(), /Dispatch model\s+Session model \(not set\)/);
+
+  const seeded = config(DEFAULT_METER_SETTINGS);
+  seeded.dispatch = { ref: { provider: "test", id: "model" }, thinking: "off" };
+  const seededMenu = mount(seeded);
+  assert.match(seededMenu.render(), /Dispatch model\s+test\/model \(thinking: off\)/);
+
+  menu.send(TAB, ENTER);
+  seededMenu.send(TAB, ENTER);
+  await Promise.all([menu.result, seededMenu.result]);
+});
+
+test("Enter on the dispatch row opens the two-pane picker and Esc returns to the menu", async () => {
+  const menu = mount();
+  menu.send(...TO_DISPATCH_ROW, ENTER);
+  assert.match(menu.render(), /Dispatch model — inspects the repo/);
+  assert.doesNotMatch(menu.render(), /Persona-audit: Settings/);
+  assert.ok(!menu.settled());
+
+  menu.send(ESCAPE);
+  assert.match(menu.render(), /Persona-audit: Settings/);
+  assert.ok(!menu.settled(), "Esc in the sub-screen must not close the settings menu");
+
+  menu.send(TAB, ENTER);
+  assert.deepEqual(await menu.result, { action: "save", draft: config(DEFAULT_METER_SETTINGS) });
+});
+
+test("confirming a dispatch model stores it in the saved draft and Backspace removes the key", async () => {
+  const menu = mount();
+  menu.send(...TO_DISPATCH_ROW, ENTER, ENTER);
+  assert.match(menu.render(), /Dispatch model\s+test\/model \(thinking: off\)/);
+  menu.send(TAB, ENTER);
+  const saved = await menu.result;
+  assert.equal(saved.action, "save");
+  assert.deepEqual(saved.action === "save" ? saved.draft.dispatch : undefined, {
+    ref: { provider: "test", id: "model" },
+    thinking: "off",
+  });
+
+  const seeded = config(DEFAULT_METER_SETTINGS);
+  seeded.dispatch = { ref: { provider: "test", id: "model" }, thinking: "off" };
+  const cleared = mount(seeded);
+  cleared.send(...TO_DISPATCH_ROW, BACKSPACE);
+  assert.match(cleared.render(), /Session model \(not set\)/);
+  cleared.send(TAB, ENTER);
+  const clearedResult = await cleared.result;
+  assert.equal(clearedResult.action, "save");
+  assert.equal(clearedResult.action === "save" && "dispatch" in clearedResult.draft, false, "clearing must drop the key entirely");
 });
 
 test("Cancel and Esc both discard the edits", async () => {

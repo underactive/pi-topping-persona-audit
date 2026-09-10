@@ -1,6 +1,5 @@
 import type { ThemeColor } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey, type Component } from "@earendil-works/pi-tui";
-import type { Roster } from "../modelConfig.ts";
 import type { ReviewerInfo, ReviewerSelection } from "../types.ts";
 import { TIERS } from "./ReviewerData.ts";
 import {
@@ -16,15 +15,11 @@ import {
 } from "./menuChrome.ts";
 
 const ALL_REVIEWERS: ReviewerInfo[] = TIERS.flatMap((tier) => tier.reviewers.map((reviewer) => ({ ...reviewer, tier: tier.tier })));
-const REVIEWER_NAMES = new Set(ALL_REVIEWERS.map((reviewer) => reviewer.name));
 const TIER_LABELS = new Map(TIERS.map((tier) => [tier.tier, tier.label]));
-const COST_CONFIRM_RUN_THRESHOLD = 6;
+/** Reviewer runs above which a picker demands a second Enter before launching. */
+export const COST_CONFIRM_RUN_THRESHOLD = 6;
 const LIST_CHROME_ROWS = 9;
 const FALLBACK_WIDTH = 80;
-
-type PickerEntry =
-  | { kind: "roster"; roster: Roster }
-  | { kind: "reviewer"; reviewer: ReviewerInfo };
 
 export interface ExpertPickerHost {
   requestRender(force?: boolean): void;
@@ -42,7 +37,7 @@ export interface ExpertPickerOptions {
   excluded?: ReadonlySet<string>;
 }
 
-/** Reviewer picker with optional roster shortcuts followed by the unchanged tiered reviewer list. */
+/** Tiered reviewer picker: one cross-tier list with type-to-filter, Space toggle, and pass count. */
 export class ExpertPicker implements Component {
   private selected = new Set<string>();
   private passes = 1;
@@ -50,8 +45,7 @@ export class ExpertPicker implements Component {
   private awaitingCostConfirm = false;
   private entryIndex = 0;
   private scrollOffset = 0;
-  private entries: PickerEntry[] = [];
-  private readonly rosters: Roster[];
+  private entries: ReviewerInfo[] = [];
   private readonly reviewers: ReviewerInfo[];
   private readonly single: boolean;
   private readonly excluded: ReadonlySet<string>;
@@ -69,7 +63,6 @@ export class ExpertPicker implements Component {
     fileCount?: number,
     host?: ExpertPickerHost,
     initial?: ReviewerSelection,
-    rosters: Roster[] = [],
     options: ExpertPickerOptions = {},
   ) {
     this.theme = theme;
@@ -79,18 +72,12 @@ export class ExpertPicker implements Component {
     this.single = options.single ?? false;
     this.excluded = options.excluded ?? new Set<string>();
     this.reviewers = ALL_REVIEWERS.filter((reviewer) => !this.excluded.has(reviewer.name));
-    this.rosters = rosters
-      .map((roster) => ({ ...roster, reviewers: roster.reviewers.filter((name) => REVIEWER_NAMES.has(name)) }))
-      .filter((roster) => roster.reviewers.length > 0)
-      .sort((a, b) => a.name.localeCompare(b.name));
     if (initial) {
       this.selected = new Set(initial.reviewers);
       this.passes = initial.passes;
     }
     this.rebuildEntries();
-    const firstSelected = this.entries.findIndex(
-      (entry) => entry.kind === "reviewer" && this.selected.has(entry.reviewer.name),
-    );
+    const firstSelected = this.entries.findIndex((entry) => this.selected.has(entry.name));
     if (firstSelected > 0) {
       this.entryIndex = firstSelected;
       this.adjustScroll();
@@ -102,18 +89,10 @@ export class ExpertPicker implements Component {
     return Math.max(10, Math.floor(((rows > 0 ? rows : FALLBACK_TERMINAL_ROWS) * OVERLAY_HEIGHT_PERCENT) / 100));
   }
 
-  private currentRoster(): Roster | undefined {
-    const entry = this.entries[this.entryIndex];
-    return entry?.kind === "roster" ? entry.roster : undefined;
-  }
-
   private effectiveSelection(): ReviewerSelection {
-    const roster = this.currentRoster();
-    if (roster) return { reviewers: [...roster.reviewers], passes: 1 };
     if (this.single) {
-      const entry = this.entries[this.entryIndex];
-      const currentReviewer = entry?.kind === "reviewer" ? entry.reviewer : undefined;
-      return { reviewers: currentReviewer ? [currentReviewer.name] : [], passes: 1 };
+      const current = this.entries[this.entryIndex];
+      return { reviewers: current ? [current.name] : [], passes: 1 };
     }
     return {
       reviewers: this.reviewers.filter((reviewer) => this.selected.has(reviewer.name)).map((reviewer) => reviewer.name),
@@ -129,30 +108,21 @@ export class ExpertPicker implements Component {
   private rebuildEntries(): void {
     const norm = (text: string) => text.toLowerCase().replace(/\s+/g, "");
     const query = norm(this.query);
-    const rosters = this.rosters.filter((roster) =>
-      !query || norm(roster.name).includes(query) || roster.reviewers.some((name) => norm(name).includes(query)));
-    const reviewers = this.reviewers.filter((reviewer) =>
+    this.entries = this.reviewers.filter((reviewer) =>
       !query
       || norm(reviewer.name).includes(query)
       || norm(reviewer.description).includes(query)
       || norm(reviewer.focusAreas.join(" ")).includes(query));
-    this.entries = [
-      ...rosters.map((roster): PickerEntry => ({ kind: "roster", roster })),
-      ...reviewers.map((reviewer): PickerEntry => ({ kind: "reviewer", reviewer })),
-    ];
     this.entryIndex = Math.min(this.entryIndex, Math.max(0, this.entries.length - 1));
     this.adjustScroll();
   }
 
-  private section(entry: PickerEntry): string {
-    return entry.kind === "roster" ? "Rosters" : TIER_LABELS.get(entry.reviewer.tier) ?? entry.reviewer.tier;
+  private section(entry: ReviewerInfo): string {
+    return TIER_LABELS.get(entry.tier) ?? entry.tier;
   }
 
-  private entryRows(entry: PickerEntry, width: number): number {
-    return entry.kind === "roster"
-      ? 2 + wrapText(entry.roster.reviewers.join(", "), width - 8).length
-      : 2 + wrapText(entry.reviewer.description, width - 8).length
-        + wrapText(entry.reviewer.focusAreas.join(" · "), width - 8).length;
+  private entryRows(entry: ReviewerInfo, width: number): number {
+    return 2 + wrapText(entry.description, width - 8).length + wrapText(entry.focusAreas.join(" · "), width - 8).length;
   }
 
   private visibleEnd(offset: number, width: number): number {
@@ -222,10 +192,9 @@ export class ExpertPicker implements Component {
     if (matchesKey(data, Key.space)) {
       if (this.single) return;
       const entry = this.entries[this.entryIndex];
-      if (entry?.kind !== "reviewer") return;
-      const name = entry.reviewer.name;
-      if (this.selected.has(name)) this.selected.delete(name);
-      else this.selected.add(name);
+      if (!entry) return;
+      if (this.selected.has(entry.name)) this.selected.delete(entry.name);
+      else this.selected.add(entry.name);
       this.awaitingCostConfirm = false;
       this.invalidate();
       return;
@@ -242,7 +211,7 @@ export class ExpertPicker implements Component {
       return;
     }
     if (matchesKey(data, Key.left) || matchesKey(data, Key.right)) {
-      if (this.single || this.currentRoster()) return;
+      if (this.single) return;
       const delta = matchesKey(data, Key.left) ? -1 : 1;
       this.passes = Math.min(5, Math.max(1, this.passes + delta));
       this.awaitingCostConfirm = false;
@@ -269,52 +238,40 @@ export class ExpertPicker implements Component {
     this.cachedWidth = width;
     this.adjustScroll();
     const t = this.theme;
-    const roster = this.currentRoster();
     const effective = this.effectiveSelection();
     const lines = [
       renderMenuTopBorder(t, width, this.single
         ? "Select a reviewer"
-        : `Select reviewers (${roster ? `${roster.name} roster` : `${this.selected.size} selected`})`),
+        : `Select reviewers (${this.selected.size} selected)`),
       "",
       " " + t.fg("dim", this.single
         ? "↑↓ navigate · Enter confirm · Esc cancel"
-        : `↑↓ navigate · Space toggle · ←→ passes (${roster ? 1 : this.passes}) · Enter confirm · Esc cancel`),
+        : `↑↓ navigate · Space toggle · ←→ passes (${this.passes}) · Enter confirm · Esc back`),
       " " + (this.query ? t.fg("accent", `Filter: ${this.query}`) : t.fg("dim", "Type to filter…")),
       "",
     ];
     if (this.entries.length === 0) {
-      lines.push("  " + t.fg("warning", this.rosters.length > 0
-        ? "No reviewers or rosters match filter."
-        : "No reviewers match filter."));
+      lines.push("  " + t.fg("warning", "No reviewers match filter."));
     } else {
       const end = Math.min(this.visibleEnd(this.scrollOffset, width), this.entries.length);
       let section: string | undefined;
       for (let index = this.scrollOffset; index < end; index++) {
-        const entry = this.entries[index]!;
-        const nextSection = this.section(entry);
+        const reviewer = this.entries[index]!;
+        const nextSection = this.section(reviewer);
         if (nextSection !== section) {
           section = nextSection;
           lines.push(" " + renderMenuSectionDivider(t, width - 1, section));
         }
         const current = index === this.entryIndex;
         const pointer = current ? t.bold(t.fg("accent", SELECTOR)) : " ";
-        if (entry.kind === "roster") {
-          const name = current ? t.bold(t.fg("accent", entry.roster.name)) : t.bold(entry.roster.name);
-          lines.push(renderMenuContentRow(t, width, `  ${pointer} ◇ ${name}`, current));
-          for (const memberLine of wrapText(entry.roster.reviewers.join(", "), width - 8)) {
-            lines.push(`      ${t.fg("muted", memberLine)}`);
-          }
-        } else {
-          const reviewer = entry.reviewer;
-          const checked = this.single ? current : this.selected.has(reviewer.name);
-          const checkbox = checked ? t.fg("success", "✓") : t.fg("dim", "○");
-          const name = checked
-            ? t.fg("success", t.bold(reviewer.name))
-            : current ? t.bold(t.fg("accent", reviewer.name)) : t.bold(reviewer.name);
-          lines.push(renderMenuContentRow(t, width, `  ${pointer} ${checkbox} ${name}`, current));
-          for (const text of wrapText(reviewer.description, width - 8)) lines.push(`      ${t.fg("muted", text)}`);
-          for (const text of wrapText(reviewer.focusAreas.join(" · "), width - 8)) lines.push(`      ${t.fg("dim", text)}`);
-        }
+        const checked = this.single ? current : this.selected.has(reviewer.name);
+        const checkbox = checked ? t.fg("success", "✓") : t.fg("dim", "○");
+        const name = checked
+          ? t.fg("success", t.bold(reviewer.name))
+          : current ? t.bold(t.fg("accent", reviewer.name)) : t.bold(reviewer.name);
+        lines.push(renderMenuContentRow(t, width, `  ${pointer} ${checkbox} ${name}`, current));
+        for (const text of wrapText(reviewer.description, width - 8)) lines.push(`      ${t.fg("muted", text)}`);
+        for (const text of wrapText(reviewer.focusAreas.join(" · "), width - 8)) lines.push(`      ${t.fg("dim", text)}`);
         lines.push("");
       }
       if (this.entries.length > end - this.scrollOffset) {
@@ -340,9 +297,8 @@ export async function showExpertPicker(
   ctx: { ui: OverlayPromptUi },
   fileCount?: number,
   initial?: ReviewerSelection,
-  rosters: Roster[] = [],
   options: ExpertPickerOptions = {},
 ): Promise<ReviewerSelection | null> {
   return showOverlayPrompt<ReviewerSelection | null>(ctx, (tui, theme, finish) =>
-    new ExpertPicker(theme, finish, fileCount, tui, initial, rosters, options));
+    new ExpertPicker(theme, finish, fileCount, tui, initial, options));
 }

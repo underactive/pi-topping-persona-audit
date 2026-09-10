@@ -150,7 +150,6 @@ async function showReviewerPicker(
     ctx,
     undefined,
     current ? { reviewers: [current], passes: 1 } : undefined,
-    [],
     { single: true, excluded },
   );
   return selection?.reviewers[0];

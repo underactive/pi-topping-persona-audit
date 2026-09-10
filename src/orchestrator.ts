@@ -132,9 +132,9 @@ const regressRowKey = (f: { file: string; line: number; category: string }): str
 const findingLabel = (f: { file: string; line: number }): string =>
   f.line > 0 ? `${f.file}:${f.line}` : f.file;
 
-const READ_ONLY_TOOLS = ["read", "grep", "find", "ls"];
+export const READ_ONLY_TOOLS = ["read", "grep", "find", "ls"];
 const EDIT_TOOLS = [...READ_ONLY_TOOLS, "bash", "edit", "write"];
-const AGENT_IDLE_TIMEOUT_MS = 600_000;
+export const AGENT_IDLE_TIMEOUT_MS = 600_000;
 
 /** Cap on retries prompted by unusable (low-match) verifier output, per round. */
 const MAX_UNUSABLE_VERIFIER_RETRIES = 2;

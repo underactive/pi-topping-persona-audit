@@ -161,43 +161,16 @@ test("expert picker renders the red-team tiers after Persona", () => {
   ]);
 });
 
-test("rosters render alphabetically above reviewers and filter by roster or member name", () => {
-  const rosters = [
-    { name: "Zulu", reviewers: ["Security Engineer", "Missing Reviewer"] },
-    { name: "Alpha", reviewers: ["Principal Engineer"] },
-    { name: "Stale", reviewers: ["Missing Reviewer"] },
-  ];
-  const picker = new ExpertPicker(theme, () => {}, undefined, undefined, undefined, rosters);
-  const rendered = picker.render(WIDTH).map(strip).join("\n");
-  assert.ok(rendered.indexOf("─ Rosters") < rendered.indexOf("─ Holistic"));
-  assert.ok(rendered.indexOf("Alpha") < rendered.indexOf("Zulu"));
-  assert.doesNotMatch(rendered, /Missing Reviewer|Stale/);
-  assert.match(rendered, /Alpha.*\n\s+Principal Engineer/);
-
-  for (const char of "security") picker.handleInput(char);
-  const filtered = picker.render(WIDTH).map(strip).join("\n");
-  assert.match(filtered, /Zulu/);
-  assert.match(filtered, /Security Engineer/);
-});
-
-test("Enter on a roster returns one pass, ignores manual controls, and keeps the cost confirmation gate", () => {
-  const names = TIERS.flatMap((tier) => tier.reviewers).slice(0, 7).map((reviewer) => reviewer.name);
-  let confirmed: ReviewerSelection | null | undefined;
+test("multi-select picker lists only reviewer tiers and steps back on Esc", () => {
   const picker = new ExpertPicker(
     theme,
-    (result) => { confirmed = result; },
+    () => {},
     undefined,
-    undefined,
-    undefined,
-    [{ name: "Large", reviewers: names }],
+    { requestRender: () => {}, terminal: { rows: 1000 } },
   );
-
-  picker.handleInput(SPACE);
-  picker.handleInput("\x1b[C");
-  picker.handleInput(ENTER);
-  assert.equal(confirmed, undefined, "large roster requires the existing second Enter warning");
-  picker.handleInput(ENTER);
-  assert.deepEqual(confirmed, { reviewers: names, passes: 1 });
+  const rendered = picker.render(WIDTH).map(strip).join("\n");
+  assert.doesNotMatch(rendered, /─ Rosters|◇/);
+  assert.match(rendered, /Enter confirm · Esc back/);
 });
 
 test("single reviewer picker excludes reviewers from the list and filter", () => {
@@ -207,7 +180,6 @@ test("single reviewer picker excludes reviewers from the list and filter", () =>
     undefined,
     { requestRender: () => {}, terminal: { rows: 1000 } },
     undefined,
-    [],
     { single: true, excluded: new Set(["Principal Engineer"]) },
   );
   const initial = picker.render(WIDTH).map(strip).join("\n");
@@ -221,7 +193,7 @@ test("single reviewer picker excludes reviewers from the list and filter", () =>
 
 test("single reviewer picker confirms the highlighted reviewer on one Enter", () => {
   let confirmed: ReviewerSelection | null | undefined;
-  const picker = new ExpertPicker(theme, (result) => { confirmed = result; }, undefined, undefined, undefined, [], { single: true });
+  const picker = new ExpertPicker(theme, (result) => { confirmed = result; }, undefined, undefined, undefined, { single: true });
 
   picker.handleInput(ENTER);
   assert.deepEqual(confirmed, { reviewers: ["Principal Engineer"], passes: 1 });
@@ -229,7 +201,7 @@ test("single reviewer picker confirms the highlighted reviewer on one Enter", ()
 
 test("single reviewer picker ignores Space and pass controls", () => {
   let confirmed: ReviewerSelection | null | undefined;
-  const picker = new ExpertPicker(theme, (result) => { confirmed = result; }, undefined, undefined, undefined, [], { single: true });
+  const picker = new ExpertPicker(theme, (result) => { confirmed = result; }, undefined, undefined, undefined, { single: true });
 
   picker.handleInput(SPACE);
   picker.handleInput(LEFT);
@@ -239,7 +211,7 @@ test("single reviewer picker ignores Space and pass controls", () => {
 });
 
 test("single reviewer picker uses single-select chrome without a cost footer", () => {
-  const picker = new ExpertPicker(theme, () => {}, undefined, undefined, undefined, [], { single: true });
+  const picker = new ExpertPicker(theme, () => {}, undefined, undefined, undefined, { single: true });
   const lines = picker.render(WIDTH);
   const selected = highlighted(lines);
   const rendered = lines.map(strip).join("\n");

@@ -33,6 +33,17 @@ test("parsePersonaAuditSettings round-trips a well-formed settings file", () => 
   assert.deepEqual(parsed, config);
 });
 
+test("parsePersonaAuditSettings round-trips the dispatch slot and omits it when absent or malformed", () => {
+  const dispatch = { ref: { provider: "anthropic", id: "claude-haiku-4-5" }, thinking: "low" as const };
+  assert.deepEqual(parsePersonaAuditSettings(JSON.stringify({ dispatch })).dispatch, dispatch);
+  assert.equal("dispatch" in parsePersonaAuditSettings("{}"), false, "an absent slot must not become an undefined key");
+  assert.equal(
+    "dispatch" in parsePersonaAuditSettings(JSON.stringify({ dispatch: { ref: { provider: "x" }, thinking: "low" } })),
+    false,
+    "a malformed slot is dropped",
+  );
+});
+
 test("parsePersonaAuditSettings falls back to an empty config on malformed JSON", () => {
   const empty = {
     phases: {},

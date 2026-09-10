@@ -12,7 +12,8 @@ A [Pi coding agent](https://github.com/earendil-works/pi) extension that impleme
 
 - **Multi-persona reviews** — Runs parallel reviewer agents with distinct personalities (security, correctness, style, performance, etc.)
 - **Deterministic orchestration** — The entire audit is driven by TypeScript, not by an LLM following instructions; LLMs run only where judgment is required (reviewer passes, adjudication, fix application), each in an isolated in-process agent session
-- **TUI expert picker** — Interactive terminal UI to select a reusable reviewer roster or individual personas. Rosters appear alphabetically first; individual reviewers remain one cross-tier multi-select list with type-to-filter, `Space` to toggle, `←`/`→` to set 1–5 passes, and `Enter` to confirm.
+- **Reviewer source menu** — Every audit opens on a three-way choice: let a cheap dispatcher agent inspect the repo (languages, frameworks, Dockerfile, Cargo.toml vs package.json, whether an auth system exists) and recommend 3–10 reviewers, load a saved reviewer roster, or pick reviewers by hand. Recommendations open pre-checked in the manual picker so you can adjust them before continuing.
+- **TUI expert picker** — One cross-tier multi-select list of individual personas with type-to-filter, `Space` to toggle, `←`/`→` to set 1–5 passes, and `Enter` to confirm; `Esc` steps back to the source menu with the selection intact.
 - **Pre-audit context summary** — Before a normal audit starts, review the selected personas and run settings, then optionally enter shared reviewer guidance. Put an existing `.png`, `.jpg`, `.jpeg`, `.gif`, or `.webp` path on its own line to attach it to every reviewer pass (maximum 5 images, 5 MiB each). Raw guidance and image data never reach later phases or reports.
 - **Live progress table** — One compact table above the editor tracks every reviewer pass, adjudicator run, and verification script with live context usage, an output-activity meter (e.g., "1.2K tokens"), the tool call in flight, turn count, and elapsed time; a phase/model band shows which model is assigned to each phase and highlights the one in progress, and a frozen copy is left in the transcript on completion, visible but excluded from the model's context on later turns
 - **Findings review** — Accept, reject, or defer individual findings before applying fixes. Each finding has a simplified-technical-English Summary, its authoritative Rationale, and a Suggested Change; summaries also persist in reports and deferred handoffs. Press Esc twice to cancel — the first press arms the confirmation, any other key resumes; press `H` during review to write deferred findings to a handoff file under `.pi/persona-audit/handoffs/`; `↑`/`↓` navigate, `PageUp`/`PageDown` move by a page, `S` cycles file/priority/reviewer/blast-radius sorting, `A`, `R`, and `D` set a finding to apply, reject, or defer, `Space` cycles apply → reject → defer, `F` fixes the selected finding now (the fix agent also updates existing tests the fix invalidates, without weakening them; the edits land in the diff and the fix commit), and `Enter` confirms. Blast radius is a deterministic 0–100 risk score from direct importer fan-in, sensitive code surfaces, test coverage, and the reviewer's change-kind classification; the overlay shows its Low/Medium/High/Critical bucket and leading reasons.
@@ -22,7 +23,7 @@ A [Pi coding agent](https://github.com/earendil-works/pi) extension that impleme
 - **Durable progress** — A partial report is updated after every reviewer pass; cancellation or failure never loses completed work
 - **Audit report viewer** — Opens the completed report in a scrollable Markdown overlay; use arrows to scroll, `u`/`d` to page, `g`/`G` for top/bottom, and `Esc` to close. Cancelled audits do not open the viewer.
 - **Audit report** — Generates a structured report in `.pi/persona-audit/audits/`
-- **Settings menu** — `/persona-audit-settings` configures reusable reviewer rosters, the progress table's activity monitor (color and scroll direction), the Linus Torvalds reviewer's temperament, and the fix + verify round cap
+- **Settings menu** — `/persona-audit-settings` configures reusable reviewer rosters, the dispatch model that recommends reviewers, the progress table's activity monitor (color and scroll direction), the Linus Torvalds reviewer's temperament, and the fix + verify round cap
 - **Artifact purge** — `/persona-audit-purge [--older-than <days>]` lists audit reports, progress snapshots, handoffs, pre-fix snapshots, and this repo's reviewer cache for explicit tagging and permanent deletion. Each section explains its retention purpose and parent folder; press `P` to preview Markdown or pretty-printed JSON before deleting. Unknown files and `settings.json` are never touched; deleting cache entries forces fresh reviewer passes.
 
 ## Install
@@ -101,10 +102,13 @@ Exactly one of `--diff` or `--full` is required.
 | Linus Torvalds temperament | neutral (min), caustic, LKML (max) | neutral (min) |
 | Max fix + verify rounds | `1`–`10` | `3` |
 | Reviewer rosters | Up to 20 named reviewer combinations | None |
+| Dispatch model | Any available model plus a thinking level | Session model |
 
 Reviewer roster names are 1–24 alphanumeric characters and are unique without regard to case. Each roster contains 1–10 unique reviewers. Open **Reviewer rosters** to create, edit, rename, clear slots with `Backspace`/`Delete`, or delete with confirmation. The editor always shows ten slots and filters already-used reviewers out of later slot pickers. Roster and other setting changes are staged together: only the top-level **Save** writes them; **Cancel** or `Esc` discards the whole settings draft.
 
-In `/persona-audit`, valid rosters are listed alphabetically above the individual reviewer tiers. Filtering matches roster and member names. `Enter` expands a roster directly into its current valid reviewers at one pass each; roster rows do not respond to `Space` or pass controls, and rosters above the normal run threshold use the same second-`Enter` cost confirmation. Reviewer names that no longer exist remain in settings but are omitted at use time; a roster with no current reviewers is hidden.
+In `/persona-audit`, choosing **Load reviewer roster** on the source menu opens a picker listing valid rosters alphabetically with their members. Filtering matches roster and member names. `Enter` expands a roster directly into its current valid reviewers at one pass each; rosters above the normal run threshold use the same second-`Enter` cost confirmation, and `Esc` returns to the source menu. Reviewer names that no longer exist remain in settings but are omitted at use time; a roster with no current reviewers is hidden.
+
+**Dispatch model** is the model behind **Inspect repo + recommend reviewers**. Open the row to pick any available model and thinking level with the same two-pane selector the phase picker uses; `Backspace` clears it. When unset, the dispatcher runs on the session's current model and thinking level and the audit warns you once. The dispatcher receives a deterministic repo fingerprint (languages by file count, root manifests such as `package.json`, `Cargo.toml`, `go.mod`, and `Dockerfile`, detected frameworks, and signals such as auth, database, containers, native code, or an AI surface) plus read-only tools to spot-check, and returns 3–10 reviewers with a one-line reason each. The recommendation is cached for the rest of that command, so backing out and choosing it again does not re-run the agent.
 
 The first two control the progress table's MONITOR column (see [Progress table](#progress-table)).
 Max fix + verify rounds caps the automatic gate-repair loop (see [Fix + verify rounds](#fix--verify-rounds)):
@@ -205,8 +209,13 @@ Authorization & Tenancy is the highest-value slot — it is pure reasoning rathe
 flowchart TD
   A[/persona-audit --diff or --full/] --> B[Git diff file scan OR full-tree scan]
   B --> C[Importer scanning, diff-only]
-  C --> D[Expert picker TUI]
-  D --> D2[Model + thinking picker]
+  C --> D0[Reviewer source menu]
+  D0 --> D1[Dispatcher agent recommends reviewers]
+  D0 --> DR[Roster picker]
+  D0 --> D[Expert picker TUI]
+  D1 --> D
+  DR --> D2[Model + thinking picker]
+  D --> D2
   D2 --> D3[Pre-audit summary + optional reviewer context]
   D3 --> E[Incremental cache check]
   E --> F[Reviewer agent sessions × passes]
@@ -223,7 +232,7 @@ flowchart TD
 
 1. **File scan** — `--diff` detects changed files using git diff against a base commit; `--full` instead does a deterministic whole-tree directory scan (sorted, capped, no git required).
 2. **Importer scanning** — heuristic JS/TS relative-path matching finds direct importers of changed modules in `--diff` mode and computes per-module fan-in for blast-radius scoring.
-3. **Reviewer selection and summary** — choose personas and passes in the TUI picker — one cross-tier list, `Space` toggles, typing filters by name, description, or focus area — then assign a model and thinking level per phase. A final summary lists the run and accepts optional shared reviewer guidance. A line containing an existing image path attaches that image; relative paths resolve from the audited working directory. Missing, unsupported, oversized, and over-limit files remain visible as text with a warning. Back returns to the model picker without losing the draft. Handoff resumes skip this reviewer-only step.
+3. **Reviewer selection and summary** — the source menu offers three routes: a cheap dispatcher agent fingerprints the repo and recommends 3–10 personas (opened pre-checked in the picker), a saved roster expands to its members, or you choose personas and passes in the TUI picker — one cross-tier list, `Space` toggles, typing filters by name, description, or focus area. `Esc` on any picker returns to the source menu. Then assign a model and thinking level per phase. A final summary lists the run and accepts optional shared reviewer guidance. A line containing an existing image path attaches that image; relative paths resolve from the audited working directory. Missing, unsupported, oversized, and over-limit files remain visible as text with a warning. Back returns to the model picker without losing the draft. Handoff resumes skip this reviewer-only step.
 4. **Parallel review** — spawn isolated in-process agent sessions per reviewer×pass (cache-aware, concurrency 5). Shared context guides reviewer priorities but cannot override audit scope, safety rules, or the output contract. Context changes invalidate reviewer cache entries; context-free audits retain their prior keys. If any reviewer pass fails, the ReviewerRetry checkpoint lets you retry failed passes (optionally on a different model) or skip them before triage begins.
 5. **Collection & adjudication** — parse/dedup findings deterministically, then a read-only adjudicator agent session adds recommendations.
 6. **Findings review** — accept, reject, or defer findings in the TUI. Each item shows a simplified-technical-English Summary, the full authoritative Rationale, and a Suggested Change; `↑`/`↓` navigate, `PageUp`/`PageDown` move by a page, `S` cycles sorting by file, severity priority, reviewer, and blast radius, `A`, `R`, and `D` set the selected status directly, `Space` cycles statuses, `F` fixes the selected finding now, and `H` writes current deferred findings to `.pi/persona-audit/handoffs/`. Blast-radius mode orders by the computed 0–100 risk score and shows its bucket plus the top reasons inline.
@@ -586,7 +595,9 @@ pi-topping-persona-audit/
 │   └── components/
 │       ├── AuditProgress.ts  # Live phased progress table (aboveEditor widget)
 │       ├── AuditSummary.ts   # Pre-audit summary and embedded reviewer-context editor
-│       ├── ExpertPicker.ts   # TUI overlay for reviewer selection
+│       ├── ExpertPicker.ts   # TUI overlay for manual reviewer selection
+│       ├── ReviewerSource.ts # First screen: recommend, roster, or manual selection
+│       ├── RosterPicker.ts   # TUI overlay listing saved rosters
 │       ├── FindingsReview.ts # TUI overlay for findings triage
 │       ├── FixProgress.ts    # Fix Now controller (nested table detail + Escape listener) + per-attempt gate overlay
 │       ├── ModelPicker.ts    # Per-phase model + thinking picker

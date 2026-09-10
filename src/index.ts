@@ -24,6 +24,9 @@ import {
 } from "./components/AuditProgress.ts";
 import { discoverAgents, mapWithConcurrencyLimit } from "./subprocess.ts";
 import { showExpertPicker } from "./components/ExpertPicker.ts";
+import { showReviewerSourceMenu, type ReviewerSource } from "./components/ReviewerSource.ts";
+import { showRosterPicker } from "./components/RosterPicker.ts";
+import { formatRecommendation, recommendReviewers, type DispatcherOutcome, type DispatcherRecommendation } from "./dispatcher.ts";
 import { showPhaseModelPicker } from "./components/ModelPicker.ts";
 import { showAuditSummary } from "./components/AuditSummary.ts";
 import { showReviewerRetryPrompt } from "./components/ReviewerRetry.ts";
@@ -36,6 +39,7 @@ import { showPurgeMenu } from "./components/PurgeMenu.ts";
 import {
   loadPersonaAuditConfig,
   modelRefLabel,
+  phaseModelChoiceLabel,
   savePersonaAuditConfig,
   type PhaseModelChoice,
   type PhaseModelSelection,
@@ -700,10 +704,13 @@ export default function (pi: ExtensionAPI): void {
         }
       }
 
-      // ── Step 2: expert picker (live run-cost preview), then the
-      //    per-phase model + thinking picker. Esc on the model picker steps
-      //    back here, reopening the expert picker with the same selection.
-      //    A handoff resume skips the expert picker — reviewers are the
+      // ── Step 2: reviewer source menu (dispatcher recommendation, saved
+      //    roster, or the manual expert picker), then the per-phase model +
+      //    thinking picker. Esc steps back one screen with state intact: the
+      //    pickers return to the source menu, and the model picker reopens
+      //    whichever picker produced the selection — the dispatcher never
+      //    re-runs on back, and its recommendation is cached for this command.
+      //    A handoff resume skips reviewer selection — reviewers are the
       //    original run's historical labels — but still needs the model
       //    picker (the Implement/Verify and Fix Now models matter).
       let selection: ReviewerSelection;
@@ -718,15 +725,96 @@ export default function (pi: ExtensionAPI): void {
         selection = { reviewers: handoffPayload!.reviewers, passes: 0 };
         phaseModels = models.selections;
       } else {
+        const pickerConfig = loadPersonaAuditConfig();
+        const rosters = pickerConfig.rosters;
+        const dispatchChoice = pickerConfig.dispatch;
+        // The session model must be passed explicitly: an undefined model
+        // hands the headless session the SDK default, not the session's model.
+        const sessionModel = ctx.model ? modelRefLabel({ provider: ctx.model.provider, id: ctx.model.id }) : undefined;
+        const dispatcherLabel = dispatchChoice
+          ? phaseModelChoiceLabel(dispatchChoice)
+          : `${sessionModel ?? "session model"} (session)`;
+
+        /** Picker that owns the current selection; undefined means the source menu opens next. */
+        let screen: "roster" | "manual" | undefined;
+        let lastSource: ReviewerSource | undefined;
         let restoredReviewers: ReviewerSelection | undefined;
+        let lastRosterName: string | undefined;
         let restoredModels: PhaseModelSelection | undefined;
         let contextDraft = "";
-        const pickerRosters = loadPersonaAuditConfig().rosters;
+        let cachedRecommendation: DispatcherRecommendation | undefined;
         selectionLoop: for (;;) {
-          const reviewers = await showExpertPicker(ctx, fileCount, restoredReviewers, pickerRosters);
-          if (!reviewers) {
-            ctx.ui.notify("Audit cancelled.", "info");
-            return;
+          if (screen === undefined) {
+            const source = await showReviewerSourceMenu(ctx, {
+              rosterCount: rosters.length,
+              dispatcherLabel,
+              ...(lastSource ? { initial: lastSource } : {}),
+            });
+            if (!source) {
+              ctx.ui.notify("Audit cancelled.", "info");
+              return;
+            }
+            lastSource = source;
+            if (source === "recommend") {
+              if (!cachedRecommendation) {
+                ctx.ui.notify(`Inspecting repo with ${dispatcherLabel}… (ctrl+shift+c cancels)`, "info");
+                if (!dispatchChoice) {
+                  ctx.ui.notify("No Dispatch model set — using the session model. Set a cheaper one in /persona-audit-settings.", "warning");
+                }
+                // Parked on the module-level controller so the existing cancel
+                // shortcut can abort the dispatcher like any other audit phase.
+                const dispatchController = new AbortController();
+                activeAuditController = dispatchController;
+                let outcome: DispatcherOutcome;
+                try {
+                  outcome = await recommendReviewers(
+                    {
+                      cwd: ctx.cwd,
+                      modelRegistry: ctx.modelRegistry,
+                      signal: dispatchController.signal,
+                      ...(dispatchChoice
+                        ? { model: modelRefLabel(dispatchChoice.ref), thinking: dispatchChoice.thinking }
+                        : { ...(sessionModel ? { model: sessionModel } : {}), thinking: pi.getThinkingLevel() }),
+                    },
+                    { fileManifest, mode, scope },
+                  );
+                } finally {
+                  if (activeAuditController === dispatchController) activeAuditController = null;
+                }
+                if (!outcome.ok) {
+                  if (outcome.aborted) {
+                    ctx.ui.notify("Audit cancelled.", "info");
+                    return;
+                  }
+                  ctx.ui.notify(`Reviewer recommendation failed: ${outcome.error}`, "error");
+                  continue selectionLoop;
+                }
+                cachedRecommendation = outcome.recommendation;
+              }
+              ctx.ui.notify(formatRecommendation(cachedRecommendation), "info");
+              restoredReviewers = { reviewers: [...cachedRecommendation.reviewers], passes: 1 };
+              screen = "manual";
+            } else {
+              screen = source;
+            }
+          }
+
+          let reviewers: ReviewerSelection;
+          if (screen === "roster") {
+            const picked = await showRosterPicker(ctx, rosters, fileCount, lastRosterName);
+            if (!picked) {
+              screen = undefined;
+              continue selectionLoop;
+            }
+            lastRosterName = picked.rosterName;
+            reviewers = picked.selection;
+          } else {
+            const picked = await showExpertPicker(ctx, fileCount, restoredReviewers);
+            if (!picked) {
+              screen = undefined;
+              continue selectionLoop;
+            }
+            reviewers = picked;
           }
           for (;;) {
             const models = await showPhaseModelPicker(ctx, pi.getThinkingLevel(), restoredModels);
@@ -964,7 +1052,7 @@ export default function (pi: ExtensionAPI): void {
 
   // ── /persona-audit-settings command ───────────────────────────
   pi.registerCommand("persona-audit-settings", {
-    description: "Configure persona-audit rosters, activity monitor, reviewer temperament, and verification rounds",
+    description: "Configure persona-audit rosters, dispatch model, activity monitor, reviewer temperament, and verification rounds",
     handler: async (_args, ctx) => {
       if (ctx.mode !== "tui") {
         ctx.ui.notify("persona-audit-settings requires TUI mode", "error");
@@ -972,7 +1060,7 @@ export default function (pi: ExtensionAPI): void {
       }
       let draft = loadPersonaAuditConfig();
       for (;;) {
-        const result = await showSettingsMenu(ctx, draft);
+        const result = await showSettingsMenu(ctx, draft, pi.getThinkingLevel());
         if (result.action === "cancel") return;
         draft = result.draft;
         if (result.action === "rosters") {
