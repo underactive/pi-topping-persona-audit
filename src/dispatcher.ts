@@ -190,8 +190,7 @@ function pathWords(words: string[]): RegExp {
   return new RegExp(`(^|[\\/._-])(${words.join("|")})([\\/._-]|$)`, "i");
 }
 
-const AUTH_PATH =
-  /(^|[\/._-])(auth|authn|authz|login|logout|signin|signup|session|sessions|oauth|oidc|sso|saml|jwt|password|passwd|permission|permissions|rbac|acl|policy|policies|guard|tenant|tenancy)([\/._-]|$)/i;
+const AUTH_PATH = pathWords(["auth", "authn", "authz", "login", "logout", "signin", "signup", "session", "sessions", "oauth", "oidc", "sso", "saml", "jwt", "password", "passwd", "permission", "permissions", "rbac", "acl", "policy", "policies", "guard", "tenant", "tenancy"]);
 const TENANT_PATH = pathWords(["tenant", "tenancy"]);
 const DATABASE_PATH = pathWords(["migrations", "prisma"]);
 const IPC_PATH = pathWords(["preload", "ipc"]);
