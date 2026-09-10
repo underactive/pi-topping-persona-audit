@@ -433,8 +433,9 @@ for the whole run and is torn down on completion, cancellation, `/reload`, and
   [`/persona-audit-settings`](#settings). The `thinkingLevel` color mode tints
   each row by the thinking level assigned to its phase, falling back to
   `accent` when the level is unknown.
-- **ACTIVITY** — the row's status, with the tool call currently executing on an
-  indented `↳` sub-row beneath it.
+- **ACTIVITY** — the row's status, with the tool call currently executing rendered
+  on an indented `↳` sub-row beneath it with a dim gutter, bold `toolTitle` tool
+  name, and `accent` argument.
 - **TURNS / TOOLS / COST / TIME** — assistant turns completed, cumulative tool
   calls, cumulative model cost at `$0.000` precision (`—` when the model cannot be
   resolved), and elapsed time. All four freeze when the row settles and are

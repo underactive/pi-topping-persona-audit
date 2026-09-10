@@ -45,7 +45,7 @@ after(() => {
 });
 
 /** Fake extension context mirroring pi's setWidget replace/dispose semantics. */
-function fakeCtx(terminalRows = 40, theme: ProgressTheme = { fg: (_color, text) => text }) {
+function fakeCtx(terminalRows = 40, theme: ProgressTheme = { fg: (_color, text) => text, bold: (text) => text }) {
   const state: { table: AuditProgressTable | undefined; mounts: number; disposed: number } = {
     table: undefined,
     mounts: 0,
@@ -231,6 +231,29 @@ test("agent rows start with status icons and tool calls align under the status c
   // The tool call starts at the status-column width, matching the sibling agent table.
   assert.match(body, /    ↳ read  src\/audit\.ts/);
   assert.ok(!/^  [✓◐○✗]/.test(body), "the header is not an agent row");
+  widget.stop();
+});
+
+test("tool activity sub-rows color each segment without changing their width", () => {
+  const codes: Record<string, number> = { dim: 102, accent: 103, toolTitle: 105 };
+  const taggingTheme: ProgressTheme = {
+    fg: (color, text) => `\x1b[${codes[color] ?? 199}m${text}\x1b[0m`,
+    bold: (text) => `\x1b[1m${text}\x1b[22m`,
+  };
+  const { ctx, state } = fakeCtx(40, taggingTheme);
+  const widget = new AuditProgressWidget(ctx);
+  widget.addRow("Review", "a", "Security Engineer");
+  widget.startRow("a", "reviewing…");
+  widget.applyProgress("a", progressSnapshot({ activity: "read  src/audit.ts" }));
+  widget.mount();
+
+  const activityLine = state.table?.render(120).find((line) => strip(line).includes("↳ read  src/audit.ts"));
+  assert.ok(activityLine, "the activity sub-row renders");
+  assert.match(activityLine, /\x1b\[102m↳ \x1b\[0m/, "the gutter is dimmed independently");
+  assert.match(activityLine, /\x1b\[105m\x1b\[1mread\x1b\[22m\x1b\[0m/, "the tool name is bold and toolTitle-colored");
+  assert.match(activityLine, /\x1b\[103msrc\/audit\.ts\x1b\[0m/, "the argument is accent-colored");
+  assert.equal(visibleWidth(activityLine), visibleWidth(strip(activityLine)), "ANSI styling does not change visible width");
+  assert.ok(visibleWidth(activityLine) <= 120, "the styled activity row does not overflow");
   widget.stop();
 });
 
@@ -434,7 +457,7 @@ test("a frozen snapshot renders every row, since it has no terminal to budget ag
   const snapshot = widget.snapshot();
   widget.stop();
 
-  const theme: ProgressTheme = { fg: (_color, text) => text };
+  const theme: ProgressTheme = { fg: (_color, text) => text, bold: (text) => text };
   const frozen = renderAuditSnapshot(snapshot, theme).render(120).map(strip);
 
   assert.equal(snapshot.rows.length, 200, "the snapshot keeps the full row list");
@@ -571,6 +594,7 @@ test("only the active phase shimmers with a truecolor gradient in the band", () 
   // inflate the line past bodyWidth and get truncated before the last column.
   const taggingTheme: ProgressTheme = {
     fg: (color, text) => `\x1b[${color === "text" ? 97 : 90}m${text}\x1b[0m`,
+    bold: (text) => `\x1b[1m${text}\x1b[22m`,
     getFgAnsi: (color) => (color === "text" ? "\x1b[38;2;255;255;255m" : "\x1b[38;2;120;120;120m"),
   };
   const { ctx, state } = fakeCtx(40, taggingTheme);
@@ -607,7 +631,7 @@ test("only the active phase shimmers with a truecolor gradient in the band", () 
 });
 
 test("the active phase falls back to the flat highlighted tone when the theme has no getFgAnsi", () => {
-  const taggingTheme: ProgressTheme = { fg: (color, text) => `\x1b[${color === "text" ? 97 : 90}m${text}\x1b[0m` };
+  const taggingTheme: ProgressTheme = { fg: (color, text) => `\x1b[${color === "text" ? 97 : 90}m${text}\x1b[0m`, bold: (text) => `\x1b[1m${text}\x1b[22m` };
   const { ctx, state } = fakeCtx(40, taggingTheme);
   const widget = new AuditProgressWidget(ctx);
   widget.addRow("Review", "a", "Security Engineer", { state: "working" });
@@ -686,7 +710,7 @@ test("snapshot survives a JSON round-trip and renderAuditSnapshot redraws the se
   assert.equal(roundTripped.meterLevels.a?.length, ACTIVITY_METER_WIDTH, "the meter trace round-trips at full width");
   assert.deepEqual(roundTripped.phaseThinking, { Review: "high" });
 
-  const theme: ProgressTheme = { fg: (_color, text) => text };
+  const theme: ProgressTheme = { fg: (_color, text) => text, bold: (text) => text };
   const frozenLines = renderAuditSnapshot(roundTripped, theme).render(120).map(strip);
 
   assert.ok(frozenLines.some((l) => l.includes("Security Engineer")), "settled row survives the round trip");
@@ -696,7 +720,7 @@ test("snapshot survives a JSON round-trip and renderAuditSnapshot redraws the se
 });
 
 test("the meter resolves thinking-level colours per phase and preserves fixed colours", () => {
-  const tagged: ProgressTheme = { fg: (color, text) => `<${color}>${text}` };
+  const tagged: ProgressTheme = { fg: (color, text) => `<${color}>${text}`, bold: (text) => text };
   const snapshot: AuditProgressSnapshot = {
     summary: "done",
     phaseModels: {},
@@ -746,7 +770,7 @@ test("the meter resolves thinking-level colours per phase and preserves fixed co
   };
   const fallback = renderAuditSnapshot(legacySnapshot, tagged).render(120).join("\n");
   assert.match(fallback, /<accent>⣿/);
-  const legacy = renderAuditSnapshot(legacySnapshot, { fg: (_color, text) => text }).render(120).join("\n");
+  const legacy = renderAuditSnapshot(legacySnapshot, { fg: (_color, text) => text, bold: (text) => text }).render(120).join("\n");
   assert.match(legacy, /Security Engineer.*0.*—.*0:01/, "legacy rows default missing telemetry to 0 and —");
 });
 
@@ -758,7 +782,7 @@ test("a frozen snapshot render never starts a ticker", () => {
     return originalSetInterval(...args);
   }) as typeof setInterval;
   try {
-    const theme: ProgressTheme = { fg: (_color, text) => text };
+    const theme: ProgressTheme = { fg: (_color, text) => text, bold: (text) => text };
     const snapshot: AuditProgressSnapshot = { summary: "completed", phaseModels: {}, rows: [], meterLevels: {} };
     renderAuditSnapshot(snapshot, theme).render(120);
   } finally {
@@ -770,7 +794,7 @@ test("a frozen snapshot render never starts a ticker", () => {
 // ── total run time ─────────────────────────────────────────────────────────
 
 const footerOf = (snapshot: AuditProgressSnapshot, width: number): string[] => {
-  const theme: ProgressTheme = { fg: (_color, text) => text };
+  const theme: ProgressTheme = { fg: (_color, text) => text, bold: (text) => text };
   const lines = renderAuditSnapshot(snapshot, theme).render(width).map(strip);
   // The footer is everything between the last rule and the closing border.
   const rule = lines.lastIndexOf("─".repeat(Math.max(20, width)));

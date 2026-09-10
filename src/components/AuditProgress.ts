@@ -14,6 +14,7 @@ import {
   type ActivityMeterLevel,
 } from "../activityMeter.ts";
 import { normalizeFindingText } from "../dedup.ts";
+import { highlightActivity } from "../toolActivity.ts";
 import { DEFAULT_METER_SETTINGS, resolveMeterColor, type MeterSettings, type ThinkingLevel } from "../modelConfig.ts";
 import { shimmerString, type ShimmerTheme } from "../shimmer.ts";
 import type { Finding, HeadlessProgress } from "../types.ts";
@@ -239,6 +240,7 @@ export interface ProgressHost {
 /** The slice of pi's `Theme` the table needs. Structural so tests can supply a stub. */
 export interface ProgressTheme {
   fg(color: ThemeColor, text: string): string;
+  bold(text: string): string;
   /** 24-bit ANSI escape for a color, used to shimmer the active phase in the band. Optional so structural test stubs need not implement it; the active phase falls back to its flat highlighted tone when absent. */
   getFgAnsi?(color: ThemeColor): string;
 }
@@ -1008,7 +1010,7 @@ export class AuditProgressTable implements Component {
   private activitySubRow(activity: string, bodyWidth: number): string {
     const indent = STATUS_COL_WIDTH;
     const room = Math.max(0, bodyWidth - indent);
-    return `${" ".repeat(indent)}${this.theme.fg("dim", cell(`↳ ${activity}`, room))}`;
+    return `${" ".repeat(indent)}${cell(`${this.theme.fg("dim", "↳ ")}${highlightActivity(this.theme, activity)}`, room)}`;
   }
 
   /**

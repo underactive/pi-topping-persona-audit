@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- **Color-coded tool activity** — progress-table `↳` sub-rows now color the tool name bold `toolTitle` and the argument `accent`, matching the sibling/pi renderers.
 - **Styled roster reviewer picker** — reviewer slots now use the audit flow's tiered picker, with reviewers already assigned to other slots hidden.
 
 ### Fixed
