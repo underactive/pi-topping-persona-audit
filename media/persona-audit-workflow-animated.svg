@@ -363,7 +363,7 @@
   <text x="200" y="698" font-size="16" fill="#A98BC2" text-anchor="middle">--diff &#183; --full</text>
 
   <!-- ======== reviewer nodes (read-only personas) ======== -->
-  <text x="495" y="159" font-size="16" fill="#A98BC2" text-anchor="middle">40 personas &#183; 5 in flight &#183; isolated &#183; read-only</text>
+  <text x="495" y="159" font-size="16" fill="#A98BC2" text-anchor="middle">53 personas &#183; 5 in flight &#183; isolated &#183; read-only</text>
 
   <g>
     <rect x="400" y="165" width="190" height="110" rx="16" fill="#160B30" stroke="#FF2DAA" stroke-width="3.5"/>

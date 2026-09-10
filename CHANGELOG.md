@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Red Team reviewer tiers** — 13 security reviewers in two new picker tiers after Persona. Red Team Core covers authorization and tenancy, authentication and sessions, injection and input handling, the browser trust boundary, business logic and abuse, secrets/data/exposure, and infrastructure and supply chain. Red Team Specialists covers cryptography and protocols, memory safety and native code, embedded systems and hardware, concurrency and state machines, client and IPC surfaces, and AI and agent surfaces. The extension now includes 53 reviewers; the README notes which slots justify the strongest Review-phase model.
+
 - **Thinking-level monitor colors** — added `thinkingLevel` as a selectable activity-monitor color mode and made it the default; existing fixed colors remain available.
 
 ### Changed

@@ -181,6 +181,43 @@ test("temperament does not reach reviewers other than Linus", () => {
   assert.equal(getPersonality("Nobody At All", "lkml"), undefined);
 });
 
+test("red-team personalities contain the full reviewer contract", () => {
+  const names = [
+    "Authorization & Tenancy Specialist",
+    "Authentication & Session Specialist",
+    "Injection & Input Handling Specialist",
+    "Browser Trust Boundary Specialist",
+    "Business Logic & Abuse Specialist",
+    "Secrets, Data & Exposure Specialist",
+    "Infrastructure & Supply Chain Specialist",
+    "Cryptography & Protocol Specialist",
+    "Memory Safety & Native Code Specialist",
+    "Embedded & Hardware Specialist",
+    "Concurrency & State Machine Specialist",
+    "Client & IPC Surface Specialist",
+    "AI & Agent Surface Specialist",
+  ];
+
+  for (const name of names) {
+    const block = getPersonality(name);
+    assert.ok(block, `expected a personality block for "${name}"`);
+    for (const heading of [
+      "**Description**",
+      "**Focus Areas**",
+      "**Review Approach**",
+      "**What They Look For**",
+      "**Output Style**",
+    ]) {
+      assert.ok(block.includes(heading), `${name} is missing ${heading}`);
+    }
+    assert.match(block, /path\/to\/file:line/);
+    assert.match(block, /never[^\n]*modify files/i);
+  }
+
+  const secrets = getPersonality("Secrets, Data & Exposure Specialist")!;
+  assert.doesNotMatch(secrets, /git log|git:<sha>/);
+});
+
 // The forward direction (every TIERS reviewer resolves via getPersonality,
 // including the specially-composed Linus Torvalds) is covered by
 // test/expertPicker.test.ts. This is the reverse guard: PERSONALITIES must

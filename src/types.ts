@@ -82,7 +82,7 @@ export interface NoFindings {
 // ── Reviewer personality data ──────────────────────────────────────────────
 
 /** Tier classification, used to group reviewers under section headers in the picker. */
-export type ReviewerTier = "holistic" | "specialist" | "persona";
+export type ReviewerTier = "holistic" | "specialist" | "persona" | "redTeamCore" | "redTeamSpecialists";
 
 /** Metadata about a single reviewer personality. */
 export interface ReviewerInfo {

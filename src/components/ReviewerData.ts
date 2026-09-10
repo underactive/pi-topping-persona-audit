@@ -1,7 +1,7 @@
 import type { TierInfo } from "../types.ts";
 
 /**
- * All 40 reviewer personalities organized by tier.
+ * All 53 reviewer personalities organized by tier.
  * Condensed metadata used by ExpertPicker for TUI selection.
  * Full verbose personality blocks live in skillContent.ts.
  */
@@ -224,6 +224,85 @@ export const TIERS: TierInfo[] = [
         name: "Ponytail Dev",
         description: "\"The best code is the code you never wrote.\"",
         focusAreas: ["YAGNI", "Reuse Ladder", "Deletion Opportunities", "One-Line Replacements", "Safety Floor"],
+      },
+    ],
+  },
+  // ── Red Team Core (7) ───────────────────────────────────────────────────
+  {
+    tier: "redTeamCore",
+    label: "Red Team Core",
+    reviewers: [
+      {
+        name: "Authorization & Tenancy Specialist",
+        description: "Hunts the bug behind most real breaches: a request reaching a resource without the check that should have stopped it — at every route, resolver, job, webhook, and CLI.",
+        focusAreas: ["Object-Level Authorization", "Privilege Escalation", "Tenant Isolation", "Mass Assignment", "Admin Surfaces", "Check Consistency Across Entry Points"],
+      },
+      {
+        name: "Authentication & Session Specialist",
+        description: "Owns everything that happens before the app knows who you are, and everything that keeps it knowing. Reads login, recovery, MFA, federation, and logout as state machines.",
+        focusAreas: ["Credential Handling", "Account Recovery", "MFA", "OAuth/OIDC/SAML", "Token & JWT Validation", "Session Lifecycle", "Enumeration"],
+      },
+      {
+        name: "Injection & Input Handling Specialist",
+        description: "Follows untrusted bytes from every ingress point to every interpreter they can reach — query, shell, template, path, deserializer.",
+        focusAreas: ["SQL/NoSQL Injection", "Command Injection", "Template Injection", "Path Traversal", "Deserialization", "XXE", "File Upload", "Parser Hardening"],
+      },
+      {
+        name: "Browser Trust Boundary Specialist",
+        description: "Reviews everything the browser is asked to trust and everything the server trusts the browser to have done. Assumes the DOM is a hostile execution environment.",
+        focusAreas: ["XSS (Stored/Reflected/DOM)", "CSP", "CSRF", "CORS", "Clickjacking", "postMessage", "Prototype Pollution", "Client-Side Secrets", "Third-Party Scripts"],
+      },
+      {
+        name: "Business Logic & Abuse Specialist",
+        description: "Reads code as a product manager with bad intentions: every workflow can be reordered, repeated, raced, or run with impossible values.",
+        focusAreas: ["Race Conditions", "Workflow Bypass", "Numeric & Quantity Abuse", "Idempotency", "Rate Limiting", "Resource Exhaustion", "Abuse of Legitimate Features"],
+      },
+      {
+        name: "Secrets, Data & Exposure Specialist",
+        description: "Cares about what the system knows and where it lets that knowledge leak — logs, error pages, caches, backups, and environment files.",
+        focusAreas: ["Secrets Management", "Encryption at Rest & in Transit", "PII Handling", "Logging Hygiene", "Error Disclosure", "Cache Leakage", "Data Retention"],
+      },
+      {
+        name: "Infrastructure & Supply Chain Specialist",
+        description: "Reviews the code that runs the code: Dockerfiles, IaC, pipelines, cloud IAM, and dependency manifests, treated as targets rather than neutral ground.",
+        focusAreas: ["Container & Runtime Hardening", "IaC & Cloud IAM", "Network Exposure", "SSRF & Metadata", "Dependency Integrity", "CI/CD Security", "Build Provenance"],
+      },
+    ],
+  },
+  // ── Red Team Specialists (6) ────────────────────────────────────────────
+  {
+    tier: "redTeamSpecialists",
+    label: "Red Team Specialists",
+    reviewers: [
+      {
+        name: "Cryptography & Protocol Specialist",
+        description: "Treats every crypto call and custom protocol as wrong until proven otherwise. Applies equally to web apps, firmware, and CLI tools.",
+        focusAreas: ["Primitive Selection", "Key Management", "Randomness", "Modes & Nonces", "Constant-Time Operations", "TLS Configuration", "Protocol Design", "Replay & Integrity"],
+      },
+      {
+        name: "Memory Safety & Native Code Specialist",
+        description: "Reviews C, C++, Rust `unsafe`, and FFI boundaries as sources of memory corruption, focused on anything that parses untrusted bytes.",
+        focusAreas: ["Bounds Checking", "Integer Overflow", "Lifetime & Use-After-Free", "Format Strings", "FFI Boundaries", "Parser Hardening", "Undefined Behavior"],
+      },
+      {
+        name: "Embedded & Hardware Specialist",
+        description: "Reviews firmware and device projects assuming the attacker has the hardware on the bench, a logic analyzer, and patience.",
+        focusAreas: ["Secure Boot & Rollback", "Firmware Update Integrity", "Debug Interfaces", "Key Storage", "Peripheral & DMA Trust", "Side Channels", "Production Lifecycle State"],
+      },
+      {
+        name: "Concurrency & State Machine Specialist",
+        description: "Looks for bugs that appear only when two things happen at once or in the wrong order — threads, tasks, interrupts, workers, retries.",
+        focusAreas: ["Data Races", "TOCTOU", "Deadlock & Livelock", "Reentrancy", "State Confusion", "Distributed Consistency", "Interrupt & Signal Safety"],
+      },
+      {
+        name: "Client & IPC Surface Specialist",
+        description: "Reviews desktop, mobile, and CLI apps where the attacker's code runs on the same machine or sends messages to the app.",
+        focusAreas: ["Local Storage", "IPC & URL Schemes", "Deep Links", "Update Integrity", "Code Signing", "Sandbox & Permissions", "Local Privilege Boundaries"],
+      },
+      {
+        name: "AI & Agent Surface Specialist",
+        description: "Treats every LLM call as a trust boundary: input attacker-influenced, output untrusted, tools reachable through natural language.",
+        focusAreas: ["Prompt Injection", "Tool & Agent Permission Scope", "Output-as-Code", "Retrieval Boundary Leaks", "Data Exfiltration via Model", "Model-Facing Secrets", "Denial of Wallet"],
       },
     ],
   },

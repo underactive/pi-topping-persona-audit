@@ -104,14 +104,61 @@ test("expert picker confirms a selection spanning every tier", () => {
   const picker = new ExpertPicker(theme, (result) => { confirmed = result; });
 
   toggleByFilter(picker, "principal"); // holistic
-  toggleByFilter(picker, "security"); // specialist
+  toggleByFilter(picker, "threatmodeling"); // specialist
   toggleByFilter(picker, "fowler"); // persona
+  toggleByFilter(picker, "tenancy"); // red-team core
+  toggleByFilter(picker, "memorysafety"); // red-team specialist
 
   picker.handleInput(ENTER);
   assert.deepEqual(confirmed, {
-    reviewers: ["Principal Engineer", "Security Engineer", "Martin Fowler"],
+    reviewers: [
+      "Principal Engineer",
+      "Security Engineer",
+      "Martin Fowler",
+      "Authorization & Tenancy Specialist",
+      "Memory Safety & Native Code Specialist",
+    ],
     passes: 1,
   });
+});
+
+test("expert picker renders the red-team tiers after Persona", () => {
+  const picker = new ExpertPicker(
+    theme,
+    () => {},
+    undefined,
+    { requestRender: () => {}, terminal: { rows: 1000 } },
+  );
+  const rendered = picker.render(WIDTH).map(strip).join("\n");
+  const persona = rendered.indexOf("─ Persona");
+  const core = rendered.indexOf("─ Red Team Core");
+  const specialists = rendered.indexOf("─ Red Team Specialists");
+
+  assert.ok(persona >= 0 && persona < core && core < specialists);
+  assert.deepEqual(TIERS.map((tier) => tier.label), [
+    "Holistic",
+    "Specialist",
+    "Persona",
+    "Red Team Core",
+    "Red Team Specialists",
+  ]);
+  assert.deepEqual(TIERS.at(-2)?.reviewers.map((reviewer) => reviewer.name), [
+    "Authorization & Tenancy Specialist",
+    "Authentication & Session Specialist",
+    "Injection & Input Handling Specialist",
+    "Browser Trust Boundary Specialist",
+    "Business Logic & Abuse Specialist",
+    "Secrets, Data & Exposure Specialist",
+    "Infrastructure & Supply Chain Specialist",
+  ]);
+  assert.deepEqual(TIERS.at(-1)?.reviewers.map((reviewer) => reviewer.name), [
+    "Cryptography & Protocol Specialist",
+    "Memory Safety & Native Code Specialist",
+    "Embedded & Hardware Specialist",
+    "Concurrency & State Machine Specialist",
+    "Client & IPC Surface Specialist",
+    "AI & Agent Surface Specialist",
+  ]);
 });
 
 test("rosters render alphabetically above reviewers and filter by roster or member name", () => {
@@ -161,15 +208,15 @@ test("single reviewer picker excludes reviewers from the list and filter", () =>
     { requestRender: () => {}, terminal: { rows: 1000 } },
     undefined,
     [],
-    { single: true, excluded: new Set(["Security Engineer"]) },
+    { single: true, excluded: new Set(["Principal Engineer"]) },
   );
   const initial = picker.render(WIDTH).map(strip).join("\n");
-  assert.doesNotMatch(initial, /Security Engineer/);
+  assert.doesNotMatch(initial, /Principal Engineer/);
 
-  for (const char of "security") picker.handleInput(char);
+  for (const char of "principal") picker.handleInput(char);
   const filtered = picker.render(WIDTH).map(strip).join("\n");
   assert.match(filtered, /No reviewers match filter/);
-  assert.doesNotMatch(filtered, /Security Engineer/);
+  assert.doesNotMatch(filtered, /Principal Engineer/);
 });
 
 test("single reviewer picker confirms the highlighted reviewer on one Enter", () => {
@@ -205,7 +252,7 @@ test("single reviewer picker uses single-select chrome without a cost footer", (
 
 test("every picker reviewer resolves to a personality", () => {
   const names = TIERS.flatMap((t) => t.reviewers).map((r) => r.name);
-  assert.equal(names.length, 40);
+  assert.equal(names.length, 53);
   for (const name of names) assert.ok(getPersonality(name), name);
 });
 
@@ -272,9 +319,9 @@ test("the shared 75% viewport stays scrollable and unclipped on a short terminal
   const overlay = mountOverlay(20);
   const initial = overlay.render().map(strip);
 
-  // 20 rows at the shared 75% budget leaves 15 rows; the 40-reviewer list
+  // 20 rows at the shared 75% budget leaves 15 rows; the 53-reviewer list
   // must window with a scroll indicator instead of overflowing the viewport.
-  const indicator = /(\d+)–(\d+) of 40/;
+  const indicator = /(\d+)–(\d+) of 53/;
   const initialMatch = initial.map((line) => indicator.exec(line)).find(Boolean);
   assert.ok(initialMatch, "expected a scroll indicator on a short terminal");
   assert.ok(initial.length <= 15, `render must fit the viewport, got ${initial.length} lines`);

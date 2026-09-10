@@ -127,7 +127,7 @@ picker uses, leaving that picker's saved choices untouched.
 
 ## Reviewer personas
 
-The extension includes 40 reviewer personalities. Tiers group them under headers in the picker; they do not constrain a selection, which may draw from any combination of the three:
+The extension includes 53 reviewer personalities. Tiers group them under headers in the picker; they do not constrain a selection, which may draw from any combination of the five:
 
 **Holistic Tier** — Big-picture reviewers:
 - Principal Engineer
@@ -174,6 +174,25 @@ The extension includes 40 reviewer personalities. Tiers group them under headers
 - Julia Evans
 - Linus Torvalds
 - Ponytail Dev
+
+**Red Team Core Tier** — Attacker-mindset reviewers for the surfaces where real breaches happen:
+- Authorization & Tenancy Specialist
+- Authentication & Session Specialist
+- Injection & Input Handling Specialist
+- Browser Trust Boundary Specialist
+- Business Logic & Abuse Specialist
+- Secrets, Data & Exposure Specialist
+- Infrastructure & Supply Chain Specialist
+
+**Red Team Specialists Tier** — Domain red-teamers for projects with the matching surface:
+- Cryptography & Protocol Specialist (worth running on every project type, including web)
+- Memory Safety & Native Code Specialist (C/C++/Rust `unsafe`/firmware)
+- Embedded & Hardware Specialist
+- Concurrency & State Machine Specialist
+- Client & IPC Surface Specialist (mobile/desktop)
+- AI & Agent Surface Specialist (any project with LLM features)
+
+Authorization & Tenancy is the highest-value slot — it is pure reasoning rather than pattern matching, so it deserves the strongest model and highest thinking level. Business Logic & Abuse is next because scanners cannot determine what a feature is *for*. Injection & Input Handling is the most mechanical domain and runs well on a cheaper, faster model. Models and thinking levels are selected **per phase** (Review / Triage / Implement / Verify), not per reviewer; tune Review for the most demanding selected reviewer, or run cheaper reviewers in a separate audit.
 
 ## Scan Modes
 
@@ -489,7 +508,7 @@ adjudicator implement, the per-finding verifier, and regression-test authoring:
 - **Verifier retry checkpoint** (`src/components/VerifierRetry.ts`) — shown only when the verifier *agent process itself* fails to run (a provider error, not a fix verdict); lets the user re-run it on a different model (which then also authors the regression tests) or skip verification. Ordinary `not-fixed`/`partial` verdicts and failed scripts do not reach this checkpoint — they trigger the orchestrator's automatic gate-repair round instead, with no user action needed.
 - **Report & verification** (`src/report.ts`, `src/verify.ts`) — pure report templates (full/compact/partial + chat summary), the `check`/`lint`/`test` verification gate, and the rule that folds per-finding verdicts and script results into one status.
 - **Fix verification** (`src/snapshot.ts`, `src/regression.ts`) — pre/post file hashing with pre-fix snapshots and apply-report parsing, and the red/green regression harness that runs authored tests against a throwaway `git worktree`.
-- **Prompt data** (`src/skillContent.ts`) — the 40 reviewer personalities plus the reviewer output contract and adjudicator directives composed into agent-session prompts.
+- **Prompt data** (`src/skillContent.ts`) — the 53 reviewer personalities plus the reviewer output contract and adjudicator directives composed into agent-session prompts.
 - **Agent definitions** (`agents/*.md`) — source of truth for agent-session `tools`/`model` (frontmatter) and base system-prompt bodies, appended to pi's default system prompt at session creation (`appendSystemPromptOverride` in `src/agentRunner.ts`). These ship with the extension and are resolved from the module location, so `/persona-audit` works in any repository without an install step.
 
 **Agent resolution order** — `discoverAgents()` layers three directories, each
@@ -560,7 +579,7 @@ pi-topping-persona-audit/
 │   ├── blastRadius.ts        # Deterministic fan-in/sensitivity/test/change-kind risk scoring
 │   ├── findingsTransport.ts  # Reviewer output parsing/collection (pure)
 │   ├── dedup.ts              # Deterministic finding dedup (pure)
-│   ├── skillContent.ts       # 40 personalities + agent-session prompt contracts
+│   ├── skillContent.ts       # 53 personalities + agent-session prompt contracts
 │   ├── activityMeter.ts      # Vendored output-rate meter + streaming word counter
 │   ├── runClock.ts           # Pause-aware run clock: excludes user-decision spans from work time
 │   ├── types.ts              # Shared types
