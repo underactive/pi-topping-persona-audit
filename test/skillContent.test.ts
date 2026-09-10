@@ -82,6 +82,40 @@ test("reviewer contract defines the optional change-kind enum", () => {
   assert.match(REVIEWER_OUTPUT_CONTRACT, /Omit when unsure/);
 });
 
+test("security engineer and every red-team reviewer require traced security findings", () => {
+  const names = [
+    "Security Engineer",
+    ...TIERS.filter((tier) => tier.tier === "redTeamCore" || tier.tier === "redTeamSpecialists")
+      .flatMap((tier) => tier.reviewers.map((reviewer) => reviewer.name)),
+  ];
+  assert.equal(names.length, 14);
+  for (const name of names) {
+    const block = getPersonality(name);
+    assert.ok(block, name);
+    assert.match(block, /## Security Reachability Prerequisite/, name);
+  }
+  for (const block of names.map((name) => getPersonality(name)!)) {
+    for (const requirement of [
+      "concrete file and line",
+      "untrusted input source",
+      "complete path from that source to the sink",
+      "what an attacker actually gains",
+      "ground the trace in inspected evidence",
+      "hardware/config location exceptions",
+      "manifest key, or entitlement",
+      "line -1",
+      "overrides persona severity examples",
+      "omit the observation from actionable findings and JSON finding output entirely, including severity info",
+      "do not relabel it under another category",
+      "no-findings sentinel",
+      "Independently evidenced non-security issues remain reportable",
+    ]) assert.ok(block.includes(requirement), requirement);
+    assert.doesNotMatch(block, /doubles the signal/);
+  }
+  assert.doesNotMatch(REVIEWER_OUTPUT_CONTRACT, /## Security Reachability Prerequisite/);
+  assert.doesNotMatch(getPersonality("Testing Engineer")!, /## Security Reachability Prerequisite/);
+});
+
 test("verifier directive demands verbatim join keys even when they look stale", () => {
   assert.match(VERIFIER_DIRECTIVE, /join keys, not location claims/);
   assert.match(VERIFIER_DIRECTIVE, /never absolutized/);
