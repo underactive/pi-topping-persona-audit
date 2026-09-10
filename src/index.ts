@@ -22,6 +22,7 @@ import {
   renderAuditSnapshot,
   type AuditProgressSnapshot,
 } from "./components/AuditProgress.ts";
+import { InspectionSpinner, INSPECTION_SPINNER_WIDGET_KEY } from "./components/InspectionSpinner.ts";
 import { discoverAgents, mapWithConcurrencyLimit } from "./subprocess.ts";
 import { showExpertPicker } from "./components/ExpertPicker.ts";
 import { showReviewerSourceMenu, type ReviewerSource } from "./components/ReviewerSource.ts";
@@ -58,6 +59,9 @@ const execFileAsync = promisify(execFile);
  * firing on a disposed extension context.
  */
 let activeProgress: AuditProgressWidget | null = null;
+
+/** Module-level reference to the pre-audit dispatcher spinner, if mounted. */
+let activeInspectionSpinner: InspectionSpinner | null = null;
 
 /**
  * Module-level reference to the AbortController backing the in-flight audit,
@@ -757,7 +761,6 @@ export default function (pi: ExtensionAPI): void {
             lastSource = source;
             if (source === "recommend") {
               if (!cachedRecommendation) {
-                ctx.ui.notify(`Inspecting repo with ${dispatcherLabel}… (ctrl+shift+c cancels)`, "info");
                 if (!dispatchChoice) {
                   ctx.ui.notify("No Dispatch model set — using the session model. Set a cheaper one in /persona-audit-settings.", "warning");
                 }
@@ -767,6 +770,15 @@ export default function (pi: ExtensionAPI): void {
                 activeAuditController = dispatchController;
                 let outcome: DispatcherOutcome;
                 try {
+                  ctx.ui.setWidget(
+                    INSPECTION_SPINNER_WIDGET_KEY,
+                    (tui, theme) => {
+                      const spinner = new InspectionSpinner(tui, theme, dispatcherLabel);
+                      activeInspectionSpinner = spinner;
+                      return spinner;
+                    },
+                    { placement: "aboveEditor" },
+                  );
                   outcome = await recommendReviewers(
                     {
                       cwd: ctx.cwd,
@@ -780,6 +792,10 @@ export default function (pi: ExtensionAPI): void {
                   );
                 } finally {
                   if (activeAuditController === dispatchController) activeAuditController = null;
+                  const spinner = activeInspectionSpinner;
+                  activeInspectionSpinner = null;
+                  spinner?.dispose();
+                  ctx.ui.setWidget(INSPECTION_SPINNER_WIDGET_KEY, undefined);
                 }
                 if (!outcome.ok) {
                   if (outcome.aborted) {
@@ -1180,6 +1196,10 @@ export default function (pi: ExtensionAPI): void {
       activeProgress.stop();
       activeProgress = null;
     }
+    if (activeInspectionSpinner) {
+      activeInspectionSpinner.dispose();
+      activeInspectionSpinner = null;
+    }
   });
 
   // `session_start` is a secondary safety net: clear any stale widget
@@ -1188,5 +1208,6 @@ export default function (pi: ExtensionAPI): void {
   // itself; only the non-focused widgets need clearing here.
   pi.on("session_start", (_event, ctx) => {
     ctx.ui.setWidget(AUDIT_PROGRESS_WIDGET_KEY, undefined);
+    ctx.ui.setWidget(INSPECTION_SPINNER_WIDGET_KEY, undefined);
   });
 }
