@@ -2344,7 +2344,10 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
       const target = annotatedFindings[outcome.index];
       if (!target) continue;
       if (!input.fileManifest.includes(target.file)) {
-        ctx.ui.notify(`persona-audit: ${target.file} is outside the audited scope — cannot fix now`, "warning");
+        ctx.ui.notify(
+          `persona-audit: ${target.file} is outside the audited scope — cannot fix now; defer it and resume from the handoff to fix it later`,
+          "warning",
+        );
         continue;
       }
       const fixNowRowKey = `implement:fixnow:${outcome.index}:${fixNowCount++}`;
