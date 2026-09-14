@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-14
+
 ### Added
 
 - **Reviewer source menu** — `/persona-audit` now opens on a choice between inspecting the repo for a recommendation, loading a saved roster, or selecting reviewers manually. The new dispatcher agent receives a deterministic repo fingerprint (languages, root manifests, frameworks, and auth/database/container/native/AI signals) plus read-only tools, and returns 3–10 reviewers with reasons; they open pre-checked in the expert picker. The recommendation is cached for the rest of the command, and `ctrl+shift+c` cancels the dispatcher.
