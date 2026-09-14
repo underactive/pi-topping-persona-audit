@@ -409,7 +409,7 @@ export class FindingsReview implements Component {
     }
     const exploitability = item.finding.exploitability
       ? this.wordWrap(
-          `Exploitability: ${item.finding.exploitability}${item.finding.exploitabilityReason ? ` — ${sanitizeTerminalText(item.finding.exploitabilityReason)}` : ""}`,
+          `${item.finding.exploitability}${item.finding.exploitabilityReason ? ` — ${sanitizeTerminalText(item.finding.exploitabilityReason)}` : ""}`,
           detailWidth,
         )
       : undefined;
@@ -602,8 +602,9 @@ export class FindingsReview implements Component {
       lines.push("");
 
       if (wrapped.exploitability) {
-        for (const [lineIndex, detail] of wrapped.exploitability.entries()) {
-          lines.push(`${lineIndex === 0 ? "    " : "      "}${t.fg("warning", detail)}`);
+        lines.push(`    ${t.fg("dim", "Exploitability:")}`);
+        for (const detail of wrapped.exploitability) {
+          lines.push(`      ${t.fg("muted", detail)}`);
         }
       }
       for (const dispute of wrapped.disputes ?? []) {

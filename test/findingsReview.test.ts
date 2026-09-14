@@ -449,6 +449,19 @@ test("finding details render exploitability and disputes", () => {
     disputes: [{ reviewer: "Reviewer B", verdict: "overstated", reason: "The default disables it." }],
   })], 50);
   const text = ui.visible().map(strip).join("\n");
-  assert.match(text, /Exploitability: conditional — Requires admin configuration\./);
+  assert.match(text, /Exploitability:[^\n]*\n[^\n]*conditional — Requires admin configuration\./);
   assert.match(text, /Disputed by Reviewer B \(overstated\): The default disables it\./);
+
+  const colored = new FindingsReview([finding(1, {
+    exploitability: "conditional",
+    exploitabilityReason: "Requires admin configuration.",
+  })], {
+    fg: (color, value) => `<${color}>${value}</${color}>`,
+    bg: (_color, value) => value,
+    bold: (value) => value,
+  }, () => {}, { requestRender: () => {}, terminal: { rows: 50 } }, async () => "handoff.md");
+  const coloredText = colored.render(WIDTH).join("\n");
+  assert.match(coloredText, /<dim>Exploitability:<\/dim>/);
+  assert.match(coloredText, /<muted>conditional — Requires admin configuration\.<\/muted>/);
+  assert.doesNotMatch(coloredText, /<warning>Exploitability:/);
 });
