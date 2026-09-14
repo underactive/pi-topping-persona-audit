@@ -14,7 +14,7 @@ import { Input, isKeyRelease, Key, matchesKey, truncateToWidth } from "@earendil
 import type { TerminalInputHandler, Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import type { AuditProgressWidget } from "./AuditProgress.ts";
 import type { Finding, HeadlessProgress } from "../types.ts";
-import { sanitizeTerminalText } from "./AuditProgress.ts";
+import { sanitizeDiffLine, sanitizeTerminalText } from "./AuditProgress.ts";
 import { FALLBACK_TERMINAL_ROWS, OVERLAY_HEIGHT_PERCENT, renderFramedBottom, renderFramedRow, renderFramedTop, showOverlayPrompt, wrapText } from "./menuChrome.ts";
 
 export interface FixChatMessage {
@@ -318,7 +318,7 @@ export class FixGate implements Component, Focusable {
     this.scrollOffset = Math.min(this.scrollOffset, maxOffset);
     const windowed = this.diffLines
       .slice(this.scrollOffset, this.scrollOffset + diffBudget)
-      .map((line) => " " + colorDiffLine(t, truncateToWidth(sanitizeTerminalText(line), Math.max(2, inner - 2), "…")));
+      .map((line) => " " + colorDiffLine(t, truncateToWidth(sanitizeDiffLine(line), Math.max(2, inner - 2), "…")));
     if (this.diffLines.length === 0 || (this.diffLines.length === 1 && this.diffLines[0] === "")) {
       windowed.length = 0;
       windowed.push(" " + t.fg("dim", "No changes on disk."));

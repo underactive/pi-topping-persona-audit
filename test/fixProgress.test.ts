@@ -62,6 +62,31 @@ function gateHarness(input: FixGateInput, rows = 40) {
   };
 }
 
+test("the gate preserves tab indentation in diff lines", () => {
+  const ui = gateHarness({
+    diff: [
+      "@@ -358,3 +358,5 @@ export class MoaProgressWidget implements MoaProgressView {",
+      " else s.endedAt = undefined;",
+      "+else {",
+      "+\t\ts.startedAt ??= Date.now();",
+      "+\t\ts.endedAt = undefined;",
+      "+}",
+    ].join("\n"),
+    commitPlanned: true,
+    attempt: 1,
+  });
+
+  const lines = ui.lines();
+  assert.ok(
+    lines.some((l) => l.includes("+\t\ts.startedAt ??= Date.now();")),
+    "tab-indented added lines must keep their leading tabs",
+  );
+  assert.ok(
+    lines.some((l) => l.includes("+\t\ts.endedAt = undefined;")),
+    "every added line in the hunk keeps indentation",
+  );
+});
+
 test("the gate shows the finding header, verdict, warnings, diff, and decision keys", () => {
   const ui = gateHarness({
     diff: "diff --git a/src/a.ts b/src/a.ts\n@@ -1 +1 @@\n-const a = 1;\n+const a = 2;",

@@ -698,6 +698,11 @@ export function sanitizeTerminalText(text: string): string {
   return text.replace(/[\x00-\x1f\x7f-\x9f]/g, "");
 }
 
+/** Like sanitizeTerminalText but keeps tab — git diff lines rely on it for indentation. */
+export function sanitizeDiffLine(text: string): string {
+  return text.replace(/[\x00-\x08\x0a-\x1f\x7f-\x9f]/g, "");
+}
+
 /** Shorten a `provider/id` model label (or a bare frontmatter id) to its id, for the space-constrained band. */
 function shortModelId(label: string | undefined): string {
   if (!label) return "default";
