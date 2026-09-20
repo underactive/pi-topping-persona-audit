@@ -8,6 +8,7 @@
  */
 
 import { DEFAULT_TEMPERAMENT, type Temperament } from "./modelConfig.ts";
+import { MAX_DISPUTE_REASON_LENGTH } from "./types.ts";
 
 // ── Full reviewer personality blocks ─────────────────────────────────────
 // These are the verbose versions used in subagent prompts (Review Approach,
@@ -1267,14 +1268,14 @@ Hard rules:
 - Return at most ${MAX_CROSS_EXAMINATION_ITEMS} items.
 - Every \`basedOn\` index must exist in the input list. You are not shown your own findings; never invent an index.
 - A dispute is evidence for the adjudicator, never a verdict. Do not change severity or remove anything.
-- \`reason\` must be non-empty and at most 200 characters.
+- \`reason\` must be non-empty and at most ${MAX_DISPUTE_REASON_LENGTH} characters.
 - \`rationale\` must contain the complete issue summary and be single-line.
 - \`suggestedChange\` must be concrete, single-line, and at most 2000 characters.
 - \`changeKind\` is optional; when present it must be one of \`signature\`, \`behavior\`, \`internal\`, or \`cosmetic\`.
 
 Output contract: your FINAL message must be ONLY a JSON array, with no surrounding prose and no code fences. Every element must have exactly one of these shapes:
 
-{"kind":"dispute","index":<n>,"verdict":"false-positive"|"unreachable"|"overstated","reason":"<=200 chars"}
+{"kind":"dispute","index":<n>,"verdict":"false-positive"|"unreachable"|"overstated","reason":"<=${MAX_DISPUTE_REASON_LENGTH} chars"}
 {"kind":"composite","basedOn":[<n>,...],"file":"...","line":<n or -1>,"category":"...","severity":"...","rationale":"...","suggestedChange":"...","changeKind":"optional"}`;
 
 // ── Subprocess prompt contracts ──────────────────────────────────────────

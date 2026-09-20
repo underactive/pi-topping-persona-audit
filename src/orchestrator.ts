@@ -97,7 +97,7 @@ import {
   type ThinkingLevel,
 } from "./modelConfig.ts";
 import { compareFindingsByExploitability } from "./findingOrder.ts";
-import { DISPUTE_VERDICTS, EXPLOITABILITY_ORDER } from "./types.ts";
+import { DISPUTE_VERDICTS, EXPLOITABILITY_ORDER, MAX_DISPUTE_REASON_LENGTH } from "./types.ts";
 import type {
   ApplyBatch,
   AuditMode,
@@ -505,7 +505,7 @@ export function mergeCrossExaminations(
       if (raw.kind === "dispute") {
         const index = raw.index;
         const verdict = normalizeFindingText(raw.verdict).toLowerCase();
-        const reason = normalizeFindingText(raw.reason, 200);
+        const reason = normalizeFindingText(raw.reason, MAX_DISPUTE_REASON_LENGTH);
         const target = typeof index === "number" && Number.isInteger(index) && index >= 0 && index < input.length
           ? input[index]
           : undefined;

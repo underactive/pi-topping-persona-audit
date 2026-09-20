@@ -109,6 +109,18 @@ test("mergeCrossExaminations attaches disputes without changing or dropping roun
   );
 });
 
+test("mergeCrossExaminations preserves dispute reasons beyond the legacy 200-character limit", () => {
+  const reason = `${"Evidence stays on the reachable startup path. ".repeat(6)}setImmediate remains on the executed path.`;
+  assert.ok(reason.length > 200);
+
+  const merged = mergeCrossExaminations([finding()], [{
+    reviewer: "Other",
+    texts: [output([{ kind: "dispute", index: 0, verdict: "overstated", reason }])],
+  }]);
+
+  assert.equal(merged.findings[0]?.disputes?.[0]?.reason, reason);
+});
+
 test("mergeCrossExaminations adds composites with cross-examining authorship and provenance", () => {
   const merged = mergeCrossExaminations([finding()], [{ reviewer: "Concurrency & State Machine Specialist", texts: [output([composite()])] }]);
   const added = merged.findings.find((item) => item.file === "src/composite.ts");

@@ -18,6 +18,7 @@ import {
 } from "../src/skillContent.ts";
 import { TEMPERAMENTS } from "../src/modelConfig.ts";
 import { TIERS } from "../src/components/ReviewerData.ts";
+import { MAX_DISPUTE_REASON_LENGTH } from "../src/types.ts";
 
 test("FIX_HYGIENE_CONTRACT names all seven slop categories", () => {
   const categories = [
@@ -202,6 +203,8 @@ test("register enforcement rides only hot Linus registers and reads as contract"
 test("cross-examination directive permits silence and caps output", () => {
   assert.match(CROSS_EXAMINATION_DIRECTIVE, /empty array `\[\]` is a valid and expected answer/i);
   assert.match(CROSS_EXAMINATION_DIRECTIVE, /at most 10 items/i);
+  assert.match(CROSS_EXAMINATION_DIRECTIVE, new RegExp(`at most ${MAX_DISPUTE_REASON_LENGTH} characters`));
+  assert.match(CROSS_EXAMINATION_DIRECTIVE, new RegExp(`\\"reason\\":\\"<=${MAX_DISPUTE_REASON_LENGTH} chars\\"`));
 });
 
 test("reconcile directive carries cross-examination evidence and orders exploitability", () => {

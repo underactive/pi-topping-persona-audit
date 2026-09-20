@@ -465,3 +465,13 @@ test("finding details render exploitability and disputes", () => {
   assert.match(coloredText, /<muted>conditional — Requires admin configuration\.<\/muted>/);
   assert.doesNotMatch(coloredText, /<warning>Exploitability:/);
 });
+
+test("finding details render the complete long dispute reason", () => {
+  const reason = `${"Evidence stays on the reachable startup path. ".repeat(6)}setImmediate remains on the executed path.`;
+  const ui = harness([finding(1, {
+    disputes: [{ reviewer: "Reviewer B", verdict: "overstated", reason }],
+  })], 50);
+  const text = ui.visible().map(strip).join("\n").replace(/║/g, " ").replace(/\s+/g, " ");
+
+  assert.ok(text.includes(reason), "the dispute reason is not cut off in the review overlay");
+});

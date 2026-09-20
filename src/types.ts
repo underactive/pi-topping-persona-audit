@@ -49,11 +49,14 @@ export type Exploitability = (typeof EXPLOITABILITY_ORDER)[number];
 export const DISPUTE_VERDICTS = ["false-positive", "unreachable", "overstated"] as const;
 export type DisputeVerdict = (typeof DISPUTE_VERDICTS)[number];
 
+/** Keep enough evidence for a complete objection without accepting unbounded model output. */
+export const MAX_DISPUTE_REASON_LENGTH = 500;
+
 /** One reviewer's cross-examination-pass objection to a finding. Evidence for the adjudicator, never a verdict. */
 export interface FindingDispute {
   reviewer: string;
   verdict: DisputeVerdict;
-  reason: string;
+  reason: string; // max MAX_DISPUTE_REASON_LENGTH chars, newlines flattened
 }
 
 /** A single finding from a reviewer subagent. */
