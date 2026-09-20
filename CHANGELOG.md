@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Development dependencies updated to pi 0.86.0** — `@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent`, and `@earendil-works/pi-tui` are pinned to 0.86.0 for development and testing.
+
+### Fixed
+
+- **Headless agent sessions no longer inherit cache warming** — pi 0.86.0 warms the prompt cache of every session it creates and reports that spend outside the progress table's message-driven COST column. Audit sessions now force warming off while preserving other global and project settings; the user's own cache-warming setting and `settings.json` remain untouched.
+- **Retired models in saved settings are detected** — the per-phase picker, Dispatch model row, and pre-audit dispatcher validate saved refs against the model registry, name refs that disappeared, and fall back to the session model instead of failing with "Model not found" or resolving a same-named model under another provider.
+- **`max` thinking reaches headless sessions** — the runner now forwards `max` to `createAgentSession()`, which clamps it to the selected model's capability, instead of silently replacing it with the session default.
+
 ## [0.2.0] - 2026-09-14
 
 ### Added

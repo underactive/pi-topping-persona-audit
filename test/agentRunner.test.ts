@@ -4,10 +4,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { calculateCost, InMemoryCredentialStore } from "@earendil-works/pi-ai";
-import { DefaultResourceLoader, getAgentDir, ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import {
+  DefaultResourceLoader,
+  getAgentDir,
+  ModelRegistry,
+  ModelRuntime,
+  SettingsManager,
+} from "@earendil-works/pi-coding-agent";
+import {
+  buildHeadlessSessionOptions,
   buildRuntimeWithExtensionProviders,
   calculateTurnCost,
+  createHeadlessSettingsManager,
   createInteractiveAgentSession,
   createIsolatedResourceLoader,
   getAllAssistantText,
@@ -313,6 +321,49 @@ test("createIsolatedResourceLoader discovers no extensions, even where the unres
     const isolated = createIsolatedResourceLoader(cwd, agentDir, "");
     await isolated.reload();
     assert.equal(isolated.getExtensions().extensions.length, 0);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("headless sessions inherit user settings but never warm the cache", () => {
+  const source = {
+    getGlobalSettings: () => ({ cacheWarming: "streaming", defaultThinkingLevel: "high" }),
+    getProjectSettings: () => ({ defaultTools: ["read"] }),
+  } as unknown as SettingsManager;
+
+  const manager = createHeadlessSettingsManager(source);
+  assert.equal(manager.getCacheWarmingMode(), "off", "an inherited streaming mode would bill invisibly");
+  assert.equal(manager.getDefaultThinkingLevel(), "high", "global settings must survive the swap");
+  assert.deepEqual(manager.getDefaultTools(), ["read"], "project settings must survive the swap");
+});
+
+test("buildHeadlessSessionOptions isolates the session and forwards max thinking", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "persona-audit-options-"));
+  try {
+    const agentDir = getAgentDir();
+    const registry = await testRegistry();
+    const runtime = await buildRuntimeWithExtensionProviders(registry, agentDir);
+    const loader = createIsolatedResourceLoader(cwd, agentDir, "");
+
+    const options = buildHeadlessSessionOptions(
+      {
+        cwd,
+        modelRegistry: registry,
+        systemPrompt: "",
+        tools: ["read"],
+        agentName: "probe",
+        thinking: "max",
+      },
+      agentDir,
+      runtime,
+      loader,
+      undefined,
+    );
+
+    assert.equal(options.thinkingLevel, "max", "the runner must let createAgentSession clamp the level");
+    assert.equal(options.settingsManager?.getCacheWarmingMode(), "off");
+    assert.equal(options.resourceLoader, loader);
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }

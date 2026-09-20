@@ -17,6 +17,7 @@ import {
   SettingsManager,
   type AgentSession,
   type AgentSessionEvent,
+  type CreateAgentSessionOptions,
   type ModelRegistry,
 } from "@earendil-works/pi-coding-agent";
 import { formatToolActivity, OutputActivityTracker } from "./subprocess.ts";
@@ -222,6 +223,26 @@ export function createIsolatedResourceLoader(cwd: string, agentDir: string, syst
 }
 
 /**
+ * The user's real global and project settings with cache warming forced off.
+ *
+ * Pi 0.86.0 attaches a CacheWarmer to every createAgentSession() session and
+ * reads its mode from global settings only. Changing the live session setting
+ * would rewrite the user's settings.json. Audit sessions are short prompts,
+ * and warming spend arrives outside the message_end-driven COST column, so
+ * headless audit sessions disable it without mutating the user's manager.
+ */
+export function createHeadlessSettingsManager(
+  source: Pick<SettingsManager, "getGlobalSettings" | "getProjectSettings">,
+): SettingsManager {
+  const manager = SettingsManager.inMemory({ ...source.getGlobalSettings(), cacheWarming: "off" });
+  // inMemory() seeds the global scope only. Replaying project settings on top
+  // reproduces the file-backed merged view while getCacheWarmingMode() keeps
+  // reading the global "off" value.
+  manager.applyOverrides(source.getProjectSettings());
+  return manager;
+}
+
+/**
  * Builds a ModelRuntime scoped to agentDir's auth.json/models.json (so normal
  * stored-credential models resolve exactly as createAgentSession's own default
  * runtime would), replaying every provider the extension host has registered
@@ -269,6 +290,28 @@ export interface InteractiveAgentSession {
 
 export type CreateInteractiveSessionOptions = Omit<HeadlessOptions, "task">;
 
+/** The isolated createAgentSession() options for one headless audit session. */
+export function buildHeadlessSessionOptions(
+  opts: CreateInteractiveSessionOptions,
+  agentDir: string,
+  modelRuntime: ModelRuntime,
+  resourceLoader: DefaultResourceLoader,
+  model: Model<Api> | undefined,
+): CreateAgentSessionOptions {
+  return {
+    cwd: opts.cwd,
+    agentDir,
+    modelRuntime,
+    model,
+    // The SDK clamps every level to model capability, including "max".
+    thinkingLevel: opts.thinking,
+    tools: opts.tools,
+    resourceLoader,
+    sessionManager: SessionManager.inMemory(opts.cwd),
+    settingsManager: createHeadlessSettingsManager(SettingsManager.create(opts.cwd, agentDir)),
+  };
+}
+
 /**
  * Creates a persistent interactive agent session.
  * The session maintains conversation history across multiple prompt() calls
@@ -283,18 +326,9 @@ export async function createInteractiveAgentSession(
   const loader = createIsolatedResourceLoader(opts.cwd, agentDir, opts.systemPrompt);
   await loader.reload();
 
-  const created = await createAgentSession({
-    cwd: opts.cwd,
-    agentDir,
-    modelRuntime,
-    model: resolvedModel,
-    // "max" isn't in the installed SDK's ThinkingLevel type yet; the picker can never produce it, so fall back to the session default.
-    thinkingLevel: opts.thinking === "max" ? undefined : opts.thinking,
-    tools: opts.tools,
-    resourceLoader: loader,
-    sessionManager: SessionManager.inMemory(opts.cwd),
-    settingsManager: SettingsManager.create(opts.cwd, agentDir),
-  });
+  const created = await createAgentSession(
+    buildHeadlessSessionOptions(opts, agentDir, modelRuntime, loader, resolvedModel),
+  );
   const session = created.session;
   session.setSessionName(opts.agentName);
 

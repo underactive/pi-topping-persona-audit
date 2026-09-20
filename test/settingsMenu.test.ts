@@ -40,6 +40,7 @@ interface Mounted {
   result: Promise<SettingsMenuResult>;
   settled(): boolean;
   overlayOptions(): unknown;
+  warnings(): string[];
 }
 
 const config = (
@@ -61,13 +62,16 @@ function mount(initial: PersonaAuditConfig = config(DEFAULT_METER_SETTINGS)): Mo
   let component: Component | undefined;
   let settled = false;
   let capturedOptions: unknown;
+  const warnings: string[] = [];
 
   // Focused-overlay fake: Pi dispatches input straight to the component and
   // settles the overlay when the component calls done.
   const ctx = {
     modelRegistry: { getAvailable: () => [{ provider: "test", id: "model", reasoning: false }] },
     ui: {
-      notify: () => {},
+      notify: (message: string, level: string) => {
+        if (level === "warning") warnings.push(message);
+      },
       custom: (
         factory: (host: TUI, currentTheme: Theme, keybindings: unknown, done: (value: SettingsMenuResult) => void) => Component,
         options?: unknown,
@@ -92,6 +96,7 @@ function mount(initial: PersonaAuditConfig = config(DEFAULT_METER_SETTINGS)): Mo
     result,
     settled: () => settled,
     overlayOptions: () => capturedOptions,
+    warnings: () => [...warnings],
   };
 }
 
@@ -180,6 +185,22 @@ test("the dispatch row shows the session fallback until a model is chosen", asyn
   menu.send(TAB, ENTER);
   seededMenu.send(TAB, ENTER);
   await Promise.all([menu.result, seededMenu.result]);
+});
+
+test("a retired dispatch model is cleared, warned about, and not saved again", async () => {
+  const initial = config(DEFAULT_METER_SETTINGS);
+  initial.dispatch = { ref: { provider: "gone", id: "model" }, thinking: "medium" };
+  const menu = mount(initial);
+
+  assert.match(menu.render(), /Dispatch model\s+Session model \(not set\)/);
+  assert.deepEqual(menu.warnings(), [
+    'Dispatch model gone/model is no longer offered by the registry; the row now reads "Session model (not set)". Pick a replacement or save to clear it.',
+  ]);
+
+  menu.send(TAB, ENTER);
+  const saved = await menu.result;
+  assert.equal(saved.action, "save");
+  assert.equal(saved.action === "save" && "dispatch" in saved.draft, false);
 });
 
 test("Enter on the dispatch row opens the two-pane picker and Esc returns to the menu", async () => {

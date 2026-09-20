@@ -11,7 +11,13 @@
  */
 
 import { getSupportedThinkingLevels, type Api, type Model } from "@earendil-works/pi-ai";
-import { isThinkingLevel, modelRefLabel, type ModelRef, type ThinkingLevel } from "./modelConfig.ts";
+import {
+  isThinkingLevel,
+  modelRefLabel,
+  type ModelRef,
+  type PhaseModelChoice,
+  type ThinkingLevel,
+} from "./modelConfig.ts";
 
 export interface ModelCatalogue {
   /** Selectable models, sorted by `provider/id`. */
@@ -56,4 +62,25 @@ function buildCatalogue(registry: CatalogueRegistry): ModelCatalogue {
     availableRefs: () => [...refs],
     thinkingLevelsFor: (ref) => levels.get(modelRefLabel(ref)) ?? [],
   };
+}
+
+/**
+ * Drop a saved model choice the registry no longer lists.
+ *
+ * Providers retire models between runs. An unvalidated ref either fails with
+ * "Model not found" or, worse, can resolve a same-named model under another
+ * provider. Matching is exact on provider and id: fuzzy resolution is the
+ * behavior being prevented. Returns the dropped label so callers can name the
+ * model that went away.
+ */
+export function validateSavedChoice(
+  choice: PhaseModelChoice | undefined,
+  available: readonly ModelRef[],
+): { choice?: PhaseModelChoice; dropped?: string } {
+  if (!choice) return {};
+  // An empty catalogue means nothing resolves at all; dropping every saved
+  // choice there would trade one clear failure for a confusing warning.
+  if (available.length === 0) return { choice };
+  const label = modelRefLabel(choice.ref);
+  return available.some((ref) => modelRefLabel(ref) === label) ? { choice } : { dropped: label };
 }

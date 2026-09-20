@@ -27,7 +27,7 @@ import {
   type SelectListTheme,
   type TUI,
 } from "@earendil-works/pi-tui";
-import { getModelCatalogue } from "../modelCatalogue.ts";
+import { getModelCatalogue, validateSavedChoice } from "../modelCatalogue.ts";
 import {
   defaultThinkingForModel,
   isThinkingLevel,
@@ -62,6 +62,40 @@ export type PhaseModelPickerResult =
   | { action: "start"; selections: PhaseModelSelection }
   | { action: "back"; selections: PhaseModelSelection }
   | { action: "cancel" };
+
+export interface SeededPhases {
+  selections: PhaseModelSelection;
+  /** `provider/id` of each distinct saved choice the registry no longer lists. */
+  dropped: string[];
+}
+
+/**
+ * Seed phase slots from this run's unsaved picks, then saved config, then the
+ * session model. A saved choice is atomic, so a retired ref takes its thinking
+ * level with it; the replacement model may not support that level. `initial`
+ * is never revalidated because it came from this session's own picker.
+ */
+export function seedPhaseSelections(
+  saved: Partial<PhaseModelSelection>,
+  initial: PhaseModelSelection | undefined,
+  available: readonly ModelRef[],
+  fallbackRef: ModelRef,
+  thinkingFor: (ref: ModelRef) => ThinkingLevel,
+): SeededPhases {
+  const selections = {} as PhaseModelSelection;
+  const dropped = new Set<string>();
+  for (const slot of PHASE_SLOTS) {
+    const seeded = initial?.[slot];
+    if (seeded) {
+      selections[slot] = seeded;
+      continue;
+    }
+    const validated = validateSavedChoice(saved[slot], available);
+    if (validated.dropped) dropped.add(validated.dropped);
+    selections[slot] = validated.choice ?? { ref: fallbackRef, thinking: thinkingFor(fallbackRef) };
+  }
+  return { selections, dropped: [...dropped] };
+}
 
 const MAX_VISIBLE_ROWS = 10;
 const SELECTED_ROW_SENTINEL = "\u0000";
@@ -690,14 +724,23 @@ export async function showPhaseModelPicker(
   const fallbackRef = currentModelRef ?? available[0]!;
   const thinkingOverrides: Record<string, ThinkingLevel> = { ...saved.thinkingOverrides };
 
-  const selections = {} as PhaseModelSelection;
-  for (const slot of PHASE_SLOTS) {
-    const seeded = initial?.[slot];
-    const ref = seeded?.ref ?? saved.phases[slot]?.ref ?? fallbackRef;
-    const thinking = seeded?.thinking
-      ?? saved.phases[slot]?.thinking
-      ?? defaultThinkingForModel(modelRefLabel(ref), thinkingOverrides, currentThinking, catalogue.thinkingLevelsFor(ref));
-    selections[slot] = { ref, thinking };
+  const { selections, dropped } = seedPhaseSelections(
+    saved.phases,
+    initial,
+    available,
+    fallbackRef,
+    (ref) => defaultThinkingForModel(
+      modelRefLabel(ref),
+      thinkingOverrides,
+      currentThinking,
+      catalogue.thinkingLevelsFor(ref),
+    ),
+  );
+  if (dropped.length > 0) {
+    ctx.ui.notify(
+      `Saved phase ${dropped.length > 1 ? "models are" : "model is"} no longer offered by the registry (${dropped.join(", ")}); using ${modelRefLabel(fallbackRef)}. Choose a replacement before continuing.`,
+      "warning",
+    );
   }
 
   const result = await showOverlayPrompt<PhaseModelPickerResult>(ctx, (tui, theme, finish) =>

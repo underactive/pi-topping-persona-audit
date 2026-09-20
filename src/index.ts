@@ -46,6 +46,7 @@ import {
   type PhaseModelSelection,
   type Temperament,
 } from "./modelConfig.ts";
+import { getModelCatalogue, validateSavedChoice } from "./modelCatalogue.ts";
 import { additionalContextFingerprint, describeAdditionalContext, hasAdditionalContext, type AdditionalContext } from "./additionalContext.ts";
 import { parsePersonaAuditArgs, type AuditExclusions } from "./args.ts";
 import type { AuditMode, Finding, ReviewerSelection } from "./types.ts";
@@ -731,7 +732,11 @@ export default function (pi: ExtensionAPI): void {
       } else {
         const pickerConfig = loadPersonaAuditConfig();
         const rosters = pickerConfig.rosters;
-        const dispatchChoice = pickerConfig.dispatch;
+        const savedDispatch = validateSavedChoice(
+          pickerConfig.dispatch,
+          getModelCatalogue(ctx.modelRegistry).availableRefs(),
+        );
+        const dispatchChoice = savedDispatch.choice;
         // The session model must be passed explicitly: an undefined model
         // hands the headless session the SDK default, not the session's model.
         const sessionModel = ctx.model ? modelRefLabel({ provider: ctx.model.provider, id: ctx.model.id }) : undefined;
@@ -762,7 +767,12 @@ export default function (pi: ExtensionAPI): void {
             if (source === "recommend") {
               if (!cachedRecommendation) {
                 if (!dispatchChoice) {
-                  ctx.ui.notify("No Dispatch model set — using the session model. Set a cheaper one in /persona-audit-settings.", "warning");
+                  ctx.ui.notify(
+                    savedDispatch.dropped
+                      ? `Dispatch model ${savedDispatch.dropped} is no longer available — using the session model. Set a new one in /persona-audit-settings.`
+                      : "No Dispatch model set — using the session model. Set a cheaper one in /persona-audit-settings.",
+                    "warning",
+                  );
                 }
                 // Parked on the module-level controller so the existing cancel
                 // shortcut can abort the dispatcher like any other audit phase.

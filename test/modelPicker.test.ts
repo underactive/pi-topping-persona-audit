@@ -2,9 +2,22 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
 import { visibleWidth, type Component, type TUI } from "@earendil-works/pi-tui";
-import { modelThinkingPaneWidths, showPhaseModelPicker, smartTruncateModelLabel, thinkingOffWarning, TwoPaneModelThinking, type PhaseModelPickerResult } from "../src/components/ModelPicker.ts";
+import {
+  modelThinkingPaneWidths,
+  seedPhaseSelections,
+  showPhaseModelPicker,
+  smartTruncateModelLabel,
+  thinkingOffWarning,
+  TwoPaneModelThinking,
+  type PhaseModelPickerResult,
+} from "../src/components/ModelPicker.ts";
 import { PROMPT_OVERLAY_OPTIONS } from "../src/components/menuChrome.ts";
-import { PHASE_SLOTS, type ThinkingLevel } from "../src/modelConfig.ts";
+import {
+  PHASE_SLOTS,
+  type ModelRef,
+  type PhaseModelSelection,
+  type ThinkingLevel,
+} from "../src/modelConfig.ts";
 
 const HIGHLIGHT = "\x1b[48;5;236m";
 const bgWidths: number[] = [];
@@ -156,6 +169,65 @@ test("the model picker renders a warning when the selected thinking level is off
   );
   const lines = picker.render(50);
   assert.ok(lines.some((line) => line.includes("⚠")), "expected a thinking-off warning in the render");
+});
+
+test("seedPhaseSelections replaces a retired saved model and recomputes thinking", () => {
+  const fallbackRef: ModelRef = { provider: "session", id: "current" };
+  const seeded = seedPhaseSelections(
+    { review: { ref: { provider: "gone", id: "retired" }, thinking: "max" } },
+    undefined,
+    [fallbackRef],
+    fallbackRef,
+    () => "low",
+  );
+
+  assert.deepEqual(seeded.selections.review, { ref: fallbackRef, thinking: "low" });
+  assert.deepEqual(seeded.dropped, ["gone/retired"]);
+});
+
+test("seedPhaseSelections preserves live saved choices and gives initial choices precedence", () => {
+  const fallbackRef: ModelRef = { provider: "session", id: "current" };
+  const live = { ref: { provider: "saved", id: "live" }, thinking: "high" } as const;
+  const unsaved = { ref: { provider: "unsaved", id: "picked" }, thinking: "xhigh" } as const;
+  const initial: PhaseModelSelection = {
+    review: unsaved,
+    triage: unsaved,
+    implement: unsaved,
+    verify: unsaved,
+  };
+
+  const savedOnly = seedPhaseSelections(
+    { review: live },
+    undefined,
+    [fallbackRef, live.ref],
+    fallbackRef,
+    () => "low",
+  );
+  assert.deepEqual(savedOnly.selections.review, live);
+
+  const initialWins = seedPhaseSelections(
+    { review: live },
+    initial,
+    [fallbackRef, live.ref],
+    fallbackRef,
+    () => "low",
+  );
+  assert.deepEqual(initialWins.selections.review, unsaved);
+  assert.deepEqual(initialWins.dropped, [], "initial choices are not revalidated against the catalogue");
+});
+
+test("seedPhaseSelections reports each retired saved model once", () => {
+  const fallbackRef: ModelRef = { provider: "session", id: "current" };
+  const retired = { ref: { provider: "gone", id: "retired" }, thinking: "medium" } as const;
+  const seeded = seedPhaseSelections(
+    { review: retired, triage: retired },
+    undefined,
+    [fallbackRef],
+    fallbackRef,
+    () => "off",
+  );
+
+  assert.deepEqual(seeded.dropped, ["gone/retired"]);
 });
 
 test("smartTruncateModelLabel keeps last segment, first segment, and collapses skipped runs", () => {

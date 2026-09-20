@@ -13,7 +13,7 @@
 
 import type { ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey, type Component, type TUI } from "@earendil-works/pi-tui";
-import { getModelCatalogue } from "../modelCatalogue.ts";
+import { getModelCatalogue, validateSavedChoice } from "../modelCatalogue.ts";
 import { MenuComponent, showOverlayPrompt, type MenuItem } from "./menuChrome.ts";
 import { RetryModelSubView } from "./ModelPicker.ts";
 import {
@@ -239,6 +239,16 @@ export function showSettingsMenu(
 ): Promise<SettingsMenuResult> {
   const draft = cloneConfig(initial);
   const availableRefs = getModelCatalogue(ctx.modelRegistry).availableRefs();
+  const validated = validateSavedChoice(draft.dispatch, availableRefs);
+  if (validated.dropped) {
+    // Otherwise the row displays a model that no longer exists, and Save —
+    // which writes cloneConfig(draft) verbatim — persists the dead ref again.
+    delete draft.dispatch;
+    ctx.ui.notify(
+      `Dispatch model ${validated.dropped} is no longer offered by the registry; the row now reads "${DISPATCH_UNSET_LABEL}". Pick a replacement or save to clear it.`,
+      "warning",
+    );
+  }
 
   return showOverlayPrompt<SettingsMenuResult>(ctx, (tui, theme, finish) =>
     new SettingsMenuComponent(tui, theme, ctx, draft, currentThinking, availableRefs, finish));
