@@ -225,11 +225,14 @@ export function createIsolatedResourceLoader(cwd: string, agentDir: string, syst
 /**
  * The user's real global and project settings with cache warming forced off.
  *
- * Pi 0.86.0 attaches a CacheWarmer to every createAgentSession() session and
- * reads its mode from global settings only. Changing the live session setting
- * would rewrite the user's settings.json. Audit sessions are short prompts,
- * and warming spend arrives outside the message_end-driven COST column, so
- * headless audit sessions disable it without mutating the user's manager.
+ * Pi 0.87.0 only adds a refresh-deadline guard (`refreshDeadlineMissed()`)
+ * that suppresses delayed idle refreshes. On-time streaming and idle refreshes
+ * still run, append `cache_warm` usage entries through
+ * `sessionManager.appendUsage()`, and never emit assistant `message_end`
+ * events. The message-driven COST column therefore still cannot show warming
+ * spend. Keep the workaround deliberately until a model-backed benchmark
+ * supports removing it; changing the live session setting would rewrite the
+ * user's settings.json.
  */
 export function createHeadlessSettingsManager(
   source: Pick<SettingsManager, "getGlobalSettings" | "getProjectSettings">,

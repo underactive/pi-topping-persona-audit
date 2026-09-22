@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { calculateCost, InMemoryCredentialStore } from "@earendil-works/pi-ai";
+import { calculateCost, InMemoryCredentialStore, type Api, type Model } from "@earendil-works/pi-ai";
 import {
   DefaultResourceLoader,
   getAgentDir,
@@ -326,6 +326,8 @@ test("createIsolatedResourceLoader discovers no extensions, even where the unres
   }
 });
 
+// Re-evaluated against pi 0.87.0: late refreshes are guarded, but on-time
+// warming still bypasses message_end and the progress table's COST column.
 test("headless sessions inherit user settings but never warm the cache", () => {
   const source = {
     getGlobalSettings: () => ({ cacheWarming: "streaming", defaultThinkingLevel: "high" }),
@@ -364,6 +366,57 @@ test("buildHeadlessSessionOptions isolates the session and forwards max thinking
     assert.equal(options.thinkingLevel, "max", "the runner must let createAgentSession clamp the level");
     assert.equal(options.settingsManager?.getCacheWarmingMode(), "off");
     assert.equal(options.resourceLoader, loader);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("buildHeadlessSessionOptions preserves model image resize limits", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "persona-audit-model-options-"));
+  try {
+    const agentDir = getAgentDir();
+    const registry = await testRegistry();
+    const runtime = await buildRuntimeWithExtensionProviders(registry, agentDir);
+    const loader = createIsolatedResourceLoader(cwd, agentDir, "");
+    const model: Model<Api> = {
+      id: "zzz-rt-test-resize-model",
+      name: "ZZZ RT Test Resize Model",
+      api: "anthropic-messages",
+      provider: "zzz-rt-test-provider",
+      baseUrl: "https://example.invalid",
+      reasoning: false,
+      input: ["text", "image"],
+      inputLimits: {
+        images: {
+          resize: {
+            maxWidth: 1568,
+            maxHeight: 1568,
+            maxBytes: 524_288,
+            jpegQuality: 75,
+          },
+        },
+      },
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 128_000,
+      maxTokens: 4096,
+    };
+
+    const options = buildHeadlessSessionOptions(
+      {
+        cwd,
+        modelRegistry: registry,
+        systemPrompt: "",
+        tools: ["read"],
+        agentName: "probe",
+      },
+      agentDir,
+      runtime,
+      loader,
+      model,
+    );
+
+    assert.equal(options.model, model, "the runner must forward the exact model object");
+    assert.deepEqual(options.model?.inputLimits?.images?.resize, model.inputLimits?.images?.resize);
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
