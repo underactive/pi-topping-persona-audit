@@ -274,8 +274,10 @@ test("findings render labeled summary, rationale, and suggested-change sections"
 
   assert.ok(rendered.indexOf("Summary:") < rendered.indexOf("Rationale:"));
   assert.ok(rendered.indexOf("Rationale:") < rendered.indexOf("Suggested Change:"));
+  assert.match(rendered, /Reviewer 01 src\/file01\.ts:1/);
   assert.match(rendered, /parser keeps all output/i);
-  assert.match(rendered, /bug:1 — Open Question regex/);
+  assert.match(rendered, /Rationale:[^\n]*\n[^\n]*bug[^\n]*\n[^\n]*Open Question regex/);
+  assert.doesNotMatch(rendered, /bug:1 —/);
   assert.match(rendered, /Stop at the next heading/);
   assert.doesNotMatch(rendered, /→/);
 });
@@ -442,28 +444,34 @@ test("priority sort leads with exploitability while default remains file-grouped
   assert.match(strip(ui.selected() ?? ""), /Reviewer 02/, "direct outranks higher-severity theoretical");
 });
 
-test("finding details render exploitability and disputes", () => {
-  const ui = harness([finding(1, {
+test("finding details render exploitability, disputes, and deferral reasons consistently", () => {
+  const details = finding(1, {
+    recommendation: "defer",
+    recommendationReason: "Wait for the parser rewrite.",
     exploitability: "conditional",
     exploitabilityReason: "Requires admin configuration.",
     disputes: [{ reviewer: "Reviewer B", verdict: "overstated", reason: "The default disables it." }],
-  })], 50);
-  const text = ui.visible().map(strip).join("\n");
+  });
+  const text = harness([details], 60).visible().map(strip).join("\n");
   assert.match(text, /Exploitability:[^\n]*\n[^\n]*conditional — Requires admin configuration\./);
-  assert.match(text, /Disputed by Reviewer B \(overstated\): The default disables it\./);
+  assert.match(text, /\n[^\S\n]*║[^\n]*\n[^\n]*Disputed by Reviewer B \(overstated\):[^\n]*\n[^\n]*The default disables it\./);
+  assert.match(text, /\n[^\S\n]*║[^\n]*\n[^\n]*⚑ Why defer:[^\n]*\n[^\n]*Wait for the parser rewrite\./);
 
-  const colored = new FindingsReview([finding(1, {
-    exploitability: "conditional",
-    exploitabilityReason: "Requires admin configuration.",
-  })], {
+  const colored = new FindingsReview([details], {
     fg: (color, value) => `<${color}>${value}</${color}>`,
     bg: (_color, value) => value,
     bold: (value) => value,
-  }, () => {}, { requestRender: () => {}, terminal: { rows: 50 } }, async () => "handoff.md");
+  }, () => {}, { requestRender: () => {}, terminal: { rows: 60 } }, async () => "handoff.md");
   const coloredText = colored.render(WIDTH).join("\n");
-  assert.match(coloredText, /<dim>Exploitability:<\/dim>/);
-  assert.match(coloredText, /<muted>conditional — Requires admin configuration\.<\/muted>/);
-  assert.doesNotMatch(coloredText, /<warning>Exploitability:/);
+  assert.match(coloredText, /<text>Summary:<\/text>/);
+  assert.match(coloredText, /<text>Rationale:<\/text>/);
+  assert.match(coloredText, /<text>Exploitability:<\/text>/);
+  assert.match(coloredText, /<text>Disputed by Reviewer B \(overstated\):<\/text>/);
+  assert.match(coloredText, /<text>Suggested Change:<\/text>/);
+  assert.match(coloredText, /<text>⚑ Why defer:<\/text>/);
+  assert.match(coloredText, /<muted>The default disables it\.<\/muted>/);
+  assert.match(coloredText, /<muted>Wait for the parser rewrite\.<\/muted>/);
+  assert.doesNotMatch(coloredText, /<warning>(?:Exploitability|Disputed by|⚑ Why defer):/);
 });
 
 test("finding details render the complete long dispute reason", () => {
