@@ -13,7 +13,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Changed
 
 - **Development dependencies updated to pi 0.87.0** — `@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent`, and `@earendil-works/pi-tui` are pinned to 0.87.0 for development and testing.
-- **Headless cache warming workaround retained** — pi 0.87.0's refresh-deadline guard suppresses delayed idle refreshes, but on-time warming still records `cache_warm` usage outside assistant `message_end` events, leaving it invisible in the message-driven COST column; the workaround remains until a model-backed benchmark supports removing it.
 
 ### Fixed
 
