@@ -474,6 +474,25 @@ test("finding details render exploitability, disputes, and deferral reasons cons
   assert.doesNotMatch(coloredText, /<warning>(?:Exploitability|Disputed by|⚑ Why defer):/);
 });
 
+test("wide characters in finding details are never cut at the frame", () => {
+  const rationale = "审".repeat(60);
+  const ui = harness([finding(1, { rationale, summary: "wide text" })], 50);
+  const joined = ui.visible().map(strip).join("").replace(/[║\s]/g, "");
+
+  assert.ok(joined.includes(rationale), "every wide character survives wrapping and framing");
+  for (const row of ui.visible()) {
+    assert.ok(visibleWidth(row) <= WIDTH, `row width ${visibleWidth(row)} exceeds ${WIDTH}`);
+  }
+});
+
+test("long unbroken tokens wrap without losing or marking characters", () => {
+  const rationale = `https://example.com/${"a".repeat(100)}`;
+  const ui = harness([finding(1, { rationale, summary: "long URL" })], 50);
+  const joined = ui.visible().map(strip).join("").replace(/[║\s]/g, "");
+
+  assert.ok(joined.includes(rationale), "the URL survives wrapping without inserted ellipses");
+});
+
 test("finding details render the complete long dispute reason", () => {
   const reason = `${"Evidence stays on the reachable startup path. ".repeat(6)}setImmediate remains on the executed path.`;
   const ui = harness([finding(1, {

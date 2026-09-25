@@ -1,5 +1,5 @@
 import type { Component } from "@earendil-works/pi-tui";
-import { Key, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { Key, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { ExtensionCommandContext, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { handoffRelPath, renderDeferredHandoff, writeReportFile } from "../report.ts";
 import { gitHeadCommit } from "../git.ts";
@@ -367,67 +367,34 @@ export class FindingsReview implements Component {
     return Math.max(1, Math.floor((usable * OVERLAY_HEIGHT_PERCENT) / 100));
   }
 
-  /**
-   * Word-wrap text to fit within maxCols, breaking at word boundaries.
-   * `firstCols` gives the opening line a narrower budget, for callers that
-   * print a head ("bug:12 — ") before it and indent the rest.
-   */
-  private wordWrap(text: string, maxCols: number, firstCols = maxCols): string[] {
-    if (text.length <= firstCols) return [text];
-    const words = text.split(/(\s+)/);
-    const result: string[] = [];
-    const budget = (): number => (result.length === 0 ? firstCols : maxCols);
-    let current = "";
-    for (const word of words) {
-      const test = current + word;
-      if (test.length <= budget()) {
-        current = test;
-      } else {
-        // Flush current line if non-empty
-        if (current.length > 0) {
-          result.push(current);
-        }
-        // Start new line, stripping leading whitespace
-        current = word.replace(/^\s+/, "");
-        // Force-break if a single word exceeds the current budget
-        while (current.length > budget()) {
-          result.push(current.slice(0, budget() - 1) + "…");
-          current = current.slice(budget() - 1);
-        }
-      }
-    }
-    if (current.length > 0) result.push(current);
-    return result.length > 0 ? result : [text];
-  }
-
   private wrapItem(item: ReviewItem, width: number): WrappedFindingDetails {
     if (item.wrapCache && item.wrapCache.width === width) return item.wrapCache;
     const detailWidth = Math.max(2, width - 6);
-    const summary = this.wordWrap(sanitizeTerminalText(item.finding.summary || item.finding.rationale), detailWidth);
-    const rationale = this.wordWrap(sanitizeTerminalText(item.finding.rationale), detailWidth);
-    const suggestedChange = this.wordWrap(sanitizeTerminalText(item.finding.suggestedChange), detailWidth);
+    const summary = wrapTextWithAnsi(sanitizeTerminalText(item.finding.summary || item.finding.rationale), detailWidth);
+    const rationale = wrapTextWithAnsi(sanitizeTerminalText(item.finding.rationale), detailWidth);
+    const suggestedChange = wrapTextWithAnsi(sanitizeTerminalText(item.finding.suggestedChange), detailWidth);
     let reason: WrappedDetailBlock | undefined;
     if (item.finding.recommendationReason && item.finding.recommendation !== "apply") {
       const reasonLabel = item.finding.recommendation === "reject" ? "Why reject" : "Why defer";
       reason = {
         heading: `⚑ ${reasonLabel}:`,
-        content: this.wordWrap(sanitizeTerminalText(item.finding.recommendationReason), detailWidth),
+        content: wrapTextWithAnsi(sanitizeTerminalText(item.finding.recommendationReason), detailWidth),
       };
     }
     const exploitability = item.finding.exploitability
-      ? this.wordWrap(
+      ? wrapTextWithAnsi(
           `${item.finding.exploitability}${item.finding.exploitabilityReason ? ` — ${sanitizeTerminalText(item.finding.exploitabilityReason)}` : ""}`,
           detailWidth,
         )
       : undefined;
     const disputes = item.finding.disputes?.map((dispute) => ({
       heading: `Disputed by ${sanitizeTerminalText(dispute.reviewer)} (${dispute.verdict}):`,
-      content: this.wordWrap(sanitizeTerminalText(dispute.reason), detailWidth),
+      content: wrapTextWithAnsi(sanitizeTerminalText(dispute.reason), detailWidth),
     }));
     const derivedFrom = item.finding.derivedFrom?.length
       ? {
           heading: "Derived from:",
-          content: this.wordWrap(
+          content: wrapTextWithAnsi(
             item.finding.derivedFrom.map((source) => sanitizeTerminalText(source)).join(", "),
             detailWidth,
           ),
@@ -622,9 +589,9 @@ export class FindingsReview implements Component {
     const keybinds = `↑↓ navigate · PgUp/PgDn page · S sort: ${SORT_LABELS[this.sortMode]} · A apply · R reject · D defer · Space cycle · F fix now · H handoff · Enter finish · Esc cancel`;
     const header = [
       renderFramedTop(t, inner, `Findings Review (${this.items.length} total)`),
-      ...this.wordWrap(keybinds, Math.max(2, inner - 1)).map((line) => " " + t.fg("dim", line)),
+      ...wrapTextWithAnsi(keybinds, Math.max(2, inner - 1)).map((line) => " " + t.fg("dim", line)),
       ...(this.degradationNote
-        ? this.wordWrap(`⚠ ${sanitizeTerminalText(this.degradationNote)}`, Math.max(2, inner - 1)).map((line) => " " + t.fg("warning", line))
+        ? wrapTextWithAnsi(`⚠ ${sanitizeTerminalText(this.degradationNote)}`, Math.max(2, inner - 1)).map((line) => " " + t.fg("warning", line))
         : []),
       "",
     ];
