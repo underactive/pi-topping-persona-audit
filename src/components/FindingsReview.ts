@@ -583,55 +583,24 @@ export class FindingsReview implements Component {
       lines.push(this.renderFindingRow(item, index === this.selectedIndex, width));
 
       const wrapped = this.wrapItem(item, width);
-      lines.push(`    ${t.fg("text", "Summary:")}`);
-      for (const summary of wrapped.summary) {
-        lines.push(`      ${t.fg("muted", summary)}`);
-      }
-      lines.push("");
-
-      lines.push(`    ${t.fg("text", "Rationale:")}`);
       const category = sanitizeTerminalText(item.finding.category);
       const blast = this.sortMode === "blast" ? item.finding.blastRadius : undefined;
       const blastInfo = blast
         ? ` · blast ${blast.level[0]!.toUpperCase()}${blast.level.slice(1)}${blast.reasons.length > 0 ? `: ${blast.reasons.slice(0, 2).map(sanitizeTerminalText).join(", ")}` : ""}`
         : "";
-      lines.push(`      ${t.fg("muted", category + blastInfo)}`);
-      for (const rationale of wrapped.rationale) {
-        lines.push(`      ${t.fg("muted", rationale)}`);
-      }
-
-      if (wrapped.exploitability) {
-        lines.push("");
-        lines.push(`    ${t.fg("text", "Exploitability:")}`);
-        for (const detail of wrapped.exploitability) {
-          lines.push(`      ${t.fg("muted", detail)}`);
-        }
-      }
-      for (const dispute of wrapped.disputes ?? []) {
-        lines.push("");
-        lines.push(`    ${t.fg("text", dispute.heading)}`);
-        for (const detail of dispute.content) {
-          lines.push(`      ${t.fg("muted", detail)}`);
-        }
-      }
-      if (wrapped.derivedFrom) {
-        lines.push("");
-        lines.push(`    ${t.fg("text", wrapped.derivedFrom.heading)}`);
-        for (const detail of wrapped.derivedFrom.content) {
-          lines.push(`      ${t.fg("muted", detail)}`);
-        }
-      }
-
-      lines.push("");
-      lines.push(`    ${t.fg("text", "Suggested Change:")}`);
-      for (const change of wrapped.suggestedChange) {
-        lines.push(`      ${t.fg("muted", change)}`);
-      }
-
-      if (wrapped.reason) {
-        lines.push("");
-        lines.push(`    ${t.fg("text", wrapped.reason.heading)}`);
-        for (const detail of wrapped.reason.content) {
+      const blocks: WrappedDetailBlock[] = [
+        { heading: "Summary:", content: wrapped.summary },
+        { heading: "Rationale:", content: [category + blastInfo, ...wrapped.rationale] },
+        ...(wrapped.exploitability ? [{ heading: "Exploitability:", content: wrapped.exploitability }] : []),
+        ...(wrapped.disputes ?? []),
+        ...(wrapped.derivedFrom ? [wrapped.derivedFrom] : []),
+        { heading: "Suggested Change:", content: wrapped.suggestedChange },
+        ...(wrapped.reason ? [wrapped.reason] : []),
+      ];
+      for (const [blockIndex, block] of blocks.entries()) {
+        if (blockIndex > 0) lines.push("");
+        lines.push(`    ${t.fg("text", block.heading)}`);
+        for (const detail of block.content) {
           lines.push(`      ${t.fg("muted", detail)}`);
         }
       }
