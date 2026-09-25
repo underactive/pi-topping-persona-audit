@@ -326,8 +326,6 @@ test("createIsolatedResourceLoader discovers no extensions, even where the unres
   }
 });
 
-// Re-evaluated against pi 0.87.0: late refreshes are guarded, but on-time
-// warming still bypasses message_end and the progress table's COST column.
 test("headless sessions inherit user settings but never warm the cache", () => {
   const source = {
     getGlobalSettings: () => ({ cacheWarming: "streaming", defaultThinkingLevel: "high" }),
