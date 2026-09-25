@@ -567,7 +567,7 @@ export class FindingsReview implements Component {
 
       if (groupRec !== lastRec) {
         const heading = `── ${REC_LABELS[groupRec]} (${this.recCounts.get(groupRec) ?? 0}) `;
-        const headingColor: ThemeColor = groupRec === "apply" ? "success" : groupRec === "reject" ? "warning" : "dim";
+        const headingColor: ThemeColor = STATUS_COLORS[groupRec];
         const rule = "─".repeat(Math.max(0, width - visibleWidth(heading) - 2));
         lines.push("  " + t.bold(t.fg(headingColor, heading)) + t.fg("dim", rule));
         lastRec = groupRec;
