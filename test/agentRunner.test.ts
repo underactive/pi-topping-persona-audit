@@ -23,6 +23,7 @@ import {
   promptAgentSession,
   resolveModelRef,
   resolveTurnCostModel,
+  TurnCostTracker,
   type SessionMessage,
 } from "../src/agentRunner.ts";
 
@@ -225,23 +226,45 @@ test("OpenRouter auto-router sentinel rates reproduce the negative Pi footer cos
   assert.equal(calculateTurnCost(autoRouter, transcriptUsage), undefined, "persona-audit must reject sentinel costs");
 });
 
-test("calculateTurnCost applies each tier to its own assistant turn", async () => {
+test("calculateTurnCost prices below-threshold and above-threshold turns at their own tier rates", async () => {
   const registry = await testRegistry();
   const model = registry.find("zzz-rt-test-provider", "zzz-rt-test-alpha-4-5");
   assert.ok(model);
+
+  assert.equal(
+    calculateTurnCost(model, { input: 600, output: 100, cacheRead: 0, cacheWrite: 0, totalTokens: 700 }),
+    0.008,
+  );
+  assert.equal(
+    calculateTurnCost(model, { input: 1200, output: 200, cacheRead: 0, cacheWrite: 0, totalTokens: 1400 }),
+    0.16,
+  );
+});
+
+test("TurnCostTracker prices each assistant turn at its own tier", async () => {
+  const registry = await testRegistry();
+  const model = registry.find("zzz-rt-test-provider", "zzz-rt-test-alpha-4-5");
+  assert.ok(model);
+  const tracker = new TurnCostTracker(registry, model);
   const turn = { input: 600, output: 100, cacheRead: 0, cacheWrite: 0, totalTokens: 700 };
 
-  const firstTurnCost = calculateTurnCost(model, turn);
-  const secondTurnCost = calculateTurnCost(model, turn);
-  assert.equal(firstTurnCost, 0.008);
-  assert.equal(secondTurnCost, 0.008);
-  assert.equal((firstTurnCost ?? 0) + (secondTurnCost ?? 0), 0.016);
+  tracker.addTurn({ usage: turn });
+  assert.equal(tracker.costUsd, 0.008);
+  tracker.addTurn({ usage: turn });
+  assert.equal(tracker.costUsd, 0.016, "pricing the summed usage once would incorrectly give 0.16");
+});
 
-  // The same two turns as one request would cross the request-wide threshold
-  // and incorrectly use the higher rates for all tokens.
-  const aggregateCost = calculateTurnCost(model, { input: 1200, output: 200, cacheRead: 0, cacheWrite: 0, totalTokens: 1400 });
-  assert.equal(aggregateCost, 0.16);
-  assert.notEqual((firstTurnCost ?? 0) + (secondTurnCost ?? 0), aggregateCost);
+test("TurnCostTracker adopts the reported model when the session model did not resolve", async () => {
+  const registry = await testRegistry();
+  const tracker = new TurnCostTracker(registry, undefined);
+  assert.equal(tracker.costUsd, undefined);
+
+  tracker.addTurn({
+    provider: "zzz-rt-test-provider",
+    model: "zzz-rt-test-alpha-4-5",
+    usage: { input: 600, output: 100, cacheRead: 0, cacheWrite: 0, totalTokens: 700 },
+  });
+  assert.equal(tracker.costUsd, 0.008);
 });
 
 // ── The actual regression: a fresh runtime must inherit registered-provider auth ──

@@ -199,6 +199,41 @@ export function resolveTurnCostModel(
   return fallback ?? findReportedModel(registry, provider, modelId);
 }
 
+/** Tracks cost per request because tiered rates applied to summed usage would overcharge. */
+export class TurnCostTracker {
+  #registry: Pick<ModelRegistry, "find">;
+  #model: Model<Api> | undefined;
+  #costUsd: number | undefined;
+
+  constructor(registry: Pick<ModelRegistry, "find">, model: Model<Api> | undefined) {
+    this.#registry = registry;
+    this.#model = model;
+    this.#costUsd = model ? 0 : undefined;
+  }
+
+  get costUsd(): number | undefined {
+    return this.#costUsd;
+  }
+
+  addTurn(turn: { provider?: string; model?: string; responseModel?: string; usage?: TurnTokenUsage }): void {
+    const turnModel = resolveTurnCostModel(
+      this.#model,
+      this.#registry,
+      turn.provider,
+      turn.model,
+      turn.responseModel,
+    );
+    if (!this.#model && turnModel) {
+      this.#model = turnModel;
+      this.#costUsd = 0;
+    }
+    if (turn.usage) {
+      const turnCost = calculateTurnCost(turnModel, turn.usage);
+      if (turnCost !== undefined) this.#costUsd = (this.#costUsd ?? 0) + turnCost;
+    }
+  }
+}
+
 function failedResult(errorMessage: string): HeadlessResult {
   return {
     finalText: "",
@@ -365,8 +400,7 @@ export async function createInteractiveAgentSession(
       const usage = emptyUsage();
       let activity: string | undefined;
       let toolCalls = 0;
-      let costModel = resolvedModel;
-      let costUsd: number | undefined = costModel ? 0 : undefined;
+      const cost = new TurnCostTracker(opts.modelRegistry, resolvedModel);
       let lastProgressAt = 0;
       let provider: string | undefined;
       let modelId: string | undefined;
@@ -410,21 +444,7 @@ export async function createInteractiveAgentSession(
           if (msg.usage) usage.contextTokens = msg.usage.totalTokens || 0;
           if (!provider && msg.provider) provider = msg.provider;
           if (!modelId && msg.model) modelId = msg.model;
-          const turnModel = resolveTurnCostModel(
-            costModel,
-            opts.modelRegistry,
-            msg.provider,
-            msg.model,
-            msg.responseModel,
-          );
-          if (!costModel && turnModel) {
-            costModel = turnModel;
-            costUsd = 0;
-          }
-          if (msg.usage) {
-            const turnCost = calculateTurnCost(turnModel, msg.usage);
-            if (turnCost !== undefined) costUsd = (costUsd ?? 0) + turnCost;
-          }
+          cost.addTurn(msg);
           if (msg.stopReason) stopReason = msg.stopReason;
           if (msg.errorMessage) errorMessage = msg.errorMessage;
         }
@@ -439,7 +459,7 @@ export async function createInteractiveAgentSession(
             contextTokens: usage.contextTokens,
             turns: usage.turns,
             toolCalls,
-            costUsd,
+            costUsd: cost.costUsd,
             activity,
             outputTokens: output.tokens,
             outputRevision: output.revision,
