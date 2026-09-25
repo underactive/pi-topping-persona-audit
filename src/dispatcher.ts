@@ -59,6 +59,7 @@ export type DispatcherOutcome =
 export interface DispatcherDeps {
   cwd: string;
   modelRegistry: ModelRegistry;
+  projectTrusted: boolean;
   model?: string;
   thinking?: ThinkingLevel;
   signal?: AbortSignal;
@@ -507,6 +508,7 @@ export async function recommendReviewers(
     task: buildDispatcherTask(fingerprint, { mode: input.mode, scope: input.scope, fileCount: input.fileManifest.length }),
     cwd: deps.cwd,
     modelRegistry: deps.modelRegistry,
+    projectTrusted: deps.projectTrusted,
     signal: deps.signal,
     idleTimeoutMs: AGENT_IDLE_TIMEOUT_MS,
   });

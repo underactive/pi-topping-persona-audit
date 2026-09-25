@@ -16,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Audit sessions follow pi's project trust** — audit agent sessions load the audited project's pi settings, packages, skills, and prompt files only when the host trusts the project. Before, an untrusted checkout's `.pi/settings.json` could install packages through its own `npmCommand` as soon as an audit session started.
 - **Findings Review detail blocks share one style** — Summary, Rationale, Exploitability, dispute, Derived from, Suggested Change, and recommendation-reason headings now render in one heading color with muted content beneath.
 
 ## [0.2.1] - 2026-09-20

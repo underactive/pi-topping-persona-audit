@@ -210,33 +210,52 @@ function failedResult(errorMessage: string): HeadlessResult {
   };
 }
 
-/** Builds the resource loader with noExtensions: true — the self-recursion guard — broken out so it's directly testable rather than only reachable through a full session run. */
-export function createIsolatedResourceLoader(cwd: string, agentDir: string, systemPrompt: string): DefaultResourceLoader {
+/** Hosts too old to report project trust are treated as untrusted, never as pi's trusted default. */
+export function hostProjectTrust(ctx: { isProjectTrusted?: () => boolean }): boolean {
+  return ctx.isProjectTrusted?.() ?? false;
+}
+
+/**
+ * Builds the resource loader with noExtensions: true — the self-recursion guard.
+ * Settings, packages, and project resources are read through the caller's trust-aware manager.
+ */
+export function createIsolatedResourceLoader(
+  cwd: string,
+  agentDir: string,
+  systemPrompt: string,
+  settings: SettingsManager,
+): DefaultResourceLoader {
   return new DefaultResourceLoader({
     cwd,
     agentDir,
+    settingsManager: settings,
     noExtensions: true,
     noContextFiles: true,
+    noThemes: true,
     // Appends rather than replaces, matching --append-system-prompt's semantics.
     appendSystemPromptOverride: (base) => (systemPrompt.trim() ? [...base, systemPrompt] : base),
   });
 }
 
 /**
- * The user's real global and project settings with cache warming forced off.
+ * The user's global settings, plus project settings when the project is trusted,
+ * with cache warming forced off.
  *
  * Warming records cache_warm usage via sessionManager.appendUsage() without
  * an assistant message_end, so the message-driven COST column cannot show
  * that spend; forcing it off here avoids rewriting the user's settings.json.
  */
 export function createHeadlessSettingsManager(
-  source: Pick<SettingsManager, "getGlobalSettings" | "getProjectSettings">,
+  source: Pick<SettingsManager, "getGlobalSettings" | "getProjectSettings" | "isProjectTrusted">,
 ): SettingsManager {
-  const manager = SettingsManager.inMemory({ ...source.getGlobalSettings(), cacheWarming: "off" });
-  // inMemory() seeds the global scope only. Replaying project settings on top
-  // reproduces the file-backed merged view while getCacheWarmingMode() keeps
-  // reading the global "off" value.
-  manager.applyOverrides(source.getProjectSettings());
+  const projectTrusted = source.isProjectTrusted();
+  const manager = SettingsManager.inMemory(
+    { ...source.getGlobalSettings(), cacheWarming: "off" },
+    { projectTrusted },
+  );
+  // inMemory() seeds the global scope only. Replaying trusted project settings
+  // on top reproduces the file-backed merged view while cache warming stays off.
+  if (projectTrusted) manager.applyOverrides(source.getProjectSettings());
   return manager;
 }
 
@@ -296,6 +315,7 @@ export function buildHeadlessSessionOptions(
   modelRuntime: ModelRuntime,
   resourceLoader: DefaultResourceLoader,
   model: Model<Api> | undefined,
+  settings: SettingsManager,
 ): CreateAgentSessionOptions {
   return {
     cwd: opts.cwd,
@@ -307,7 +327,7 @@ export function buildHeadlessSessionOptions(
     tools: opts.tools,
     resourceLoader,
     sessionManager: SessionManager.inMemory(opts.cwd),
-    settingsManager: createHeadlessSettingsManager(SettingsManager.create(opts.cwd, agentDir)),
+    settingsManager: createHeadlessSettingsManager(settings),
   };
 }
 
@@ -321,12 +341,13 @@ export async function createInteractiveAgentSession(
 ): Promise<InteractiveAgentSession> {
   const resolvedModel = resolveModelRef(opts.model, opts.modelRegistry);
   const agentDir = getAgentDir();
+  const settings = SettingsManager.create(opts.cwd, agentDir, { projectTrusted: opts.projectTrusted });
   const modelRuntime = await buildRuntimeWithExtensionProviders(opts.modelRegistry, agentDir);
-  const loader = createIsolatedResourceLoader(opts.cwd, agentDir, opts.systemPrompt);
+  const loader = createIsolatedResourceLoader(opts.cwd, agentDir, opts.systemPrompt, settings);
   await loader.reload();
 
   const created = await createAgentSession(
-    buildHeadlessSessionOptions(opts, agentDir, modelRuntime, loader, resolvedModel),
+    buildHeadlessSessionOptions(opts, agentDir, modelRuntime, loader, resolvedModel, settings),
   );
   const session = created.session;
   session.setSessionName(opts.agentName);

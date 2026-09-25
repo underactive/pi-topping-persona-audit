@@ -96,7 +96,9 @@ function makeDeps(opts: HarnessOptions) {
     readOnlyTools: ["read", "grep", "find", "ls"],
     implementModel: {},
     verifyModel: {},
+    projectTrusted: false,
     runSession: async (options: HeadlessOptions): Promise<HeadlessResult> => {
+      assert.equal(options.projectTrusted, false);
       if (options.agentName === "fix now implement") {
         fixRuns++;
         fixTasks.push(options.task);
@@ -412,7 +414,9 @@ test("a failed chat turn surfaces the error in chat history and keeps the gate i
     readOnlyTools: ["read"],
     implementModel: {},
     verifyModel: {},
+    projectTrusted: false,
     runSession: async (opts) => {
+      assert.equal(opts.projectTrusted, false);
       if (opts.agentName === "fix now implement") {
         fixRuns++;
         if (fixRuns === 1) {

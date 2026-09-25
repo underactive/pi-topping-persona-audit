@@ -249,6 +249,8 @@ export interface HeadlessOptions {
   cwd: string;
   /** Shared registry used to resolve models in-process, including bridge/extension-registered providers. */
   modelRegistry: ModelRegistry;
+  /** The host's project-trust decision; untrusted sessions skip the project's pi settings, packages, and resources. */
+  projectTrusted: boolean;
   signal?: AbortSignal;
   /** If set, abort the session after this many ms without a streamed event and treat the run as failed. */
   idleTimeoutMs?: number;

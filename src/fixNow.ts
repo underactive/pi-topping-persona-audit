@@ -41,6 +41,8 @@ export interface FixNowDeps {
   readOnlyTools: string[];
   implementModel: PhaseModel;
   verifyModel: PhaseModel;
+  /** Forwarded to every Fix Now agent session. */
+  projectTrusted: boolean;
   signal?: AbortSignal;
   /** Injectable for tests. */
   runSession?: (options: HeadlessOptions) => Promise<HeadlessResult>;
@@ -342,6 +344,7 @@ export async function runFixNow(
                 task,
                 cwd: ctx.cwd,
                 modelRegistry: ctx.modelRegistry,
+                projectTrusted: deps.projectTrusted,
                 signal: abort.signal,
                 idleTimeoutMs: AGENT_IDLE_TIMEOUT_MS,
                 onProgress: (snapshot) => {
@@ -362,6 +365,7 @@ export async function runFixNow(
             thinking: deps.implementModel.thinking,
             cwd: ctx.cwd,
             modelRegistry: ctx.modelRegistry,
+            projectTrusted: deps.projectTrusted,
             signal: abort.signal,
             idleTimeoutMs: AGENT_IDLE_TIMEOUT_MS,
             onProgress: (snapshot) => {
@@ -412,6 +416,7 @@ export async function runFixNow(
             task: buildFixVerifyTask(ctx.cwd, finding, currentDiff),
             cwd: ctx.cwd,
             modelRegistry: ctx.modelRegistry,
+            projectTrusted: deps.projectTrusted,
             signal: abort.signal,
             idleTimeoutMs: AGENT_IDLE_TIMEOUT_MS,
             onProgress: (snapshot) => {
@@ -530,6 +535,7 @@ export async function runFixNow(
             task: buildCommitSummaryTask(finding),
             cwd: ctx.cwd,
             modelRegistry: ctx.modelRegistry,
+            projectTrusted: deps.projectTrusted,
             signal: abort.signal,
             idleTimeoutMs: AGENT_IDLE_TIMEOUT_MS,
             onProgress: (snapshot) => {

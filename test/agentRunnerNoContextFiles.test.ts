@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { DefaultResourceLoader } from "@earendil-works/pi-coding-agent";
+import { DefaultResourceLoader, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { createIsolatedResourceLoader } from "../src/agentRunner.ts";
 
 // Regression: the audited repo's AGENTS.md/CLAUDE.md must not be pulled into
@@ -29,7 +29,12 @@ for (const contextFile of ["AGENTS.md", "CLAUDE.md"]) {
         `expected the fixture ${contextFile} to be loaded for the control to be meaningful`,
       );
 
-      const isolated = createIsolatedResourceLoader(cwd, agentDir, "");
+      const isolated = createIsolatedResourceLoader(
+        cwd,
+        agentDir,
+        "",
+        SettingsManager.create(cwd, agentDir, { projectTrusted: true }),
+      );
       await isolated.reload();
       assert.equal(
         isolated.getAgentsFiles().agentsFiles.length,

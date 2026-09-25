@@ -315,6 +315,7 @@ function harness(result: HeadlessResult) {
   const deps: DispatcherDeps = {
     cwd: path.join(tmpdir(), "pa-dispatcher-does-not-exist"),
     modelRegistry: {} as ModelRegistry,
+    projectTrusted: false,
     model: "anthropic/claude-haiku-4-5",
     thinking: "low",
     signal: controller.signal,
@@ -349,6 +350,7 @@ test("recommendReviewers runs a read-only dispatcher session and returns the val
   assert.equal(call.idleTimeoutMs, AGENT_IDLE_TIMEOUT_MS);
   assert.equal(call.cwd, h.deps.cwd);
   assert.equal(call.modelRegistry, h.deps.modelRegistry);
+  assert.equal(call.projectTrusted, false);
   assert.equal(call.systemPrompt, buildDispatcherSystemPrompt());
   assert.ok(call.task.includes("Reviewer catalogue"));
   assert.match(call.task, /^Audit mode: diff$/m);

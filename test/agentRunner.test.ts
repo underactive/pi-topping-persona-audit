@@ -317,7 +317,12 @@ test("createIsolatedResourceLoader discovers no extensions, even where the unres
       "expected the fixture extension to be discoverable for the control to be meaningful",
     );
 
-    const isolated = createIsolatedResourceLoader(cwd, agentDir, "");
+    const isolated = createIsolatedResourceLoader(
+      cwd,
+      agentDir,
+      "",
+      SettingsManager.create(cwd, agentDir, { projectTrusted: true }),
+    );
     await isolated.reload();
     assert.equal(isolated.getExtensions().extensions.length, 0);
   } finally {
@@ -330,6 +335,7 @@ test("headless sessions inherit user settings but never warm the cache", () => {
   const source = {
     getGlobalSettings: () => ({ cacheWarming: "streaming", defaultThinkingLevel: "high" }),
     getProjectSettings: () => ({ defaultTools: ["read"] }),
+    isProjectTrusted: () => true,
   } as unknown as SettingsManager;
 
   const manager = createHeadlessSettingsManager(source);
@@ -344,7 +350,8 @@ test("buildHeadlessSessionOptions isolates the session and forwards max thinking
   try {
     const registry = await testRegistry();
     const runtime = await buildRuntimeWithExtensionProviders(registry, agentDir);
-    const loader = createIsolatedResourceLoader(cwd, agentDir, "");
+    const settings = SettingsManager.create(cwd, agentDir, { projectTrusted: false });
+    const loader = createIsolatedResourceLoader(cwd, agentDir, "", settings);
     const model = registry.find("zzz-rt-test-provider", "zzz-rt-test-alpha-4-5");
     assert.ok(model);
 
@@ -352,6 +359,7 @@ test("buildHeadlessSessionOptions isolates the session and forwards max thinking
       {
         cwd,
         modelRegistry: registry,
+        projectTrusted: false,
         systemPrompt: "",
         tools: ["read"],
         agentName: "probe",
@@ -361,10 +369,12 @@ test("buildHeadlessSessionOptions isolates the session and forwards max thinking
       runtime,
       loader,
       model,
+      settings,
     );
 
     assert.equal(options.thinkingLevel, "max", "the runner must let createAgentSession clamp the level");
     assert.equal(options.settingsManager?.getCacheWarmingMode(), "off");
+    assert.equal(options.settingsManager?.isProjectTrusted(), false);
     assert.equal(options.resourceLoader, loader);
     assert.equal(options.model, model, "the runner must forward the exact model object");
   } finally {
@@ -383,6 +393,7 @@ test("createInteractiveAgentSession returns a session that can be aborted and di
     const session = await createInteractiveAgentSession({
       cwd,
       modelRegistry: registry,
+      projectTrusted: false,
       model: "zzz-rt-test-provider/zzz-rt-test-alpha-4-5",
       systemPrompt: "sys",
       tools: [],

@@ -7,6 +7,7 @@ import * as path from "node:path";
 import type { Dirent } from "node:fs";
 import { lstat, readdir, readFile, realpath } from "node:fs/promises";
 import { promisify } from "node:util";
+import { hostProjectTrust } from "./agentRunner.ts";
 import { runAudit } from "./orchestrator.ts";
 import { collectArtifacts, deleteArtifacts, formatBytes, isOlderThan } from "./artifacts.ts";
 import { filterExistingFindings, parseHandoffPayload, type HandoffPayload } from "./handoff.ts";
@@ -793,6 +794,7 @@ export default function (pi: ExtensionAPI): void {
                     {
                       cwd: ctx.cwd,
                       modelRegistry: ctx.modelRegistry,
+                      projectTrusted: hostProjectTrust(ctx),
                       signal: dispatchController.signal,
                       ...(dispatchChoice
                         ? { model: modelRefLabel(dispatchChoice.ref), thinking: dispatchChoice.thinking }

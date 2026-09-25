@@ -44,7 +44,7 @@ import {
   getPersonality,
   registerEnforcement,
 } from "./skillContent.ts";
-import { runAgentSession } from "./agentRunner.ts";
+import { hostProjectTrust, runAgentSession } from "./agentRunner.ts";
 import { describeAdditionalContext, formatAdditionalContextPrompt, type AdditionalContext } from "./additionalContext.ts";
 import {
   type AgentConfig,
@@ -1564,6 +1564,7 @@ export function actionableFingerprint(round: VerificationRound): string {
 // ── Audit driver ───────────────────────────────────────────────────────────
 
 export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput): Promise<AuditSummary> {
+  const projectTrusted = hostProjectTrust(ctx);
   const clock = input.clock ?? new RunClock();
   clock.start();
   const { slug, iso } = makeSlug();
@@ -1835,6 +1836,7 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
           images: input.additionalContext?.images,
           cwd: ctx.cwd,
           modelRegistry: ctx.modelRegistry,
+          projectTrusted,
           signal: input.signal,
           idleTimeoutMs: AGENT_IDLE_TIMEOUT_MS,
           onProgress: (snapshot) => progress?.applyProgress(rowKey, snapshot),
@@ -2050,6 +2052,7 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
             images: input.additionalContext?.images,
             cwd: ctx.cwd,
             modelRegistry: ctx.modelRegistry,
+            projectTrusted,
             signal: input.signal,
             idleTimeoutMs: AGENT_IDLE_TIMEOUT_MS,
             onProgress: (snapshot) => progress?.applyProgress(rowKey, snapshot),
@@ -2146,6 +2149,7 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
           task: buildRevoiceTask(revoiceTargets, input.temperament ?? DEFAULT_TEMPERAMENT),
           cwd: ctx.cwd,
           modelRegistry: ctx.modelRegistry,
+          projectTrusted,
           signal: input.signal,
           idleTimeoutMs: AGENT_IDLE_TIMEOUT_MS,
           onProgress: (snapshot) => progress?.applyProgress(REVOICE_ROW, snapshot),
@@ -2199,6 +2203,7 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
         task: buildReconcileTask(input, baseLabel, dedupedFindings),
         cwd: ctx.cwd,
         modelRegistry: ctx.modelRegistry,
+        projectTrusted,
         signal: input.signal,
         idleTimeoutMs: AGENT_IDLE_TIMEOUT_MS,
         onProgress: (snapshot) => progress?.applyProgress(RECONCILE_ROW, snapshot),
@@ -2361,6 +2366,7 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
           readOnlyTools: READ_ONLY_TOOLS,
           implementModel: { model: implementModel.model, thinking: implementModel.thinking },
           verifyModel: { model: verifyModel.model, thinking: verifyModel.thinking },
+          projectTrusted,
           signal: input.signal,
           // Working/settling status and telemetry land as nested detail on the
           // fix-now row — the controller is the single telemetry path, so no
@@ -2471,6 +2477,7 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
         task: buildApplyTask(batch),
         cwd: ctx.cwd,
         modelRegistry: ctx.modelRegistry,
+        projectTrusted,
         signal: input.signal,
         idleTimeoutMs: AGENT_IDLE_TIMEOUT_MS,
         onProgress: (snapshot) => progress?.applyProgress(rowKey, snapshot),
@@ -2589,6 +2596,7 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
               task: buildVerifierTask(ctx.cwd, review.accepted, changeEvidence, selfReports, applyReportText, input.fileManifest),
               cwd: ctx.cwd,
               modelRegistry: ctx.modelRegistry,
+              projectTrusted,
               signal: input.signal,
               idleTimeoutMs: AGENT_IDLE_TIMEOUT_MS,
               onProgress: (snapshot) => progress?.applyProgress(verifierRow, snapshot),
@@ -2684,6 +2692,7 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
             task: buildRegressionTask(ctx.cwd, candidates, outcome.fixVerdicts),
             cwd: ctx.cwd,
             modelRegistry: ctx.modelRegistry,
+            projectTrusted,
             signal: input.signal,
             idleTimeoutMs: AGENT_IDLE_TIMEOUT_MS,
             onProgress: (snapshot) => progress?.applyProgress(regressionAuthorRow, snapshot),
@@ -2801,6 +2810,7 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
           task: repair.task,
           cwd: ctx.cwd,
           modelRegistry: ctx.modelRegistry,
+          projectTrusted,
           signal: input.signal,
           idleTimeoutMs: AGENT_IDLE_TIMEOUT_MS,
           onProgress: (snapshot) => progress?.applyProgress(repairRow, snapshot),
