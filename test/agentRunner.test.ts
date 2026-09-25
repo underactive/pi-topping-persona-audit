@@ -299,6 +299,7 @@ test("createIsolatedResourceLoader discovers no extensions, even where the unres
   // discovery convention) rather than relying on whatever happens to be
   // globally installed on the machine running this test.
   const cwd = await mkdtemp(join(tmpdir(), "persona-audit-ext-probe-"));
+  const agentDir = await mkdtemp(join(tmpdir(), "persona-audit-ext-agent-"));
   try {
     await mkdir(join(cwd, ".pi", "extensions"), { recursive: true });
     await writeFile(
@@ -306,8 +307,6 @@ test("createIsolatedResourceLoader discovers no extensions, even where the unres
       'export default function (pi: { registerCommand: (name: string, def: unknown) => void }): void {\n  pi.registerCommand("fake-cmd", { description: "fake", handler: async () => {} });\n}\n',
       "utf-8",
     );
-    const agentDir = getAgentDir();
-
     // Control: proves the fixture is discoverable at all, so a passing
     // isolated-loader assertion below means noExtensions actually suppressed
     // discovery — not that there was nothing to discover in the first place.
@@ -323,6 +322,7 @@ test("createIsolatedResourceLoader discovers no extensions, even where the unres
     assert.equal(isolated.getExtensions().extensions.length, 0);
   } finally {
     await rm(cwd, { recursive: true, force: true });
+    await rm(agentDir, { recursive: true, force: true });
   }
 });
 
@@ -340,8 +340,8 @@ test("headless sessions inherit user settings but never warm the cache", () => {
 
 test("buildHeadlessSessionOptions isolates the session and forwards max thinking", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "persona-audit-options-"));
+  const agentDir = await mkdtemp(join(tmpdir(), "persona-audit-options-agent-"));
   try {
-    const agentDir = getAgentDir();
     const registry = await testRegistry();
     const runtime = await buildRuntimeWithExtensionProviders(registry, agentDir);
     const loader = createIsolatedResourceLoader(cwd, agentDir, "");
@@ -369,6 +369,7 @@ test("buildHeadlessSessionOptions isolates the session and forwards max thinking
     assert.equal(options.model, model, "the runner must forward the exact model object");
   } finally {
     await rm(cwd, { recursive: true, force: true });
+    await rm(agentDir, { recursive: true, force: true });
   }
 });
 
