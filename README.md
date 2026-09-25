@@ -128,30 +128,10 @@ picker uses, leaving that picker's saved choices untouched.
 ## Requirements
 
 - **Pi** 0.87.0 or later recommended — that is the version the development dependencies (`@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent`, `@earendil-works/pi-tui`) are pinned to and tested against. Focused `ctx.ui.custom()` overlays in 0.84.4 and later emit the `ui_prompt_start`/`ui_prompt_end` lifecycle events this extension's prompts rely on for accurate user-wait reporting. The published peer dependencies stay `*`, so older hosts still install and run, but hosts before 0.84.4 cannot emit those lifecycle events. Agent tasks run in-process via the public `createAgentSession()` SDK; no `pi` CLI on PATH is required. Headless audit sessions honor the user's other global and project settings but force cache warming off without modifying `settings.json`, because these short sessions do not benefit from warming and its spend is not represented in the progress table's COST column.
-
-Audit image attachments are normalized by pi before they enter conversation history. To cap attachment size and input cost for a review model, add this `inputLimits.images.resize` block to that model's entry in `~/.pi/agent/models.json`:
-
-```json
-{
-  "id": "your-review-model",
-  "input": ["text", "image"],
-  "inputLimits": {
-    "images": {
-      "resize": {
-        "maxWidth": 1568,
-        "maxHeight": 1568,
-        "maxBytes": 524288,
-        "jpegQuality": 75
-      }
-    }
-  }
-}
-```
-
-Smaller images trade latency and cost against small-text screenshot readability.
-
-- **Node.js** ≥ 22.x (uses `--experimental-strip-types` or erasable syntax)
+- **Node.js** ≥ 22.19.0 (uses `--experimental-strip-types` or erasable syntax)
 - A configured Pi provider/model (providers registered by extensions are replayed onto a fresh runtime by `buildRuntimeWithExtensionProviders`)
+
+Audit image attachments use the review model's `inputLimits.images.resize` profile from `~/.pi/agent/models.json`; see "Image Input Limits" in pi's docs/models.md to cap their size and cost.
 
 ## Reviewer personas
 
