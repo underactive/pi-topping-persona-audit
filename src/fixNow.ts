@@ -12,6 +12,7 @@ import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import {
   createInteractiveAgentSession,
   runAgentSession,
+  type CreateInteractiveSessionOptions,
   type InteractiveAgentSession,
 } from "./agentRunner.ts";
 import { openFixProgress, type FixChatMessage, type FixProgressController } from "./components/FixProgress.ts";
@@ -44,7 +45,9 @@ export interface FixNowDeps {
   /** Forwarded to every Fix Now agent session. */
   projectTrusted: boolean;
   signal?: AbortSignal;
-  /** Injectable for tests. */
+  /** Injectable for tests — defaults to createInteractiveAgentSession. */
+  createSession?: (options: CreateInteractiveSessionOptions) => Promise<InteractiveAgentSession>;
+  /** Injectable for tests — the one-shot verify and commit-subject sessions. */
   runSession?: (options: HeadlessOptions) => Promise<HeadlessResult>;
   /** Injectable for tests — defaults to a ctx.ui.select prompt. */
   promptDirtyChoice?: (files: string[]) => Promise<DirtyFileChoice>;
@@ -249,6 +252,7 @@ export async function runFixNow(
   state: ReviewSessionState,
 ): Promise<void> {
   const { ctx } = deps;
+  const createSession = deps.createSession ?? createInteractiveAgentSession;
   const runSession = deps.runSession ?? runAgentSession;
   const notify = (message: string, type: "info" | "warning" | "error" = "info"): void =>
     ctx.ui.notify(`persona-audit: ${message}`, type);
@@ -311,6 +315,20 @@ export async function runFixNow(
 
   const openProgress = deps.openProgress ?? openFixProgress;
   const controller = openProgress(ctx, finding, () => abort.abort());
+  const onProgress: CreateInteractiveSessionOptions["onProgress"] = (snapshot) => controller.applyProgress(snapshot);
+  const implementOptions: CreateInteractiveSessionOptions = {
+    agentName: "fix now implement",
+    systemPrompt: deps.adjudicatorSystemPrompt,
+    tools: deps.adjudicatorTools.filter((t) => t !== "bash"),
+    model: deps.implementModel.model,
+    thinking: deps.implementModel.thinking,
+    cwd: ctx.cwd,
+    modelRegistry: ctx.modelRegistry,
+    projectTrusted: deps.projectTrusted,
+    signal: abort.signal,
+    idleTimeoutMs: AGENT_IDLE_TIMEOUT_MS,
+    onProgress,
+  };
 
   let touched: TouchedFiles = { cleanTracked: [], cleanUntracked: [], wasDirty: [] };
   const cleanup = async (): Promise<void> => {
@@ -330,49 +348,7 @@ export async function runFixNow(
       let session: InteractiveAgentSession | undefined;
       const chatHistory: FixChatMessage[] = [];
       try {
-        if (deps.runSession) {
-          let disposed = false;
-          session = {
-            async prompt(task: string): Promise<HeadlessResult> {
-              if (disposed) return { finalText: "", allText: "", aborted: false, stopReason: "error", errorMessage: "session disposed", usage: { turns: 0, contextTokens: 0, outputTokens: 0 } };
-              return deps.runSession!({
-                agentName: "fix now implement",
-                systemPrompt: deps.adjudicatorSystemPrompt,
-                tools: deps.adjudicatorTools.filter((t) => t !== "bash"),
-                model: deps.implementModel.model,
-                thinking: deps.implementModel.thinking,
-                task,
-                cwd: ctx.cwd,
-                modelRegistry: ctx.modelRegistry,
-                projectTrusted: deps.projectTrusted,
-                signal: abort.signal,
-                idleTimeoutMs: AGENT_IDLE_TIMEOUT_MS,
-                onProgress: (snapshot) => {
-                  controller.applyProgress(snapshot);
-                },
-              });
-            },
-            dispose() {
-              disposed = true;
-            },
-          };
-        } else {
-          session = await createInteractiveAgentSession({
-            agentName: "fix now implement",
-            systemPrompt: deps.adjudicatorSystemPrompt,
-            tools: deps.adjudicatorTools.filter((t) => t !== "bash"),
-            model: deps.implementModel.model,
-            thinking: deps.implementModel.thinking,
-            cwd: ctx.cwd,
-            modelRegistry: ctx.modelRegistry,
-            projectTrusted: deps.projectTrusted,
-            signal: abort.signal,
-            idleTimeoutMs: AGENT_IDLE_TIMEOUT_MS,
-            onProgress: (snapshot) => {
-              controller.applyProgress(snapshot);
-            },
-          });
-        }
+        session = await createSession(implementOptions);
 
         controller.setPhase("fixing", `applying ${finding.category} fix`, attempt);
         const fixRun = await session.prompt(buildFixTask(finding, verifierFeedback));
@@ -419,9 +395,7 @@ export async function runFixNow(
             projectTrusted: deps.projectTrusted,
             signal: abort.signal,
             idleTimeoutMs: AGENT_IDLE_TIMEOUT_MS,
-            onProgress: (snapshot) => {
-              controller.applyProgress(snapshot);
-            },
+            onProgress,
           });
           if (abort.signal.aborted) return;
           if (isFailedRun(verifyRun)) {
@@ -538,9 +512,7 @@ export async function runFixNow(
             projectTrusted: deps.projectTrusted,
             signal: abort.signal,
             idleTimeoutMs: AGENT_IDLE_TIMEOUT_MS,
-            onProgress: (snapshot) => {
-              controller.applyProgress(snapshot);
-            },
+            onProgress,
           });
           if (!isFailedRun(summaryRun)) {
             summary = parseCommitSummary(summaryRun.finalText || summaryRun.allText);

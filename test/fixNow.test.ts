@@ -6,6 +6,7 @@ import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
+import type { CreateInteractiveSessionOptions, InteractiveAgentSession } from "../src/agentRunner.ts";
 import type { FixGateDecision, FixGateInput, FixProgressController } from "../src/components/FixProgress.ts";
 import { fixCommitMessage, parseCommitSummary, parseFixVerdict, runFixNow, type FixNowDeps } from "../src/fixNow.ts";
 import type { Finding, HeadlessOptions, HeadlessResult, ReviewSessionState } from "../src/types.ts";
@@ -67,18 +68,23 @@ function makeState(count = 1): ReviewSessionState {
 interface HarnessOptions {
   cwd: string;
   decisions: FixGateDecision[];
-  /** Called on each fix-agent run (attempt n), mutates the repo like the agent would. */
-  onFix: (attempt: number, task: string) => Promise<void>;
+  /** Called for each prompt in one persistent fix-attempt session. */
+  onPrompt: (input: { attempt: number; turn: number; task: string }) => Promise<void>;
   verifierText?: string;
   summaryText?: string;
   dirtyChoice?: "proceed" | "no-commit" | "abort";
 }
 
+interface FakeSessionRecord {
+  options: CreateInteractiveSessionOptions;
+  prompts: string[];
+  disposed: boolean;
+}
+
 function makeDeps(opts: HarnessOptions) {
   const notifications: string[] = [];
-  const fixTasks: string[] = [];
+  const sessions: FakeSessionRecord[] = [];
   const verifyTasks: string[] = [];
-  let fixRuns = 0;
   let verifyRuns = 0;
   const { controller, gates } = stubController(opts.decisions);
   const deps: FixNowDeps = {
@@ -97,19 +103,33 @@ function makeDeps(opts: HarnessOptions) {
     implementModel: {},
     verifyModel: {},
     projectTrusted: false,
+    createSession: async (options): Promise<InteractiveAgentSession> => {
+      assert.equal(options.agentName, "fix now implement");
+      assert.ok(!options.tools.includes("bash"), "the fix agent never gets bash");
+      assert.equal(options.projectTrusted, false);
+      assert.ok(sessions.every((session) => session.disposed), "the prior attempt is disposed before retry");
+      const record: FakeSessionRecord = { options, prompts: [], disposed: false };
+      sessions.push(record);
+      const attempt = sessions.length;
+      return {
+        prompt: async (task) => {
+          assert.equal(record.disposed, false, "a disposed session must never be prompted");
+          record.prompts.push(task);
+          await opts.onPrompt({ attempt, turn: record.prompts.length, task });
+          return okResult("applied");
+        },
+        dispose: () => {
+          record.disposed = true;
+        },
+      };
+    },
     runSession: async (options: HeadlessOptions): Promise<HeadlessResult> => {
       assert.equal(options.projectTrusted, false);
-      if (options.agentName === "fix now implement") {
-        fixRuns++;
-        fixTasks.push(options.task);
-        assert.ok(!options.tools.includes("bash"), "the fix agent never gets bash");
-        await opts.onFix(fixRuns, options.task);
-        return okResult("applied");
-      }
       if (options.agentName === "fix now commit subject") {
         assert.deepEqual(options.tools, [], "the summarizer gets no tools");
         return okResult(opts.summaryText ?? "Fix loop bound off-by-one");
       }
+      assert.equal(options.agentName, "fix now verify", "only one-shot sessions use runSession");
       verifyRuns++;
       verifyTasks.push(options.task);
       assert.deepEqual(options.tools, ["read", "grep", "find", "ls"], "the verifier is read-only");
@@ -122,9 +142,10 @@ function makeDeps(opts: HarnessOptions) {
     deps,
     notifications,
     gates,
-    fixTaskAt: (i: number) => fixTasks[i],
+    sessionAt: (i: number) => sessions[i],
+    fixTaskAt: (i: number) => sessions[i]?.prompts[0],
     verifyTaskAt: (i: number) => verifyTasks[i],
-    counts: () => ({ fixRuns, verifyRuns }),
+    counts: () => ({ sessions: sessions.length, prompts: sessions.reduce((sum, session) => sum + session.prompts.length, 0), verifyRuns }),
   };
 }
 
@@ -134,7 +155,7 @@ test("accept commits the fix together with the tests the agent updated", async (
   const h = makeDeps({
     cwd,
     decisions: ["accept"],
-    onFix: async () => {
+    onPrompt: async () => {
       await writeFile(path.join(cwd, "src/a.ts"), "const a = 2;\n");
       await writeFile(path.join(cwd, "test/a.test.ts"), "assert(a === 2);\n");
     },
@@ -144,6 +165,7 @@ test("accept commits the fix together with the tests the agent updated", async (
   await runFixNow(h.deps, finding(), 0, state);
 
   assert.equal(state.statuses[0], "fixed");
+  assert.ok([h.sessionAt(0)].every((session) => session?.disposed), "accepted sessions are disposed");
   assert.deepEqual(state.fixed.get(0)?.files, ["src/a.ts", "test/a.test.ts"]);
   const status = execFileSync("git", ["status", "--porcelain"], { cwd, encoding: "utf-8" });
   assert.equal(status, "", "the tree is clean after the commit");
@@ -157,7 +179,7 @@ test("the fix task names the target file and demands a tests report", async (t) 
   const h = makeDeps({
     cwd,
     decisions: ["discard"],
-    onFix: () => writeFile(path.join(cwd, "src/a.ts"), "const a = 2;\n"),
+    onPrompt: () => writeFile(path.join(cwd, "src/a.ts"), "const a = 2;\n"),
   });
 
   await runFixNow(h.deps, finding(), 0, makeState());
@@ -178,7 +200,7 @@ test("accept commits exactly the touched file and marks the finding fixed", asyn
   const h = makeDeps({
     cwd,
     decisions: ["accept"],
-    onFix: () => writeFile(path.join(cwd, "src/a.ts"), "const a = 2;\n"),
+    onPrompt: () => writeFile(path.join(cwd, "src/a.ts"), "const a = 2;\n"),
   });
   const state = makeState();
 
@@ -202,7 +224,7 @@ test("discard reverts the agent's edits and leaves the state untouched", async (
   const h = makeDeps({
     cwd,
     decisions: ["discard"],
-    onFix: async () => {
+    onPrompt: async () => {
       await writeFile(path.join(cwd, "src/a.ts"), "const a = 2;\n");
       await writeFile(path.join(cwd, "src/new.ts"), "const n = 1;\n");
     },
@@ -212,6 +234,7 @@ test("discard reverts the agent's edits and leaves the state untouched", async (
   await runFixNow(h.deps, finding(), 0, state);
 
   assert.equal(state.statuses[0], "apply");
+  assert.ok([h.sessionAt(0)].every((session) => session?.disposed), "discarded sessions are disposed");
   assert.equal(state.fixed.size, 0);
   assert.equal(await readFile(path.join(cwd, "src/a.ts"), "utf-8"), "const a = 1;\n");
   assert.equal(existsSync(path.join(cwd, "src/new.ts")), false, "the agent-created file is deleted");
@@ -225,7 +248,7 @@ test("retry reverts to a clean slate and threads verifier feedback into the next
     cwd,
     decisions: ["retry", "accept"],
     verifierText: "VERDICT: partial\nEVIDENCE: bound fixed but off-by-one remains in init",
-    onFix: async (attempt) => {
+    onPrompt: async ({ attempt }) => {
       // The retry must start from the pre-fix tree, not attempt 1's edits.
       assert.equal(await readFile(path.join(cwd, "src/a.ts"), "utf-8"), "const a = 1;\n");
       await writeFile(path.join(cwd, "src/a.ts"), `const a = ${attempt + 1};\n`);
@@ -235,7 +258,9 @@ test("retry reverts to a clean slate and threads verifier feedback into the next
 
   await runFixNow(h.deps, finding(), 0, state);
 
-  assert.equal(h.counts().fixRuns, 2);
+  assert.deepEqual(h.counts(), { sessions: 2, prompts: 2, verifyRuns: 2 });
+  assert.equal(h.sessionAt(0)?.prompts.length, 1);
+  assert.equal(h.sessionAt(1)?.prompts.length, 1);
   assert.ok(!h.fixTaskAt(0)?.includes("Verifier Feedback"));
   assert.match(h.fixTaskAt(1) ?? "", /Verifier Feedback[\s\S]*VERDICT: partial/);
   assert.equal(h.gates[1]?.attempt, 2);
@@ -251,7 +276,7 @@ test("a dirty target with no-commit accepts without committing and without a sha
     cwd,
     decisions: ["accept"],
     dirtyChoice: "no-commit",
-    onFix: () => writeFile(path.join(cwd, "src/a.ts"), "const a = 2;\n"),
+    onPrompt: () => writeFile(path.join(cwd, "src/a.ts"), "const a = 2;\n"),
   });
   const state = makeState();
 
@@ -273,13 +298,13 @@ test("aborting at the dirty-file prompt runs no agents and changes nothing", asy
     cwd,
     decisions: [],
     dirtyChoice: "abort",
-    onFix: () => assert.fail("the fix agent must not run"),
+    onPrompt: () => assert.fail("the fix agent must not run"),
   });
   const state = makeState();
 
   await runFixNow(h.deps, finding(), 0, state);
 
-  assert.equal(h.counts().fixRuns, 0);
+  assert.equal(h.counts().sessions, 0);
   assert.equal(state.statuses[0], "apply");
   assert.equal(await readFile(path.join(cwd, "src/a.ts"), "utf-8"), "const a = 99;\n");
 });
@@ -292,7 +317,7 @@ test("discard never reverts a file that was dirty before the fix", async (t) => 
     cwd,
     decisions: ["discard"],
     dirtyChoice: "proceed",
-    onFix: () => writeFile(path.join(cwd, "src/a.ts"), "const a = 2;\n"),
+    onPrompt: () => writeFile(path.join(cwd, "src/a.ts"), "const a = 2;\n"),
   });
   const state = makeState();
 
@@ -309,7 +334,7 @@ test("discard never reverts a file that was dirty before the fix", async (t) => 
 test("a fix that changes nothing on disk gates with a warning and skips the verifier", async (t) => {
   const cwd = await makeRepo();
   t.after(() => rm(cwd, { recursive: true, force: true }));
-  const h = makeDeps({ cwd, decisions: ["discard"], onFix: async () => {} });
+  const h = makeDeps({ cwd, decisions: ["discard"], onPrompt: async () => {} });
 
   await runFixNow(h.deps, finding(), 0, makeState());
 
@@ -324,7 +349,7 @@ test("an unparsable verifier reply degrades to a warning instead of blocking the
     cwd,
     decisions: ["accept"],
     verifierText: "I think it looks fine.",
-    onFix: () => writeFile(path.join(cwd, "src/a.ts"), "const a = 2;\n"),
+    onPrompt: () => writeFile(path.join(cwd, "src/a.ts"), "const a = 2;\n"),
   });
   const state = makeState();
 
@@ -341,8 +366,9 @@ test("a chat Q&A question keeps the diff unchanged, skips verifier re-run, and a
   const h = makeDeps({
     cwd,
     decisions: [{ type: "chat", message: "What callers are affected?" }, "accept"],
-    onFix: async (attempt, task) => {
-      if (attempt === 1) {
+    onPrompt: async ({ turn, task }) => {
+      if (turn === 1) {
+        assert.ok(task.includes("## Accepted Findings"));
         await writeFile(path.join(cwd, "src/a.ts"), "const a = 2;\n");
       } else {
         assert.ok(task.includes("What callers are affected?"));
@@ -356,7 +382,8 @@ test("a chat Q&A question keeps the diff unchanged, skips verifier re-run, and a
   await runFixNow(h.deps, finding(), 0, state);
 
   assert.equal(chatAnswered, true);
-  assert.equal(h.counts().fixRuns, 2);
+  assert.equal(h.counts().sessions, 1);
+  assert.equal(h.sessionAt(0)?.prompts.length, 2);
   assert.equal(h.counts().verifyRuns, 1, "verifier must not re-run when diff is unchanged");
   assert.equal(h.gates.length, 2);
   assert.deepEqual(h.gates[1]?.chatHistory, [
@@ -371,12 +398,11 @@ test("a chat Q&A question keeps the diff unchanged, skips verifier re-run, and a
 test("a requested change in chat modifies files, updates diff, and triggers verifier re-run", async (t) => {
   const cwd = await makeRepo();
   t.after(() => rm(cwd, { recursive: true, force: true }));
-  let verifyCount = 0;
   const h = makeDeps({
     cwd,
     decisions: [{ type: "chat", message: "Use const b = 2 instead" }, "accept"],
-    onFix: async (attempt) => {
-      if (attempt === 1) {
+    onPrompt: async ({ turn }) => {
+      if (turn === 1) {
         await writeFile(path.join(cwd, "src/a.ts"), "const a = 2;\n");
       } else {
         await writeFile(path.join(cwd, "src/a.ts"), "const b = 2;\n");
@@ -387,7 +413,8 @@ test("a requested change in chat modifies files, updates diff, and triggers veri
 
   await runFixNow(h.deps, finding(), 0, state);
 
-  assert.equal(h.counts().fixRuns, 2);
+  assert.equal(h.counts().sessions, 1);
+  assert.equal(h.sessionAt(0)?.prompts.length, 2);
   assert.equal(h.counts().verifyRuns, 2, "verifier must re-run when diff changes");
   assert.equal(h.gates.length, 2);
   assert.ok(h.gates[0]?.diff.includes("+const a = 2;"));
@@ -415,24 +442,34 @@ test("a failed chat turn surfaces the error in chat history and keeps the gate i
     implementModel: {},
     verifyModel: {},
     projectTrusted: false,
+    createSession: async () => {
+      let disposed = false;
+      return {
+        prompt: async () => {
+          assert.equal(disposed, false);
+          fixRuns++;
+          if (fixRuns === 1) {
+            await writeFile(path.join(cwd, "src/a.ts"), "const a = 2;\n");
+            return okResult("initial fix");
+          }
+          return {
+            finalText: "",
+            allText: "",
+            aborted: false,
+            stopReason: "error",
+            errorMessage: "Rate limit exceeded",
+            usage: { turns: 0, contextTokens: 0, outputTokens: 0 },
+          };
+        },
+        dispose: () => {
+          disposed = true;
+        },
+      };
+    },
     runSession: async (opts) => {
       assert.equal(opts.projectTrusted, false);
-      if (opts.agentName === "fix now implement") {
-        fixRuns++;
-        if (fixRuns === 1) {
-          await writeFile(path.join(cwd, "src/a.ts"), "const a = 2;\n");
-          return okResult("initial fix");
-        }
-        return {
-          finalText: "",
-          allText: "",
-          aborted: false,
-          stopReason: "error",
-          errorMessage: "Rate limit exceeded",
-          usage: { turns: 0, contextTokens: 0, outputTokens: 0 },
-        };
-      }
       if (opts.agentName === "fix now commit subject") return okResult("Fix loop bound");
+      assert.equal(opts.agentName, "fix now verify");
       return okResult("VERDICT: fixed\nEVIDENCE: ok");
     },
     openProgress: () => controller,
@@ -456,8 +493,8 @@ test("retrying after chat turns resets the conversation history for attempt 2", 
       "retry",
       "accept",
     ],
-    onFix: async (attempt) => {
-      await writeFile(path.join(cwd, "src/a.ts"), `const a = ${attempt + 1};\n`);
+    onPrompt: async ({ attempt, turn }) => {
+      await writeFile(path.join(cwd, "src/a.ts"), `const a = ${attempt + turn};\n`);
     },
   });
   const state = makeState();
@@ -465,6 +502,11 @@ test("retrying after chat turns resets the conversation history for attempt 2", 
   await runFixNow(h.deps, finding(), 0, state);
 
   assert.equal(h.gates.length, 3);
+  assert.equal(h.counts().sessions, 2);
+  assert.equal(h.sessionAt(0)?.prompts.length, 2);
+  assert.equal(h.sessionAt(1)?.prompts.length, 1);
+  assert.equal(h.sessionAt(0)?.disposed, true);
+  assert.equal(h.sessionAt(1)?.disposed, true);
   assert.equal(h.gates[0]?.attempt, 1);
   assert.equal(h.gates[1]?.attempt, 1);
   assert.equal(h.gates[1]?.chatHistory?.length, 2);
