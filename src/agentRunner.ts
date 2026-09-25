@@ -260,6 +260,7 @@ export function buildRuntimeWithExtensionProviders(source: ModelRegistry, agentD
   if (cached) return cached;
   const built = buildRuntime(source, agentDir);
   RUNTIMES.set(source, built);
+  built.catch(() => RUNTIMES.delete(source));
   return built;
 }
 
