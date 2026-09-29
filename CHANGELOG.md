@@ -6,17 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-09-29
+
 ### Added
 
 - **Per-model audit image resizing is documented** — review models can opt into pi's `inputLimits.images.resize` profile for audit image attachments through `~/.pi/agent/models.json`.
 
 ### Changed
 
-- **Development dependencies updated to pi 0.87.0** — `@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent`, and `@earendil-works/pi-tui` are pinned to 0.87.0 for development and testing.
+- **Development dependencies updated to pi 0.99.1** — `@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent`, and `@earendil-works/pi-tui` are pinned to 0.99.1 for development and testing.
+- **Tested against pi 0.99** — the extension typechecks and its 578 tests pass against both 0.99.0 and the pinned 0.99.1, and an audit session created through the extension's own `createInteractiveAgentSession()` completes a model call on 0.99.0. No code change was needed: audit sessions keep their isolated loader and read-only tool lists.
 
 ### Fixed
 
 - **Audit sessions follow pi's project trust** — audit agent sessions load the audited project's pi settings, packages, skills, and prompt files only when the host trusts the project. Before, an untrusted checkout's `.pi/settings.json` could install packages through its own `npmCommand` as soon as an audit session started.
+- **Failed runtime builds are no longer cached** — the provider-replay runtime is cached per model registry so one build serves a whole audit's agent sessions, but a rejected build stayed in that cache. Every later session in the same host reused the failure and failed the same way. A failed build is now evicted, so the next session retries instead of inheriting the error.
 - **Findings Review keeps wide and long detail text** — CJK and other wide characters no longer lose text at the frame edge, and long paths or URLs wrap without inserted `…` markers.
 - **Findings Review detail blocks share one style** — Summary, Rationale, Exploitability, dispute, Derived from, Suggested Change, and recommendation-reason headings now render in one heading color with muted content beneath.
 
