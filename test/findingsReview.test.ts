@@ -598,12 +598,26 @@ test("finding details render exploitability, disputes, and deferral reasons cons
   assert.match(coloredText, /<text>Summary:<\/text>/);
   assert.match(coloredText, /<text>Rationale:<\/text>/);
   assert.match(coloredText, /<text>Exploitability:<\/text>/);
-  assert.match(coloredText, /<text>Disputed by Reviewer B \(overstated\):<\/text>/);
+  assert.match(coloredText, /<warning>⚑<\/warning> <text>Disputed by Reviewer B \(overstated\):<\/text>/);
   assert.match(coloredText, /<text>Suggested Change:<\/text>/);
-  assert.match(coloredText, /<text>⚑ Why defer:<\/text>/);
+  assert.match(coloredText, /<warning>⚑<\/warning> <text>Why defer:<\/text>/);
   assert.match(coloredText, /<muted>The default disables it\.<\/muted>/);
   assert.match(coloredText, /<muted>Wait for the parser rewrite\.<\/muted>/);
-  assert.doesNotMatch(coloredText, /<warning>(?:Exploitability|Disputed by|⚑ Why defer):/);
+  assert.doesNotMatch(coloredText, /<warning>(?:Exploitability:|Disputed by|Why defer:)/);
+});
+
+test("a reject recommendation flags its reason in the error color", () => {
+  const rejected = finding(1, { recommendation: "reject", recommendationReason: "The caller already validates it." });
+  const review = new FindingsReview([rejected], {
+    fg: (color, value) => `<${color}>${value}</${color}>`,
+    bg: (_color, value) => value,
+    bold: (value) => value,
+  }, () => {}, { requestRender: () => {}, terminal: { rows: 60 } }, async () => "handoff.md");
+  review.handleInput(RIGHT);
+  const text = review.render(WIDTH).join("\n");
+
+  assert.match(text, /<error>⚑<\/error> <text>Why reject:<\/text>/);
+  assert.match(text, /<muted>The caller already validates it\.<\/muted>/);
 });
 
 test("wide characters in finding details are never cut at the frame", () => {

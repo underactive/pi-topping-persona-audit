@@ -12,6 +12,8 @@ import { FALLBACK_TERMINAL_ROWS, OVERLAY_HEIGHT_PERCENT, renderFramedBottom, ren
 interface WrappedDetailBlock {
   heading: string;
   content: string[];
+  /** Theme color of a ⚑ drawn before the heading; blocks without one show no flag. */
+  flag?: ThemeColor;
 }
 
 /** The blocks → reveals beneath a finding's Summary, wrapped to one width. */
@@ -414,10 +416,11 @@ export class FindingsReview implements Component {
     const suggestedChange = wrapTextWithAnsi(sanitizeTerminalText(item.finding.suggestedChange), columns);
     let reason: WrappedDetailBlock | undefined;
     if (item.finding.recommendationReason && item.finding.recommendation !== "apply") {
-      const reasonLabel = item.finding.recommendation === "reject" ? "Why reject" : "Why defer";
+      const rejected = item.finding.recommendation === "reject";
       reason = {
-        heading: `⚑ ${reasonLabel}:`,
+        heading: rejected ? "Why reject:" : "Why defer:",
         content: wrapTextWithAnsi(sanitizeTerminalText(item.finding.recommendationReason), columns),
+        flag: rejected ? "error" : "warning",
       };
     }
     const exploitability = item.finding.exploitability
@@ -426,9 +429,10 @@ export class FindingsReview implements Component {
           columns,
         )
       : undefined;
-    const disputes = item.finding.disputes?.map((dispute) => ({
+    const disputes = item.finding.disputes?.map((dispute): WrappedDetailBlock => ({
       heading: `Disputed by ${sanitizeTerminalText(dispute.reviewer)} (${dispute.verdict}):`,
       content: wrapTextWithAnsi(sanitizeTerminalText(dispute.reason), columns),
+      flag: "warning",
     }));
     const derivedFrom = item.finding.derivedFrom?.length
       ? {
@@ -613,7 +617,8 @@ export class FindingsReview implements Component {
       if (selected && this.detailsExpanded) blocks.push(...this.detailBlocks(item, width));
       for (const [blockIndex, block] of blocks.entries()) {
         if (blockIndex > 0) lines.push("");
-        lines.push(`    ${t.fg("text", block.heading)}`);
+        const flag = block.flag ? `${t.fg(block.flag, "⚑")} ` : "";
+        lines.push(`    ${flag}${t.fg("text", block.heading)}`);
         for (const detail of block.content) {
           lines.push(`      ${t.fg("muted", detail)}`);
         }
