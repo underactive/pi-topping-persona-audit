@@ -113,6 +113,7 @@ import type {
   FindingRecommendation,
   FindingStatus,
   FindingsReviewResult,
+  FixedFinding,
   FixVerdict,
   FixVerification,
   HeadlessOptions,
@@ -1641,12 +1642,13 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
   const writePartial = async (
     status: "partial" | "cancelled" | "failed" | "superseded",
     note?: string,
+    fixed?: FixedFinding[],
   ): Promise<string> => {
     const relPath = partialReportRelPath(slug);
     const absPath = await resolveSafeWritePath(ctx.cwd, relPath);
     diagnostics.collection = collection;
     diagnostics.failedRuns = runRecords.filter((run) => run.status === "failed");
-    const content = renderPartialReport(report(), { status, runRecords, diagnostics, note });
+    const content = renderPartialReport(report(), { status, runRecords, diagnostics, note, fixed });
     await withFileMutationQueue(absPath, async () => {
       await mkdir(path.dirname(absPath), { recursive: true });
       await writeFile(absPath, content, "utf-8");
@@ -2330,14 +2332,24 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
       );
 
       if (outcome.kind === "cancelled") {
+        // Fix Now fixes land (and commit) before the review ends, so cancelling does not undo them.
+        const fixed = [...(sessionState?.fixed.values() ?? [])];
         const relPath = await writePartial(
           "cancelled",
-          "User cancelled during findings review. No fixes were applied; findings are listed above.",
+          fixed.length > 0
+            ? `User cancelled during findings review. The ${fixed.length} Fix Now fix${fixed.length === 1 ? "" : "es"} below stay applied; no other fixes were applied.`
+            : "User cancelled during findings review. No fixes were applied.",
+          fixed,
         );
         runSummary.note = "cancelled at triage";
         refreshSummary();
         progress?.settleOpenRows("cancelled", "cancelled");
-        return makeSummary("cancelled", relPath, { findings: annotatedFindings.length }, skippedVerification());
+        return makeSummary(
+          "cancelled",
+          relPath,
+          { findings: annotatedFindings.length, fixed: fixed.length },
+          skippedVerification(),
+        );
       }
 
       if (outcome.kind === "finalized") {
@@ -2381,7 +2393,7 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
       const landed = sessionState.statuses[outcome.index] === "fixed";
       progress?.settleRow(fixNowRowKey, landed ? "done" : "cancelled", landed ? "fixed" : "not applied");
       if (input.signal?.aborted) {
-        const relPath = await writePartial("cancelled", "Run aborted during findings review.");
+        const relPath = await writePartial("cancelled", "Run aborted during findings review.", [...sessionState.fixed.values()]);
         progress?.settleOpenRows("cancelled", "aborted");
         return makeSummary(
           "cancelled",

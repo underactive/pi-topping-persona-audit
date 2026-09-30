@@ -13,6 +13,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **Findings Review flags disputes** — each `Disputed by …` heading in an expanded finding now starts with a `⚑` in the theme's `warning` color, so a cross-examination objection stands out among the detail blocks. The `⚑` before the adjudicator's `Why defer:` reason is now `warning` and before `Why reject:` is `error`. Heading text keeps the shared heading color.
 - **Rationale heading names the category** — an expanded finding's Rationale heading now reads `Rationale (bug):` instead of giving the category a line of its own. In blast-radius sort, the blast bucket and its leading reasons remain the first line of the block.
 
+### Fixed
+
+- **Cancelling after Fix Now no longer claims no fixes were made** — Fix Now fixes land (and commit) before the review ends, and cancelling keeps them. The cancel confirmation now reads `N Fix Now fixes kept, no others applied` and wraps instead of being clipped at narrow widths. The Audit Summary counts them as fixed interactively. The partial report's status line and note say they were kept, and it lists them with their commits under `Fixed interactively`.
+
 ## [0.2.2] - 2026-09-29
 
 ### Added

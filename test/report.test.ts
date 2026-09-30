@@ -806,6 +806,24 @@ test("an in-progress partial report marks its total time as still running", () =
   assert.ok(!cancelled.includes("(in progress)"), "a settled run's total is final");
 });
 
+test("a partial report cancelled after Fix Now lists the fixes it kept", () => {
+  const cancelled = renderPartialReport(ctx, {
+    status: "cancelled",
+    runRecords: [],
+    diagnostics: { failedRuns: [] },
+    fixed: [
+      { finding: finding({ file: "src/b.ts", line: 4, category: "bug" }), commitSha: "abc1234", files: ["src/b.ts"] },
+      { finding: finding({ file: "src/c.ts" }), files: ["src/c.ts"] },
+    ],
+  });
+
+  assert.ok(cancelled.includes("status: cancelled — audit stopped during findings review; 2 Fix Now fixes kept, no other fixes applied"));
+  assert.ok(!cancelled.includes("stopped before fixes were applied"));
+  assert.ok(cancelled.includes("### Fixed interactively (2)"));
+  assert.ok(cancelled.includes("Commit: abc1234"));
+  assert.ok(cancelled.includes("Commit: none (auto-commit declined)"));
+});
+
 // ── Fix Now sections ───────────────────────────────────────────────────────
 
 test("full report renders interactively fixed findings with their commit", () => {

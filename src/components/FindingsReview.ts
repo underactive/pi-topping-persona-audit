@@ -649,9 +649,30 @@ export class FindingsReview implements Component {
       "",
     ];
 
+    let applyCount = 0;
+    let rejectCount = 0;
+    let deferCount = 0;
+    let fixedCount = 0;
+    for (const i of this.items) {
+      if (i.status === "apply") applyCount++;
+      else if (i.status === "reject") rejectCount++;
+      else if (i.status === "fixed") fixedCount++;
+      else deferCount++;
+    }
+
+    // Fix Now fixes already landed, and cancelling does not revert them. The
+    // confirmation wraps, so it is measured before the body is sized.
+    const cancelOutcome = fixedCount > 0
+      ? `${fixedCount} Fix Now fix${fixedCount === 1 ? "" : "es"} kept, no others applied`
+      : "no fixes applied";
+    const cancelConfirm = this.awaitingCancelConfirm
+      ? wrapTextWithAnsi(`Press Esc again to cancel the audit — ${cancelOutcome} · any other key resumes`, Math.max(2, inner - 2))
+        .map((line) => "  " + t.fg("warning", line))
+      : [];
+
     // Scroll hint, blank, counts, optional handoff note, optional cancel
     // confirmation, bottom border.
-    const footerHeight = 4 + (this.handoffNote ? 1 : 0) + (this.awaitingCancelConfirm ? 1 : 0);
+    const footerHeight = 4 + (this.handoffNote ? 1 : 0) + cancelConfirm.length;
     const bodyHeight = Math.max(1, viewport - header.length - footerHeight);
 
     let body = this.buildBody(inner);
@@ -679,16 +700,6 @@ export class FindingsReview implements Component {
     }
     const hints = [above > 0 ? `↑ ${above} above` : "", below > 0 ? `↓ ${below} below` : ""].filter(Boolean);
 
-    let applyCount = 0;
-    let rejectCount = 0;
-    let deferCount = 0;
-    let fixedCount = 0;
-    for (const i of this.items) {
-      if (i.status === "apply") applyCount++;
-      else if (i.status === "reject") rejectCount++;
-      else if (i.status === "fixed") fixedCount++;
-      else deferCount++;
-    }
     const counts = `  ${t.fg("success", `${applyCount} apply`)} · `
       + `${t.fg("warning", `${rejectCount} reject`)} · `
       + `${t.fg("dim", `${deferCount} defer`)}`
@@ -702,12 +713,7 @@ export class FindingsReview implements Component {
       counts + gap + t.fg("dim", position) + "  ",
     ];
     if (this.handoffNote) footer.push(`  ${t.fg("accent", sanitizeTerminalText(this.handoffNote))}`);
-    if (this.awaitingCancelConfirm) {
-      footer.push(
-        "  " + t.fg("warning", "Press Esc again to cancel the audit — no fixes applied · any other key resumes"),
-      );
-    }
-    footer.push(renderFramedBottom(t, inner));
+    footer.push(...cancelConfirm, renderFramedBottom(t, inner));
 
     const lines = [
       header[0]!,

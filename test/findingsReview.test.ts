@@ -261,6 +261,26 @@ test("one Esc arms the cancel rather than discarding the review", () => {
   assert.ok(ui.rendered().length <= clipBudget(24), "the confirmation line stays inside the height budget");
 });
 
+test("the cancel confirmation counts Fix Now fixes that cancelling keeps", () => {
+  const findings = list(3);
+  const ui = harness(findings, 40, {
+    statuses: ["fixed", "fixed", "apply"],
+    selectedIndex: 2,
+    fixed: new Map([
+      [0, { finding: findings[0]!, commitSha: "abc1234", files: ["src/file01.ts"] }],
+      [1, { finding: findings[1]!, commitSha: "def5678", files: ["src/file02.ts"] }],
+    ]),
+  });
+
+  ui.press(ESCAPE);
+
+  // The confirmation wraps inside the frame, so rejoin its lines before matching.
+  const text = ui.visible().map((line) => strip(line).replace(/^║\s*|\s*║$/g, "")).join(" ");
+  assert.match(text, /Press Esc again to cancel the audit — 2 Fix Now fixes kept, no others applied · any other key resumes/);
+  assert.doesNotMatch(text, /no fixes applied/);
+  assert.ok(ui.rendered().length <= clipBudget(40), "the wrapped confirmation stays inside the height budget");
+});
+
 test("a second Esc confirms the cancel", () => {
   const ui = harness(list(3), 24);
 

@@ -808,13 +808,18 @@ export function renderPartialReport(
     runRecords: ReviewerRunRecord[];
     diagnostics: CollectionDiagnostics;
     note?: string;
+    /** Fix Now fixes that landed before the run stopped — they stay on disk, so the report must name them. */
+    fixed?: FixedFinding[];
   },
 ): string {
+  const fixed = opts.fixed ?? [];
   const statusLine =
     opts.status === "partial"
       ? "status: partial — audit in progress; findings incomplete, no fixes applied yet"
       : opts.status === "cancelled"
-        ? "status: cancelled — audit stopped before fixes were applied; findings are incomplete"
+        ? fixed.length > 0
+          ? `status: cancelled — audit stopped during findings review; ${fixed.length} Fix Now fix${fixed.length === 1 ? "" : "es"} kept, no other fixes applied`
+          : "status: cancelled — audit stopped before fixes were applied; findings are incomplete"
         : opts.status === "failed"
           ? "status: failed — audit aborted on error; no fixes applied by the failed phase"
           : `status: superseded — final report written to ${reportRelPath(ctx.slug)}`;
@@ -832,6 +837,7 @@ export function renderPartialReport(
     `**${statusLine}**`,
     "",
     ...(opts.note ? [opts.note, ""] : []),
+    ...(fixed.length > 0 ? [fixedInteractivelySection(fixed), ""] : []),
     overviewSection(ctx, { inProgress: opts.status === "partial" }),
     "",
     "### Reviewer Passes",
