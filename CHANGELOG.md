@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
-- **Findings Review opens collapsed** — each finding now shows only its status row and Summary. `→` expands the highlighted finding's Rationale, Exploitability, disputes, Derived from, Suggested Change, and recommendation reason; `←` collapses them, and moving the highlight with `↑`/`↓` or `PageUp`/`PageDown` collapses the finding it leaves, so at most one finding is open at a time. The header hint lists the two keys.
+- **Findings Review opens collapsed** — each finding now shows only its status row and Summary. `→` expands the highlighted finding's Rationale, Exploitability, disputes, Derived from, Suggested Change, and recommendation reason; `←` collapses them, and moving the highlight with `↑`/`↓` or `PageUp`/`PageDown` collapses the finding it leaves, so at most one finding is open at a time. The header hint lists the two keys. A finding expanded when `F` starts Fix Now is still expanded when the review reopens.
 - **Findings Review locations stand out** — each finding row's `file:line` now renders in bold `text` instead of `dim`, so the location reads at a glance beside the reviewer name.
 - **Findings Review flags disputes** — each `Disputed by …` heading in an expanded finding now starts with a `⚑` in the theme's `warning` color, so a cross-examination objection stands out among the detail blocks. The `⚑` before the adjudicator's `Why defer:` reason is now `warning` and before `Why reject:` is `error`. Heading text keeps the shared heading color.
 - **Rationale heading names the category** — an expanded finding's Rationale heading now reads `Rationale (bug):` instead of giving the category a line of its own. In blast-radius sort, the blast bucket and its leading reasons remain the first line of the block.
@@ -34,6 +34,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **Failed runtime builds are no longer cached** — the provider-replay runtime is cached per model registry so one build serves a whole audit's agent sessions, but a rejected build stayed in that cache. Every later session in the same host reused the failure and failed the same way. A failed build is now evicted, so the next session retries instead of inheriting the error.
 - **Findings Review keeps wide and long detail text** — CJK and other wide characters no longer lose text at the frame edge, and long paths or URLs wrap without inserted `…` markers.
 - **Findings Review detail blocks share one style** — Summary, Rationale, Exploitability, dispute, Derived from, Suggested Change, and recommendation-reason headings now render in one heading color with muted content beneath.
+- **README states the real Node.js minimum** — the Requirements list said Node.js ≥ 22.x, but `package.json` requires ≥ 22.19.0 through `engines`. The README now says ≥ 22.19.0.
 
 ## [0.2.1] - 2026-09-20
 
