@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Changed
 
 - **Findings Review opens collapsed** — each finding now shows only its status row and Summary. `→` expands the highlighted finding's Rationale, Exploitability, disputes, Derived from, Suggested Change, and recommendation reason; `←` collapses them, and moving the highlight with `↑`/`↓` or `PageUp`/`PageDown` collapses the finding it leaves, so at most one finding is open at a time. The header hint lists the two keys. The blast-radius bucket shown in blast-radius sort sits at the top of the Rationale block, so it is visible only in the expanded finding.
+- **Findings Review locations stand out** — each finding row's `file:line` now renders in bold `text` instead of `dim`, so the location reads at a glance beside the reviewer name.
 
 ## [0.2.2] - 2026-09-29
 

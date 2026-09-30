@@ -210,6 +210,19 @@ test("severe findings keep their uppercase emphasis without breaking alignment",
   assert.equal(strip(low).indexOf("Reviewer"), strip(critical).indexOf("Reviewer"));
 });
 
+test("every row renders its location in bold text, selected or not", () => {
+  const review = new FindingsReview([finding(1), finding(2)], {
+    fg: (color, value) => `<${color}>${value}</${color}>`,
+    bg: (_color, value) => value,
+    bold: (value) => `<b>${value}</b>`,
+  }, () => {}, { requestRender: () => {}, terminal: { rows: 40 } }, async () => "handoff.md");
+  // The tags count toward each row's width, so render wide enough that no row is clipped.
+  const text = review.render(200).join("\n");
+
+  assert.match(text, /Reviewer 01 <b><text>src\/file01\.ts:1<\/text><\/b>/, "the selected row");
+  assert.match(text, /Reviewer 02 <b><text>src\/file02\.ts:2<\/text><\/b>/, "an unselected row");
+});
+
 test("A, R, and D set the selected finding directly", () => {
   const ui = harness([finding(1)], 40);
   const statusRow = (): string => strip(ui.selected() ?? "");

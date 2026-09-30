@@ -569,7 +569,7 @@ export class FindingsReview implements Component {
     const reviewerName = sanitizeTerminalText(item.finding.reviewer);
     const reviewer = sha ? `${reviewerName} ${t.fg("dim", `@${sha}`)}` : reviewerName;
     const location = sanitizeTerminalText(item.finding.line > 0 ? `${item.finding.file}:${item.finding.line}` : item.finding.file);
-    const row = `  ${marker} ${status} ${severity} ${reviewer} ${t.fg("dim", location)}`;
+    const row = `  ${marker} ${status} ${severity} ${reviewer} ${t.bold(t.fg("text", location))}`;
     if (!selected) return row;
     // Pad the bar to the full overlay width so the highlight reads as one row.
     const clipped = truncateToWidth(row, width, "…");
