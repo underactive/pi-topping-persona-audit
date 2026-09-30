@@ -450,7 +450,6 @@ export class FindingsReview implements Component {
     return cache;
   }
 
-  /** The blocks → reveals beneath the Summary: rationale, evidence, and the proposed edit. */
   private detailBlocks(item: ReviewItem, width: number): WrappedDetailBlock[] {
     const wrapped = this.wrapDetails(item, width);
     const blast = this.sortMode === "blast" ? item.finding.blastRadius : undefined;
