@@ -15,6 +15,12 @@ const theme: ReviewTheme = {
   bold: (text) => text,
 };
 
+const tagged: ReviewTheme = {
+  fg: (color, text) => `<${color}>${text}</${color}>`,
+  bg: (_color, text) => text,
+  bold: (text) => `<b>${text}</b>`,
+};
+
 const DOWN = "\x1b[B";
 const UP = "\x1b[A";
 const RIGHT = "\x1b[C";
@@ -51,10 +57,10 @@ function finding(n: number, overrides: Partial<Finding> = {}): Finding {
  * clip to the overlay height. Assertions run against the clipped lines, since
  * anything past the budget is dropped before the user ever sees it.
  */
-function harness(findings: Finding[], rows: number, restore?: ReviewSessionState) {
+function harness(findings: Finding[], rows: number, restore?: ReviewSessionState, activeTheme: ReviewTheme = theme) {
   const host: ReviewHost = { requestRender: () => {}, terminal: { rows } };
   const settled: FindingsReviewOutcome[] = [];
-  const component = new FindingsReview(findings, theme, (outcome) => settled.push(outcome), host, async () => "handoff.md", undefined, restore);
+  const component = new FindingsReview(findings, activeTheme, (outcome) => settled.push(outcome), host, async () => "handoff.md", undefined, restore);
   const visible = (): string[] => component.render(WIDTH).slice(0, clipBudget(rows));
   return {
     component,
@@ -211,11 +217,7 @@ test("severe findings keep their uppercase emphasis without breaking alignment",
 });
 
 test("every row renders its location in bold text, selected or not", () => {
-  const review = new FindingsReview([finding(1), finding(2)], {
-    fg: (color, value) => `<${color}>${value}</${color}>`,
-    bg: (_color, value) => value,
-    bold: (value) => `<b>${value}</b>`,
-  }, () => {}, { requestRender: () => {}, terminal: { rows: 40 } }, async () => "handoff.md");
+  const review = harness([finding(1), finding(2)], 40, undefined, tagged).component;
   // The tags count toward each row's width, so render wide enough that no row is clipped.
   const text = review.render(200).join("\n");
 
@@ -593,13 +595,9 @@ test("finding details render exploitability, disputes, and deferral reasons cons
   assert.match(text, /\n[^\S\n]*║[^\n]*\n[^\n]*Disputed by Reviewer B \(overstated\):[^\n]*\n[^\n]*The default disables it\./);
   assert.match(text, /\n[^\S\n]*║[^\n]*\n[^\n]*⚑ Why defer:[^\n]*\n[^\n]*Wait for the parser rewrite\./);
 
-  const colored = new FindingsReview([details], {
-    fg: (color, value) => `<${color}>${value}</${color}>`,
-    bg: (_color, value) => value,
-    bold: (value) => value,
-  }, () => {}, { requestRender: () => {}, terminal: { rows: 60 } }, async () => "handoff.md");
-  colored.handleInput(RIGHT);
-  const coloredText = colored.render(WIDTH).join("\n");
+  const colored = harness([details], 60, undefined, tagged);
+  colored.press(RIGHT);
+  const coloredText = colored.rendered().join("\n");
   assert.match(coloredText, /<text>Summary:<\/text>/);
   assert.match(coloredText, /<text>Rationale \(bug\):<\/text>/);
   assert.match(coloredText, /<text>Exploitability:<\/text>/);
@@ -613,13 +611,9 @@ test("finding details render exploitability, disputes, and deferral reasons cons
 
 test("a reject recommendation flags its reason in the error color", () => {
   const rejected = finding(1, { recommendation: "reject", recommendationReason: "The caller already validates it." });
-  const review = new FindingsReview([rejected], {
-    fg: (color, value) => `<${color}>${value}</${color}>`,
-    bg: (_color, value) => value,
-    bold: (value) => value,
-  }, () => {}, { requestRender: () => {}, terminal: { rows: 60 } }, async () => "handoff.md");
-  review.handleInput(RIGHT);
-  const text = review.render(WIDTH).join("\n");
+  const ui = harness([rejected], 60, undefined, tagged);
+  ui.press(RIGHT);
+  const text = ui.rendered().join("\n");
 
   assert.match(text, /<error>⚑<\/error> <text>Why reject:<\/text>/);
   assert.match(text, /<muted>The caller already validates it\.<\/muted>/);
