@@ -438,6 +438,7 @@ test("F resolves a fixNow outcome carrying the original index and current state"
 
   ui.press(SPACE); // first finding → reject
   ui.press(DOWN);
+  ui.press(RIGHT);
   ui.press("f");
 
   const [outcome] = ui.settled();
@@ -445,6 +446,10 @@ test("F resolves a fixNow outcome carrying the original index and current state"
   assert.equal(outcome.index, 1, "the second finding's original index");
   assert.deepEqual(outcome.state.statuses, ["reject", "apply", "apply"]);
   assert.equal(outcome.state.selectedIndex, 1);
+  assert.equal(outcome.state.detailsExpanded, true);
+
+  const restored = harness(list(3), 40, outcome.state);
+  assert.ok(restored.visible().map(strip).some((line) => line.includes("Rationale (")), "the expanded finding reopens expanded");
 });
 
 test("restore state round-trips statuses, cursor, and fixed lock", () => {

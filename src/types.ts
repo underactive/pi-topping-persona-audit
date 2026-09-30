@@ -167,6 +167,7 @@ export interface ReviewSessionState {
   statuses: FindingStatus[];
   selectedIndex: number;
   sortMode?: ReviewSortMode;
+  detailsExpanded?: boolean;
   /** Completed interactive fixes, keyed by original finding index. */
   fixed: Map<number, FixedFinding>;
   handoffPath?: string;

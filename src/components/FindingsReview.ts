@@ -155,6 +155,7 @@ export class FindingsReview implements Component {
     if (restore) {
       this.selectedIndex = Math.max(0, Math.min(restore.selectedIndex, this.flatGroups.length - 1));
       this.lastHandoffPath = restore.handoffPath;
+      this.detailsExpanded = restore.detailsExpanded ?? false;
     }
   }
 
@@ -164,6 +165,7 @@ export class FindingsReview implements Component {
       statuses: this.items.map((item) => item.status),
       selectedIndex: this.selectedIndex,
       sortMode: this.sortMode,
+      detailsExpanded: this.detailsExpanded,
       fixed: new Map(this.fixedByIndex),
       handoffPath: this.lastHandoffPath,
     };
