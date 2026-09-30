@@ -453,11 +453,12 @@ export class FindingsReview implements Component {
     const wrapped = this.wrapDetails(item, width);
     const category = sanitizeTerminalText(item.finding.category);
     const blast = this.sortMode === "blast" ? item.finding.blastRadius : undefined;
+    // The bucket stays a content line: headings are not wrapped, so a long reason list would be clipped at the frame.
     const blastInfo = blast
-      ? ` · blast ${blast.level[0]!.toUpperCase()}${blast.level.slice(1)}${blast.reasons.length > 0 ? `: ${blast.reasons.slice(0, 2).map(sanitizeTerminalText).join(", ")}` : ""}`
-      : "";
+      ? [`blast ${blast.level[0]!.toUpperCase()}${blast.level.slice(1)}${blast.reasons.length > 0 ? `: ${blast.reasons.slice(0, 2).map(sanitizeTerminalText).join(", ")}` : ""}`]
+      : [];
     return [
-      { heading: "Rationale:", content: [category + blastInfo, ...wrapped.rationale] },
+      { heading: `Rationale (${category}):`, content: [...blastInfo, ...wrapped.rationale] },
       ...(wrapped.exploitability ? [{ heading: "Exploitability:", content: wrapped.exploitability }] : []),
       ...(wrapped.disputes ?? []),
       ...(wrapped.derivedFrom ? [wrapped.derivedFrom] : []),

@@ -300,11 +300,11 @@ test("an expanded finding renders labeled summary, rationale, and suggested-chan
   ui.press(RIGHT);
   const rendered = ui.text();
 
-  assert.ok(rendered.indexOf("Summary:") < rendered.indexOf("Rationale:"));
-  assert.ok(rendered.indexOf("Rationale:") < rendered.indexOf("Suggested Change:"));
+  assert.ok(rendered.indexOf("Summary:") < rendered.indexOf("Rationale (bug):"));
+  assert.ok(rendered.indexOf("Rationale (bug):") < rendered.indexOf("Suggested Change:"));
   assert.match(rendered, /Reviewer 01 src\/file01\.ts:1/);
   assert.match(rendered, /parser keeps all output/i);
-  assert.match(rendered, /Rationale:[^\n]*\n[^\n]*bug[^\n]*\n[^\n]*Open Question regex/);
+  assert.match(rendered, /Rationale \(bug\):[^\n]*\n[^\n]*Open Question regex/);
   assert.doesNotMatch(rendered, /bug:1 —/);
   assert.match(rendered, /Stop at the next heading/);
   assert.doesNotMatch(rendered, /→ Stop at the next heading/, "the suggested change is a labeled block, not an arrow-prefixed line");
@@ -314,7 +314,7 @@ test("findings without a summary defensively display the rationale as their summ
   const rendered = harness([finding(1, { summary: undefined })], 60).text();
 
   assert.match(rendered, /Summary:[^\n]*\n[^\n]*Rationale 01 explaining/);
-  assert.doesNotMatch(rendered, /Rationale:/, "the fallback shows in the Summary block, not as an expanded Rationale");
+  assert.doesNotMatch(rendered, /Rationale \(/, "the fallback shows in the Summary block, not as an expanded Rationale");
 });
 
 // ── Expand / collapse ─────────────────────────────────────────────────────────
@@ -324,7 +324,7 @@ test("findings open collapsed to their row and Summary", () => {
 
   assert.match(text, /Reviewer 01 src\/file01\.ts:1[^\n]*\n[^\n]*Summary:[^\n]*\n[^\n]*Summary 01 stating the problem/);
   assert.match(text, /Reviewer 02 src\/file02\.ts:2[^\n]*\n[^\n]*Summary:[^\n]*\n[^\n]*Summary 02 stating the problem/);
-  assert.doesNotMatch(text, /Rationale:|Suggested Change:/);
+  assert.doesNotMatch(text, /Rationale \(|Suggested Change:/);
   assert.doesNotMatch(text, /Rationale 0\d explaining|Change 0\d describing/);
 });
 
@@ -334,7 +334,7 @@ test("→ expands only the highlighted finding and ← collapses it again", () =
   ui.press(RIGHT);
   let text = ui.text();
   assert.match(text, /Summary 01 stating the problem/, "the Summary stays above the details");
-  assert.match(text, /Rationale:[^\n]*\n[^\n]*bug[^\n]*\n[^\n]*Rationale 01 explaining/);
+  assert.match(text, /Rationale \(bug\):[^\n]*\n[^\n]*Rationale 01 explaining/);
   assert.match(text, /Suggested Change:[^\n]*\n[^\n]*Change 01 describing/);
   assert.doesNotMatch(text, /Rationale 02 explaining|Change 02 describing/, "the unselected finding stays collapsed");
 
@@ -343,7 +343,7 @@ test("→ expands only the highlighted finding and ← collapses it again", () =
 
   ui.press(LEFT);
   text = ui.text();
-  assert.doesNotMatch(text, /Rationale:|Suggested Change:/);
+  assert.doesNotMatch(text, /Rationale \(|Suggested Change:/);
   assert.match(text, /Summary 01 stating the problem/, "the Summary remains after collapsing");
 
   ui.press(LEFT);
@@ -356,28 +356,28 @@ test("moving the highlight collapses the finding that was expanded", () => {
   ui.press(RIGHT);
   ui.press(DOWN);
   assert.match(strip(ui.selected() ?? ""), /Reviewer 02/);
-  assert.doesNotMatch(ui.text(), /Rationale:/, "↓ lands on a collapsed finding");
+  assert.doesNotMatch(ui.text(), /Rationale \(/, "↓ lands on a collapsed finding");
 
   ui.press(RIGHT);
   ui.press(UP);
   assert.match(strip(ui.selected() ?? ""), /Reviewer 01/);
-  assert.doesNotMatch(ui.text(), /Rationale:/, "↑ collapses the finding it leaves as well");
+  assert.doesNotMatch(ui.text(), /Rationale \(/, "↑ collapses the finding it leaves as well");
 });
 
 test("PageDown and PageUp collapse the expanded finding as the highlight moves", () => {
   const ui = harness(list(30), 24);
 
   ui.press(RIGHT);
-  assert.match(ui.text(), /Rationale:/);
+  assert.match(ui.text(), /Rationale \(/);
 
   ui.press(PAGE_DOWN);
   assert.doesNotMatch(strip(ui.selected() ?? ""), /Reviewer 01/, "the highlight moved off the expanded finding");
-  assert.doesNotMatch(ui.text(), /Rationale:/);
+  assert.doesNotMatch(ui.text(), /Rationale \(/);
 
   ui.press(RIGHT);
   ui.press(PAGE_UP);
   assert.match(strip(ui.selected() ?? ""), /Reviewer 01/);
-  assert.doesNotMatch(ui.text(), /Rationale:/);
+  assert.doesNotMatch(ui.text(), /Rationale \(/);
 });
 
 test("expanding a finding low in the window scrolls its details into view", () => {
@@ -596,7 +596,7 @@ test("finding details render exploitability, disputes, and deferral reasons cons
   colored.handleInput(RIGHT);
   const coloredText = colored.render(WIDTH).join("\n");
   assert.match(coloredText, /<text>Summary:<\/text>/);
-  assert.match(coloredText, /<text>Rationale:<\/text>/);
+  assert.match(coloredText, /<text>Rationale \(bug\):<\/text>/);
   assert.match(coloredText, /<text>Exploitability:<\/text>/);
   assert.match(coloredText, /<warning>⚑<\/warning> <text>Disputed by Reviewer B \(overstated\):<\/text>/);
   assert.match(coloredText, /<text>Suggested Change:<\/text>/);
