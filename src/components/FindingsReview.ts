@@ -366,7 +366,7 @@ export class FindingsReview implements Component {
     }
 
     if (matchesKey(data, Key.right)) {
-      if (!this.detailsExpanded && this.flatGroups.length > 0) {
+      if (!this.detailsExpanded) {
         this.detailsExpanded = true;
         this.invalidate();
       }
