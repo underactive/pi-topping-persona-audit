@@ -17,6 +17,8 @@ const theme: ReviewTheme = {
 
 const DOWN = "\x1b[B";
 const UP = "\x1b[A";
+const RIGHT = "\x1b[C";
+const LEFT = "\x1b[D";
 const PAGE_UP = "\x1b[5~";
 const PAGE_DOWN = "\x1b[6~";
 const SPACE = " ";
@@ -27,7 +29,7 @@ const WIDTH = 80;
 /** The height the overlay is shown with, and therefore the height the host clips at. */
 const clipBudget = (rows: number): number => Math.floor((rows * 75) / 100);
 
-/** A finding whose rationale and suggested change both wrap, as real ones do. */
+/** A finding with a one-line summary and the longer rationale and suggested change real ones carry. */
 function finding(n: number, overrides: Partial<Finding> = {}): Finding {
   const id = String(n).padStart(2, "0");
   return {
@@ -36,6 +38,7 @@ function finding(n: number, overrides: Partial<Finding> = {}): Finding {
     line: n,
     category: "bug",
     severity: "low",
+    summary: `Summary ${id} stating the problem in plain words`,
     rationale: `Rationale ${id} explaining at length why this finding matters to a reader`,
     suggestedChange: `Change ${id} describing the edit in enough words to wrap the column`,
     recommendation: "apply",
@@ -58,6 +61,8 @@ function harness(findings: Finding[], rows: number, restore?: ReviewSessionState
     press: (key: string): void => component.handleInput(key),
     rendered: (): string[] => component.render(WIDTH),
     visible,
+    /** The visible lines with colors stripped, joined for multi-line matching. */
+    text: (): string => visible().map(strip).join("\n"),
     /** Every value handed to `done` — empty until the overlay resolves. */
     settled: (): FindingsReviewOutcome[] => settled,
     /** The finalized result of the first settle, when it was Enter. */
@@ -75,11 +80,11 @@ test("the overlay never renders past the height the host clips at", () => {
   const ui = harness(list(12), rows);
 
   for (let i = 1; i <= 12; i++) {
-    const lines = ui.rendered();
-    assert.ok(
-      lines.length <= clipBudget(rows),
-      `finding ${i}: rendered ${lines.length} lines, budget is ${clipBudget(rows)}`,
-    );
+    const collapsed = ui.rendered().length;
+    assert.ok(collapsed <= clipBudget(rows), `finding ${i} collapsed: rendered ${collapsed} lines, budget is ${clipBudget(rows)}`);
+    ui.press(RIGHT);
+    const expanded = ui.rendered().length;
+    assert.ok(expanded <= clipBudget(rows), `finding ${i} expanded: rendered ${expanded} lines, budget is ${clipBudget(rows)}`);
     ui.press(DOWN);
   }
 });
@@ -91,6 +96,8 @@ test("every finding can be selected without the marker scrolling out of view", (
     const row = ui.selected();
     assert.ok(row, `finding ${i} has a visible highlighted row`);
     assert.match(strip(row), new RegExp(`❯ .*Reviewer ${String(i).padStart(2, "0")}`));
+    ui.press(RIGHT);
+    assert.match(strip(ui.selected() ?? ""), new RegExp(`❯ .*Reviewer ${String(i).padStart(2, "0")}`), `finding ${i} stays visible while expanded`);
     ui.press(DOWN);
   }
 
@@ -104,12 +111,17 @@ test("every finding can be selected without the marker scrolling out of view", (
 });
 
 test("a finding taller than the viewport pins to its top rather than vanishing", () => {
-  const tall = finding(2, { rationale: "word ".repeat(200).trim(), suggestedChange: "edit ".repeat(200).trim() });
+  const tall = finding(2, { summary: "word ".repeat(200).trim(), rationale: "more ".repeat(200).trim() });
   const ui = harness([finding(1), tall, finding(3)], 20);
 
   ui.press(DOWN);
-  const row = ui.selected();
-  assert.ok(row, "the oversized finding still shows its selected row");
+  let row = ui.selected();
+  assert.ok(row, "the oversized summary still shows its selected row");
+  assert.match(strip(row), /❯ .*Reviewer 02/);
+
+  ui.press(RIGHT);
+  row = ui.selected();
+  assert.ok(row, "expanding it keeps the selected row on screen");
   assert.match(strip(row), /❯ .*Reviewer 02/);
 });
 
@@ -119,8 +131,10 @@ test("PageUp and PageDown move through one rendered page and clamp at both ends"
   ui.rendered();
   assert.match(strip(ui.selected() ?? ""), /Reviewer 01/);
 
+  // Collapsed findings are five lines each and the body holds nine, so the
+  // second finding straddles the page boundary and the third is the first to fit.
   ui.press(PAGE_DOWN);
-  assert.match(strip(ui.selected() ?? ""), /Reviewer 02/);
+  assert.match(strip(ui.selected() ?? ""), /Reviewer 03/);
 
   ui.press(PAGE_UP);
   assert.match(strip(ui.selected() ?? ""), /Reviewer 01/);
@@ -262,7 +276,7 @@ test("any other key disarms the cancel and keeps the triage decisions", () => {
   assert.equal(result.accepted.length, 2);
 });
 
-test("findings render labeled summary, rationale, and suggested-change sections", () => {
+test("an expanded finding renders labeled summary, rationale, and suggested-change sections", () => {
   const ui = harness([
     finding(1, {
       summary: "The parser keeps all output after the question.",
@@ -270,7 +284,8 @@ test("findings render labeled summary, rationale, and suggested-change sections"
       suggestedChange: "Stop at the next heading before opening the editor.",
     }),
   ], 60);
-  const rendered = ui.visible().map(strip).join("\n");
+  ui.press(RIGHT);
+  const rendered = ui.text();
 
   assert.ok(rendered.indexOf("Summary:") < rendered.indexOf("Rationale:"));
   assert.ok(rendered.indexOf("Rationale:") < rendered.indexOf("Suggested Change:"));
@@ -279,14 +294,111 @@ test("findings render labeled summary, rationale, and suggested-change sections"
   assert.match(rendered, /Rationale:[^\n]*\n[^\n]*bug[^\n]*\n[^\n]*Open Question regex/);
   assert.doesNotMatch(rendered, /bug:1 —/);
   assert.match(rendered, /Stop at the next heading/);
-  assert.doesNotMatch(rendered, /→/);
+  assert.doesNotMatch(rendered, /→ Stop at the next heading/, "the suggested change is a labeled block, not an arrow-prefixed line");
 });
 
 test("findings without a summary defensively display the rationale as their summary", () => {
-  const rendered = harness([finding(1, { summary: undefined })], 60).visible().map(strip).join("\n");
+  const rendered = harness([finding(1, { summary: undefined })], 60).text();
 
-  assert.match(rendered, /Summary:/);
-  assert.match(rendered, /Rationale 01 explaining/);
+  assert.match(rendered, /Summary:[^\n]*\n[^\n]*Rationale 01 explaining/);
+  assert.doesNotMatch(rendered, /Rationale:/, "the fallback shows in the Summary block, not as an expanded Rationale");
+});
+
+// ── Expand / collapse ─────────────────────────────────────────────────────────
+
+test("findings open collapsed to their row and Summary", () => {
+  const text = harness(list(2), 60).text();
+
+  assert.match(text, /Reviewer 01 src\/file01\.ts:1[^\n]*\n[^\n]*Summary:[^\n]*\n[^\n]*Summary 01 stating the problem/);
+  assert.match(text, /Reviewer 02 src\/file02\.ts:2[^\n]*\n[^\n]*Summary:[^\n]*\n[^\n]*Summary 02 stating the problem/);
+  assert.doesNotMatch(text, /Rationale:|Suggested Change:/);
+  assert.doesNotMatch(text, /Rationale 0\d explaining|Change 0\d describing/);
+});
+
+test("→ expands only the highlighted finding and ← collapses it again", () => {
+  const ui = harness(list(2), 60);
+
+  ui.press(RIGHT);
+  let text = ui.text();
+  assert.match(text, /Summary 01 stating the problem/, "the Summary stays above the details");
+  assert.match(text, /Rationale:[^\n]*\n[^\n]*bug[^\n]*\n[^\n]*Rationale 01 explaining/);
+  assert.match(text, /Suggested Change:[^\n]*\n[^\n]*Change 01 describing/);
+  assert.doesNotMatch(text, /Rationale 02 explaining|Change 02 describing/, "the unselected finding stays collapsed");
+
+  ui.press(RIGHT);
+  assert.equal(ui.text(), text, "a second → changes nothing");
+
+  ui.press(LEFT);
+  text = ui.text();
+  assert.doesNotMatch(text, /Rationale:|Suggested Change:/);
+  assert.match(text, /Summary 01 stating the problem/, "the Summary remains after collapsing");
+
+  ui.press(LEFT);
+  assert.equal(ui.text(), text, "a second ← changes nothing");
+});
+
+test("moving the highlight collapses the finding that was expanded", () => {
+  const ui = harness(list(3), 60);
+
+  ui.press(RIGHT);
+  ui.press(DOWN);
+  assert.match(strip(ui.selected() ?? ""), /Reviewer 02/);
+  assert.doesNotMatch(ui.text(), /Rationale:/, "↓ lands on a collapsed finding");
+
+  ui.press(RIGHT);
+  ui.press(UP);
+  assert.match(strip(ui.selected() ?? ""), /Reviewer 01/);
+  assert.doesNotMatch(ui.text(), /Rationale:/, "↑ collapses the finding it leaves as well");
+});
+
+test("PageDown and PageUp collapse the expanded finding as the highlight moves", () => {
+  const ui = harness(list(30), 24);
+
+  ui.press(RIGHT);
+  assert.match(ui.text(), /Rationale:/);
+
+  ui.press(PAGE_DOWN);
+  assert.doesNotMatch(strip(ui.selected() ?? ""), /Reviewer 01/, "the highlight moved off the expanded finding");
+  assert.doesNotMatch(ui.text(), /Rationale:/);
+
+  ui.press(RIGHT);
+  ui.press(PAGE_UP);
+  assert.match(strip(ui.selected() ?? ""), /Reviewer 01/);
+  assert.doesNotMatch(ui.text(), /Rationale:/);
+});
+
+test("expanding a finding low in the window scrolls its details into view", () => {
+  const ui = harness(list(30), 40);
+  for (let i = 0; i < 8; i++) ui.press(DOWN);
+
+  ui.press(RIGHT);
+
+  assert.match(strip(ui.selected() ?? ""), /Reviewer 09/, "the highlighted row stays on screen");
+  assert.match(ui.text(), /Suggested Change:[^\n]*\n[^\n]*Change 09 describing/, "the last detail block is scrolled into view");
+});
+
+test("S re-sorts without collapsing the highlighted finding", () => {
+  const ui = harness([finding(1, { file: "src/z.ts", severity: "critical" }), finding(2, { file: "src/a.ts" })], 60);
+
+  ui.press(DOWN);
+  assert.match(strip(ui.selected() ?? ""), /Reviewer 01/, "file mode lists z.ts second");
+  ui.press(RIGHT);
+  ui.press("S");
+
+  const text = ui.text();
+  assert.match(strip(ui.selected() ?? ""), /Reviewer 01/, "priority mode keeps the same finding highlighted");
+  assert.ok(text.indexOf("Reviewer 01") < text.indexOf("Reviewer 02"), "critical now sorts first");
+  assert.match(text, /Change 01 describing/, "the finding stays expanded after re-sorting");
+});
+
+test("→ and ← are inert with no findings", () => {
+  const ui = harness([], 40);
+
+  ui.press(RIGHT);
+  ui.press(LEFT);
+
+  assert.ok(ui.text().includes("No findings to review."));
+  assert.deepEqual(ui.settled(), []);
 });
 
 test("a degradation note renders as a header warning, and only when provided", () => {
@@ -399,7 +511,8 @@ test("S cycles file, priority, reviewer, and blast-radius ordering", () => {
   assert.match(strip(ui.selected() ?? ""), /Alpha/, "reviewer mode orders Alpha first");
   ui.press("S");
   assert.match(strip(ui.selected() ?? ""), /Alpha/, "blast mode orders the highest score first");
-  assert.ok(ui.visible().map(strip).some((line) => line.includes("blast Critical: imported by 20 modules")));
+  ui.press(RIGHT);
+  assert.ok(ui.visible().map(strip).some((line) => line.includes("blast Critical: imported by 20 modules")), "the blast bucket shows in the expanded Rationale block");
 });
 
 test("sort mode round-trips through Fix Now state", () => {
@@ -420,6 +533,9 @@ test("sort mode round-trips through Fix Now state", () => {
 
 test("the keybind help lists direct triage keys, sorting, and fix now", () => {
   const help = harness(list(1), 40).visible().map(strip).join(" ").replace(/║/g, " ").replace(/\s+/g, " ");
+  assert.match(help, /↑↓ navigate/);
+  assert.match(help, /→ expand/);
+  assert.match(help, /← collapse/);
   assert.match(help, /A apply/);
   assert.match(help, /R reject/);
   assert.match(help, /D defer/);
@@ -452,7 +568,9 @@ test("finding details render exploitability, disputes, and deferral reasons cons
     exploitabilityReason: "Requires admin configuration.",
     disputes: [{ reviewer: "Reviewer B", verdict: "overstated", reason: "The default disables it." }],
   });
-  const text = harness([details], 60).visible().map(strip).join("\n");
+  const ui = harness([details], 60);
+  ui.press(RIGHT);
+  const text = ui.text();
   assert.match(text, /Exploitability:[^\n]*\n[^\n]*conditional — Requires admin configuration\./);
   assert.match(text, /\n[^\S\n]*║[^\n]*\n[^\n]*Disputed by Reviewer B \(overstated\):[^\n]*\n[^\n]*The default disables it\./);
   assert.match(text, /\n[^\S\n]*║[^\n]*\n[^\n]*⚑ Why defer:[^\n]*\n[^\n]*Wait for the parser rewrite\./);
@@ -462,6 +580,7 @@ test("finding details render exploitability, disputes, and deferral reasons cons
     bg: (_color, value) => value,
     bold: (value) => value,
   }, () => {}, { requestRender: () => {}, terminal: { rows: 60 } }, async () => "handoff.md");
+  colored.handleInput(RIGHT);
   const coloredText = colored.render(WIDTH).join("\n");
   assert.match(coloredText, /<text>Summary:<\/text>/);
   assert.match(coloredText, /<text>Rationale:<\/text>/);
@@ -477,6 +596,7 @@ test("finding details render exploitability, disputes, and deferral reasons cons
 test("wide characters in finding details are never cut at the frame", () => {
   const rationale = "审".repeat(60);
   const ui = harness([finding(1, { rationale, summary: "wide text" })], 50);
+  ui.press(RIGHT);
   const joined = ui.visible().map(strip).join("").replace(/[║\s]/g, "");
 
   assert.ok(joined.includes(rationale), "every wide character survives wrapping and framing");
@@ -488,6 +608,7 @@ test("wide characters in finding details are never cut at the frame", () => {
 test("long unbroken tokens wrap without losing or marking characters", () => {
   const rationale = `https://example.com/${"a".repeat(100)}`;
   const ui = harness([finding(1, { rationale, summary: "long URL" })], 50);
+  ui.press(RIGHT);
   const joined = ui.visible().map(strip).join("").replace(/[║\s]/g, "");
 
   assert.ok(joined.includes(rationale), "the URL survives wrapping without inserted ellipses");
@@ -498,7 +619,8 @@ test("finding details render the complete long dispute reason", () => {
   const ui = harness([finding(1, {
     disputes: [{ reviewer: "Reviewer B", verdict: "overstated", reason }],
   })], 50);
-  const text = ui.visible().map(strip).join("\n").replace(/║/g, " ").replace(/\s+/g, " ");
+  ui.press(RIGHT);
+  const text = ui.text().replace(/║/g, " ").replace(/\s+/g, " ");
 
   assert.ok(text.includes(reason), "the dispute reason is not cut off in the review overlay");
 });

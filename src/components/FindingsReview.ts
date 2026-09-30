@@ -14,8 +14,8 @@ interface WrappedDetailBlock {
   content: string[];
 }
 
+/** The blocks → reveals beneath a finding's Summary, wrapped to one width. */
 interface WrappedFindingDetails {
-  summary: string[];
   rationale: string[];
   suggestedChange: string[];
   reason?: WrappedDetailBlock;
@@ -29,8 +29,10 @@ interface ReviewItem {
   /** Position in the original findings array — flatGroups reorders, and Fix Now must name the source finding. */
   originalIndex: number;
   status: FindingStatus;
-  /** Wrapped detail lines, cached per width — arrow-key navigation invalidates the render cache on every keystroke, so this avoids re-wrapping every finding just to redraw the visible window. */
-  wrapCache?: WrappedFindingDetails & { width: number };
+  /** Wrapped summary lines, cached per width — arrow-key navigation invalidates the render cache on every keystroke, so this avoids re-wrapping every finding just to redraw the visible window. */
+  summaryCache?: { width: number; lines: string[] };
+  /** Wrapped detail lines, cached per width — only the expanded finding needs them, so they are wrapped on first expansion. */
+  detailsCache?: WrappedFindingDetails & { width: number };
 }
 
 /** Body-line range a single finding occupies, used to keep the selection on screen. */
@@ -88,19 +90,27 @@ const STATUS_COLORS: Record<FindingStatus, ThemeColor> = {
 const STATUS_WIDTH = 8;
 const SEVERITY_WIDTH = 8;
 
+/** Columns left for detail text inside the frame, the row indent, and the heading indent. */
+const detailWidth = (width: number): number => Math.max(2, width - 6);
+
 /**
  * Findings review overlay — displays findings grouped by adjudicator recommendation.
  * Within each recommendation group, findings are sub-grouped by file when the file sort is active.
+ * Every finding shows its status row and Summary; → expands the highlighted
+ * finding's remaining details, ← collapses them, and moving the highlight
+ * collapses them as well, so at most one finding is open at a time.
  * The user cycles through apply → reject → defer states per finding.
  * Cancel requires confirmation; confirming returns a `{ kind: "cancelled" }` outcome
  * (the orchestrator writes a partial report and applies no fixes).
  *
- * Findings vary in height with word wrapping, so the body is measured as it is
- * built and scrolled in line space; see {@link resolveScroll}.
+ * Findings vary in height with word wrapping and expansion, so the body is
+ * measured as it is built and scrolled in line space; see {@link resolveScroll}.
  */
 export class FindingsReview implements Component {
   private items: ReviewItem[];
   private selectedIndex = 0;
+  /** Whether the highlighted finding shows its detail blocks beneath the Summary. */
+  private detailsExpanded = false;
   private sortMode: ReviewSortMode;
   /** Offset into the body's rendered lines — not an index into the findings. */
   private scrollOffset = 0;
@@ -234,6 +244,13 @@ export class FindingsReview implements Component {
     }
   }
 
+  /** Move the highlight. Leaving a finding collapses its details, so the next one opens compact. */
+  private select(index: number): void {
+    if (index === this.selectedIndex) return;
+    this.selectedIndex = index;
+    this.detailsExpanded = false;
+  }
+
   handleInput(data: string): void {
     // Two-step abort. Triage decisions live only in this component, and the
     // adjudicator's annotations are never persisted, so a single stray Esc
@@ -329,7 +346,7 @@ export class FindingsReview implements Component {
 
     if (matchesKey(data, Key.up)) {
       if (this.selectedIndex > 0) {
-        this.selectedIndex--;
+        this.select(this.selectedIndex - 1);
         this.invalidate();
       }
       return;
@@ -338,7 +355,23 @@ export class FindingsReview implements Component {
     if (matchesKey(data, Key.down)) {
       const total = this.flatGroups.length;
       if (this.selectedIndex < total - 1) {
-        this.selectedIndex++;
+        this.select(this.selectedIndex + 1);
+        this.invalidate();
+      }
+      return;
+    }
+
+    if (matchesKey(data, Key.right)) {
+      if (!this.detailsExpanded && this.flatGroups.length > 0) {
+        this.detailsExpanded = true;
+        this.invalidate();
+      }
+      return;
+    }
+
+    if (matchesKey(data, Key.left)) {
+      if (this.detailsExpanded) {
+        this.detailsExpanded = false;
         this.invalidate();
       }
       return;
@@ -367,42 +400,66 @@ export class FindingsReview implements Component {
     return Math.max(1, Math.floor((usable * OVERLAY_HEIGHT_PERCENT) / 100));
   }
 
-  private wrapItem(item: ReviewItem, width: number): WrappedFindingDetails {
-    if (item.wrapCache && item.wrapCache.width === width) return item.wrapCache;
-    const detailWidth = Math.max(2, width - 6);
-    const summary = wrapTextWithAnsi(sanitizeTerminalText(item.finding.summary || item.finding.rationale), detailWidth);
-    const rationale = wrapTextWithAnsi(sanitizeTerminalText(item.finding.rationale), detailWidth);
-    const suggestedChange = wrapTextWithAnsi(sanitizeTerminalText(item.finding.suggestedChange), detailWidth);
+  private wrapSummary(item: ReviewItem, width: number): string[] {
+    if (item.summaryCache && item.summaryCache.width === width) return item.summaryCache.lines;
+    const lines = wrapTextWithAnsi(sanitizeTerminalText(item.finding.summary || item.finding.rationale), detailWidth(width));
+    item.summaryCache = { width, lines };
+    return lines;
+  }
+
+  private wrapDetails(item: ReviewItem, width: number): WrappedFindingDetails {
+    if (item.detailsCache && item.detailsCache.width === width) return item.detailsCache;
+    const columns = detailWidth(width);
+    const rationale = wrapTextWithAnsi(sanitizeTerminalText(item.finding.rationale), columns);
+    const suggestedChange = wrapTextWithAnsi(sanitizeTerminalText(item.finding.suggestedChange), columns);
     let reason: WrappedDetailBlock | undefined;
     if (item.finding.recommendationReason && item.finding.recommendation !== "apply") {
       const reasonLabel = item.finding.recommendation === "reject" ? "Why reject" : "Why defer";
       reason = {
         heading: `⚑ ${reasonLabel}:`,
-        content: wrapTextWithAnsi(sanitizeTerminalText(item.finding.recommendationReason), detailWidth),
+        content: wrapTextWithAnsi(sanitizeTerminalText(item.finding.recommendationReason), columns),
       };
     }
     const exploitability = item.finding.exploitability
       ? wrapTextWithAnsi(
           `${item.finding.exploitability}${item.finding.exploitabilityReason ? ` — ${sanitizeTerminalText(item.finding.exploitabilityReason)}` : ""}`,
-          detailWidth,
+          columns,
         )
       : undefined;
     const disputes = item.finding.disputes?.map((dispute) => ({
       heading: `Disputed by ${sanitizeTerminalText(dispute.reviewer)} (${dispute.verdict}):`,
-      content: wrapTextWithAnsi(sanitizeTerminalText(dispute.reason), detailWidth),
+      content: wrapTextWithAnsi(sanitizeTerminalText(dispute.reason), columns),
     }));
     const derivedFrom = item.finding.derivedFrom?.length
       ? {
           heading: "Derived from:",
           content: wrapTextWithAnsi(
             item.finding.derivedFrom.map((source) => sanitizeTerminalText(source)).join(", "),
-            detailWidth,
+            columns,
           ),
         }
       : undefined;
-    const cache = { width, summary, rationale, suggestedChange, reason, exploitability, disputes, derivedFrom };
-    item.wrapCache = cache;
+    const cache = { width, rationale, suggestedChange, reason, exploitability, disputes, derivedFrom };
+    item.detailsCache = cache;
     return cache;
+  }
+
+  /** The blocks → reveals beneath the Summary: rationale, evidence, and the proposed edit. */
+  private detailBlocks(item: ReviewItem, width: number): WrappedDetailBlock[] {
+    const wrapped = this.wrapDetails(item, width);
+    const category = sanitizeTerminalText(item.finding.category);
+    const blast = this.sortMode === "blast" ? item.finding.blastRadius : undefined;
+    const blastInfo = blast
+      ? ` · blast ${blast.level[0]!.toUpperCase()}${blast.level.slice(1)}${blast.reasons.length > 0 ? `: ${blast.reasons.slice(0, 2).map(sanitizeTerminalText).join(", ")}` : ""}`
+      : "";
+    return [
+      { heading: "Rationale:", content: [category + blastInfo, ...wrapped.rationale] },
+      ...(wrapped.exploitability ? [{ heading: "Exploitability:", content: wrapped.exploitability }] : []),
+      ...(wrapped.disputes ?? []),
+      ...(wrapped.derivedFrom ? [wrapped.derivedFrom] : []),
+      { heading: "Suggested Change:", content: wrapped.suggestedChange },
+      ...(wrapped.reason ? [wrapped.reason] : []),
+    ];
   }
 
   /**
@@ -419,9 +476,9 @@ export class FindingsReview implements Component {
       // The last page can still contain an unselected finding even when the
       // offset is already clamped at the end (and likewise at the top).
       if (bodyLength > bodyHeight && direction > 0 && this.selectedIndex < spans.length - 1) {
-        this.selectedIndex = spans.length - 1;
+        this.select(spans.length - 1);
       } else if (bodyLength > bodyHeight && direction < 0 && this.selectedIndex > 0) {
-        this.selectedIndex = 0;
+        this.select(0);
       }
       return;
     }
@@ -448,13 +505,14 @@ export class FindingsReview implements Component {
     targetIndex ??= direction > 0 ? spans.length - 1 : Math.max(0, this.selectedIndex - 1);
 
     this.scrollOffset = targetOffset;
-    this.selectedIndex = targetIndex;
+    this.select(targetIndex);
   }
 
   /**
    * Scroll the body so the selected finding is fully visible, in line space.
-   * A finding's height depends on how its rationale and suggested change wrap,
-   * so scrolling by finding count cannot keep the selection inside the window.
+   * A finding's height depends on how its summary wraps and on whether it is
+   * the expanded one, so scrolling by finding count cannot keep the selection
+   * inside the window.
    */
   private resolveScroll(spans: LineSpan[], bodyHeight: number, bodyLength: number): number {
     let scroll = this.scrollOffset;
@@ -547,23 +605,12 @@ export class FindingsReview implements Component {
         lastLabel = safeGroupLabel;
       }
 
-      lines.push(this.renderFindingRow(item, index === this.selectedIndex, width));
+      const selected = index === this.selectedIndex;
+      lines.push(this.renderFindingRow(item, selected, width));
 
-      const wrapped = this.wrapItem(item, width);
-      const category = sanitizeTerminalText(item.finding.category);
-      const blast = this.sortMode === "blast" ? item.finding.blastRadius : undefined;
-      const blastInfo = blast
-        ? ` · blast ${blast.level[0]!.toUpperCase()}${blast.level.slice(1)}${blast.reasons.length > 0 ? `: ${blast.reasons.slice(0, 2).map(sanitizeTerminalText).join(", ")}` : ""}`
-        : "";
-      const blocks: WrappedDetailBlock[] = [
-        { heading: "Summary:", content: wrapped.summary },
-        { heading: "Rationale:", content: [category + blastInfo, ...wrapped.rationale] },
-        ...(wrapped.exploitability ? [{ heading: "Exploitability:", content: wrapped.exploitability }] : []),
-        ...(wrapped.disputes ?? []),
-        ...(wrapped.derivedFrom ? [wrapped.derivedFrom] : []),
-        { heading: "Suggested Change:", content: wrapped.suggestedChange },
-        ...(wrapped.reason ? [wrapped.reason] : []),
-      ];
+      // Every finding shows its Summary; only the highlighted one opens further.
+      const blocks: WrappedDetailBlock[] = [{ heading: "Summary:", content: this.wrapSummary(item, width) }];
+      if (selected && this.detailsExpanded) blocks.push(...this.detailBlocks(item, width));
       for (const [blockIndex, block] of blocks.entries()) {
         if (blockIndex > 0) lines.push("");
         lines.push(`    ${t.fg("text", block.heading)}`);
@@ -586,7 +633,7 @@ export class FindingsReview implements Component {
     const t = this.theme;
     // Side walls cost two columns, so all content is laid out one frame in.
     const inner = Math.max(0, width - 2);
-    const keybinds = `↑↓ navigate · PgUp/PgDn page · S sort: ${SORT_LABELS[this.sortMode]} · A apply · R reject · D defer · Space cycle · F fix now · H handoff · Enter finish · Esc cancel`;
+    const keybinds = `↑↓ navigate · → expand · ← collapse · PgUp/PgDn page · S sort: ${SORT_LABELS[this.sortMode]} · A apply · R reject · D defer · Space cycle · F fix now · H handoff · Enter finish · Esc cancel`;
     const header = [
       renderFramedTop(t, inner, `Findings Review (${this.items.length} total)`),
       ...wrapTextWithAnsi(keybinds, Math.max(2, inner - 1)).map((line) => " " + t.fg("dim", line)),
