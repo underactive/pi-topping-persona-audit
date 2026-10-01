@@ -6,12 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-09-30
+
 ### Changed
 
 - **Findings Review opens collapsed** — each finding now shows only its status row and Summary. `→` expands the highlighted finding's Rationale, Exploitability, disputes, Derived from, Suggested Change, and recommendation reason; `←` collapses them, and moving the highlight with `↑`/`↓` or `PageUp`/`PageDown` collapses the finding it leaves, so at most one finding is open at a time. The header hint lists the two keys. A finding expanded when `F` starts Fix Now is still expanded when the review reopens.
 - **Findings Review locations stand out** — each finding row's `file:line` now renders in bold `text` instead of `dim`, so the location reads at a glance beside the reviewer name.
 - **Findings Review flags disputes** — each `Disputed by …` heading in an expanded finding now starts with a `⚑` in the theme's `warning` color, so a cross-examination objection stands out among the detail blocks. The `⚑` before the adjudicator's `Why defer:` reason is now `warning` and before `Why reject:` is `error`. Heading text keeps the shared heading color.
 - **Rationale heading names the category** — an expanded finding's Rationale heading now reads `Rationale (bug):` instead of giving the category a line of its own. In blast-radius sort, the blast bucket and its leading reasons remain the first line of the block.
+- **Development dependencies updated to pi 0.99.2** — `@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent`, and `@earendil-works/pi-tui` are pinned to 0.99.2 for development and testing.
+- **Tested against pi 0.99.2** — the extension typechecks and its 589 tests pass against 0.99.2, and an audit session created through the extension's own `createInteractiveAgentSession()` completes a model call. No code change was needed: pi's published `dist/index.d.ts` is unchanged from 0.99.1, the release's MCP, codemode, and tool-exposure changes do not reach this extension (it registers no tools and no MCP servers), and audit sessions keep their isolated loader and read-only tool lists.
+- **Upgrading pi brings host-side fixes to long audits** — pi 0.99.2 no longer looks the model catalog up once per assistant message while resolving a session's model, so submitting a prompt in the host session stays fast after an audit has filled it; merges a refreshed pi.dev catalog in linear time instead of quadratic time; backs off exponentially instead of retrying immediately when a provider sends an unparseable `Retry-After` date; and sends Anthropic tool schemas that use `minimum` or `maximum` as non-strict. All four land in pi itself, so the extension only benefits by requiring it.
 
 ### Fixed
 

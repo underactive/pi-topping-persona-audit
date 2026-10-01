@@ -1,6 +1,6 @@
 {
   "name": "@underactive/pi-topping-persona-audit",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Pi extension implementing /persona-audit — multi-persona code reviews with TUI expert selection and findings review",
   "keywords": [
     "pi-package",
@@ -41,9 +41,9 @@
     "@earendil-works/pi-tui": "*"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "0.99.1",
-    "@earendil-works/pi-coding-agent": "0.99.1",
-    "@earendil-works/pi-tui": "0.99.1",
+    "@earendil-works/pi-ai": "0.99.2",
+    "@earendil-works/pi-coding-agent": "0.99.2",
+    "@earendil-works/pi-tui": "0.99.2",
     "@types/node": "^24.0.0",
     "typescript": "^5.9.3"
   },
