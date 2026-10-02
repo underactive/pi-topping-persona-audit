@@ -167,7 +167,8 @@ export interface ReviewSessionState {
   statuses: FindingStatus[];
   selectedIndex: number;
   sortMode?: ReviewSortMode;
-  detailsExpanded?: boolean;
+  /** Original indices of the findings left open, so a Fix Now round-trip reopens each of them. */
+  expanded?: number[];
   /** Completed interactive fixes, keyed by original finding index. */
   fixed: Map<number, FixedFinding>;
   handoffPath?: string;

@@ -86,11 +86,11 @@ test("the overlay never renders past the height the host clips at", () => {
   const ui = harness(list(12), rows);
 
   for (let i = 1; i <= 12; i++) {
-    const collapsed = ui.rendered().length;
-    assert.ok(collapsed <= clipBudget(rows), `finding ${i} collapsed: rendered ${collapsed} lines, budget is ${clipBudget(rows)}`);
+    const before = ui.rendered().length;
+    assert.ok(before <= clipBudget(rows), `finding ${i} before expanding: rendered ${before} lines, budget is ${clipBudget(rows)}`);
     ui.press(RIGHT);
-    const expanded = ui.rendered().length;
-    assert.ok(expanded <= clipBudget(rows), `finding ${i} expanded: rendered ${expanded} lines, budget is ${clipBudget(rows)}`);
+    const after = ui.rendered().length;
+    assert.ok(after <= clipBudget(rows), `finding ${i} expanded: rendered ${after} lines, budget is ${clipBudget(rows)}`);
     ui.press(DOWN);
   }
 });
@@ -107,13 +107,12 @@ test("every finding can be selected without the marker scrolling out of view", (
     ui.press(DOWN);
   }
 
-  // …and back up again, starting from where the descent left off. The last
-  // descent step pressed Down on the final finding, which changes nothing, so
-  // that finding is still open here — either marker keeps it selectable.
+  // …and back up again, starting from where the descent left off. Every finding
+  // the descent opened is still open, so each row comes back with its ⌄.
   for (let i = 12; i >= 1; i--) {
     const row = ui.selected();
     assert.ok(row, `finding ${i} is still reachable going back up`);
-    assert.match(strip(row), new RegExp(`[❯⌄] .*Reviewer ${String(i).padStart(2, "0")}`));
+    assert.match(strip(row), new RegExp(`⌄ .*Reviewer ${String(i).padStart(2, "0")}`), `finding ${i} is still open`);
     ui.press(UP);
   }
 });
@@ -146,7 +145,20 @@ test("the marker turns downward only while the finding is expanded", () => {
 
   ui.press(RIGHT);
   ui.press(DOWN);
-  assert.match(strip(ui.selected() ?? ""), /^║ {2}❯ \[APPLY]/, "moving the highlight collapses the previous finding");
+  assert.match(strip(ui.selected() ?? ""), /^║ {2}❯ \[APPLY]/, "the finding the highlight lands on starts collapsed");
+  const leftBehind = ui.visible().map(strip).find((line) => line.includes("Reviewer 01"));
+  assert.match(leftBehind ?? "", /^║ {2}⌄ \[APPLY]/, "the finding left behind keeps its downward marker");
+});
+
+test("an open finding keeps its downward marker while the highlight is elsewhere", () => {
+  const review = harness(list(2), 40, undefined, tagged).component;
+  review.handleInput(RIGHT);
+  review.handleInput(DOWN);
+  // The tags count toward each row's width, so render wide enough that no row is clipped.
+  const rows = review.render(200).map((line) => strip(line));
+
+  assert.match(rows.find((line) => line.includes("Reviewer 01")) ?? "", /^<border>║<\/border> {2}<dim>⌄<\/dim>/, "the unselected open row points down, dimmed");
+  assert.match(rows.find((line) => line.includes("Reviewer 02")) ?? "", /^<border>║<\/border> {2}<b><accent>❯<\/accent><\/b>/, "the selected collapsed row keeps the bold chevron");
 });
 
 test("PageUp and PageDown move through one rendered page and clamp at both ends", () => {
@@ -390,21 +402,27 @@ test("→ expands only the highlighted finding and ← collapses it again", () =
   assert.equal(ui.text(), text, "a second ← changes nothing");
 });
 
-test("moving the highlight collapses the finding that was expanded", () => {
+test("a finding stays expanded when the highlight moves away from it", () => {
   const ui = harness(list(3), 60);
 
   ui.press(RIGHT);
   ui.press(DOWN);
-  assert.match(strip(ui.selected() ?? ""), /Reviewer 02/);
-  assert.doesNotMatch(ui.text(), /Rationale \(/, "↓ lands on a collapsed finding");
+  assert.match(strip(ui.selected() ?? ""), /❯ .*Reviewer 02/, "↓ lands on a still-collapsed finding");
+  assert.match(ui.text(), /Rationale \(bug\):[^\n]*\n[^\n]*Rationale 01 explaining/, "the finding ↓ left is still open");
 
   ui.press(RIGHT);
+  assert.match(ui.text(), /Rationale 02 explaining/, "the newly highlighted finding opens alongside it");
+
   ui.press(UP);
-  assert.match(strip(ui.selected() ?? ""), /Reviewer 01/);
-  assert.doesNotMatch(ui.text(), /Rationale \(/, "↑ collapses the finding it leaves as well");
+  assert.match(strip(ui.selected() ?? ""), /⌄ .*Reviewer 01/, "↑ returns to a finding that is still open");
+  assert.match(ui.text(), /Rationale 02 explaining/, "the finding ↑ left keeps its details");
+
+  ui.press(LEFT);
+  assert.doesNotMatch(ui.text(), /Rationale 01 explaining/, "← collapses only the highlighted finding");
+  assert.match(ui.text(), /Rationale 02 explaining/, "the other finding stays open");
 });
 
-test("PageDown and PageUp collapse the expanded finding as the highlight moves", () => {
+test("PageDown and PageUp leave an expanded finding open", () => {
   const ui = harness(list(30), 24);
 
   ui.press(RIGHT);
@@ -412,12 +430,13 @@ test("PageDown and PageUp collapse the expanded finding as the highlight moves",
 
   ui.press(PAGE_DOWN);
   assert.doesNotMatch(strip(ui.selected() ?? ""), /Reviewer 01/, "the highlight moved off the expanded finding");
-  assert.doesNotMatch(ui.text(), /Rationale \(/);
 
   ui.press(RIGHT);
   ui.press(PAGE_UP);
-  assert.match(strip(ui.selected() ?? ""), /Reviewer 01/);
-  assert.doesNotMatch(ui.text(), /Rationale \(/);
+  const row = ui.selected();
+  assert.ok(row, "paging back lands on a finding");
+  assert.match(strip(row), /⌄ .*Reviewer 01/, "it is the one the first page left open");
+  assert.match(ui.text(), /Rationale 01 explaining/, "its details are still beneath its row");
 });
 
 test("expanding a finding low in the window scrolls its details into view", () => {
@@ -486,10 +505,30 @@ test("F resolves a fixNow outcome carrying the original index and current state"
   assert.equal(outcome.index, 1, "the second finding's original index");
   assert.deepEqual(outcome.state.statuses, ["reject", "apply", "apply"]);
   assert.equal(outcome.state.selectedIndex, 1);
-  assert.equal(outcome.state.detailsExpanded, true);
+  assert.deepEqual(outcome.state.expanded, [1]);
 
   const restored = harness(list(3), 40, outcome.state);
   assert.ok(restored.visible().map(strip).some((line) => line.includes("Rationale (")), "the expanded finding reopens expanded");
+});
+
+test("every open finding is restored after a Fix Now round-trip", () => {
+  const findings = list(3);
+  const ui = harness(findings, 60);
+
+  ui.press(RIGHT);
+  ui.press(DOWN);
+  ui.press(RIGHT);
+  ui.press("f");
+
+  const [outcome] = ui.settled();
+  assert.ok(outcome && outcome.kind === "fixNow");
+  assert.deepEqual(outcome.state.expanded, [0, 1], "both open findings are named by original index");
+
+  const restored = harness(findings, 60, outcome.state);
+  const text = restored.text();
+  assert.match(strip(restored.selected() ?? ""), /⌄ .*Reviewer 02/, "the highlighted finding reopens open");
+  assert.match(text, /Rationale 01 explaining/, "the finding the highlight left is open again too");
+  assert.match(text, /Rationale 02 explaining/);
 });
 
 test("restore state round-trips statuses, cursor, and fixed lock", () => {

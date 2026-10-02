@@ -6,9 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Findings Review keeps expanded findings open** — expansion now belongs to the finding rather than the highlight, so `↑`/`↓` and `PageUp`/`PageDown` no longer collapse the finding the highlight leaves and several findings can be open at once. `←` collapses only the highlighted finding, every open finding is still open when the review reopens after `F`, and an open finding the highlight is not on keeps a dimmed `⌄` so its state stays visible.
+
 ### Fixed
 
-- **Findings Review marks the expanded finding** — the highlighted finding's `❯` turns into a `⌄` while its details are open, so a row states its own expansion. Collapsing, or moving the highlight to another finding, restores the `❯`. Both glyphs are one column wide, so the row's columns never shift.
+- **Findings Review marks the expanded finding** — the highlighted finding's `❯` turns into a `⌄` while its details are open, so a row states its own expansion. Collapsing restores the `❯`, and a finding left open under another highlight keeps a dimmed `⌄`. Both glyphs are one column wide, so the row's columns never shift.
 
 ## [0.2.3] - 2026-09-30
 

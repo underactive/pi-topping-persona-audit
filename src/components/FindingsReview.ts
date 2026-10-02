@@ -31,9 +31,11 @@ interface ReviewItem {
   /** Position in the original findings array — flatGroups reorders, and Fix Now must name the source finding. */
   originalIndex: number;
   status: FindingStatus;
+  /** Whether this finding's detail blocks are open — expansion belongs to the finding, not the highlight. */
+  expanded: boolean;
   /** Wrapped summary lines, cached per width — arrow-key navigation invalidates the render cache on every keystroke, so this avoids re-wrapping every finding just to redraw the visible window. */
   summaryCache?: { width: number; lines: string[] };
-  /** Wrapped detail lines, cached per width — only the expanded finding needs them, so they are wrapped on first expansion. */
+  /** Wrapped detail lines, cached per width — only expanded findings need them, so they are wrapped on first expansion. */
   detailsCache?: WrappedFindingDetails & { width: number };
 }
 
@@ -92,7 +94,11 @@ const STATUS_COLORS: Record<FindingStatus, ThemeColor> = {
 const STATUS_WIDTH = 8;
 const SEVERITY_WIDTH = 8;
 
-/** Stands in for {@link SELECTOR} while the highlighted finding is expanded. Both are one column wide, so the row's columns never shift. */
+/**
+ * Stands in for {@link SELECTOR} on the row of an expanded finding, whether or
+ * not that finding is highlighted. Bold and accented while it is, dim otherwise.
+ * Both it and SELECTOR are one column wide, so the row's columns never shift.
+ */
 const EXPANDED_SELECTOR = "⌄";
 
 /** Columns left for detail text inside the frame, the row indent, and the heading indent. */
@@ -102,9 +108,11 @@ const detailWidth = (width: number): number => Math.max(2, width - 6);
  * Findings review overlay — displays findings grouped by adjudicator recommendation.
  * Within each recommendation group, findings are sub-grouped by file when the file sort is active.
  * Every finding shows its status row and Summary; → expands the highlighted
- * finding's remaining details, ← collapses them, and moving the highlight
- * collapses them as well, so at most one finding is open at a time.
- * The highlighted row's marker points down while it is open.
+ * finding's remaining details, ← collapses them. Expansion belongs to the
+ * finding rather than the highlight, so ↑/↓ and PageUp/PageDown leave a finding
+ * open and several findings can be open at once.
+ * A row's marker points down while that finding is open, dimmed once the
+ * highlight has moved off it.
  * The user cycles through apply → reject → defer states per finding.
  * Cancel requires confirmation; confirming returns a `{ kind: "cancelled" }` outcome
  * (the orchestrator writes a partial report and applies no fixes).
@@ -115,8 +123,6 @@ const detailWidth = (width: number): number => Math.max(2, width - 6);
 export class FindingsReview implements Component {
   private items: ReviewItem[];
   private selectedIndex = 0;
-  /** Whether the highlighted finding shows its detail blocks beneath the Summary. */
-  private detailsExpanded = false;
   private sortMode: ReviewSortMode;
   /** Offset into the body's rendered lines — not an index into the findings. */
   private scrollOffset = 0;
@@ -144,10 +150,12 @@ export class FindingsReview implements Component {
     restore?: ReviewSessionState,
   ) {
     this.degradationNote = degradationNote;
+    const expanded = new Set(restore?.expanded ?? []);
     this.items = findings.map((f, index) => ({
       finding: f,
       originalIndex: index,
       status: restore?.statuses[index] ?? f.recommendation ?? "apply",
+      expanded: expanded.has(index),
     }));
     this.fixedByIndex = new Map(restore?.fixed ?? []);
     this.sortMode = restore?.sortMode ?? "file";
@@ -159,7 +167,6 @@ export class FindingsReview implements Component {
     if (restore) {
       this.selectedIndex = Math.max(0, Math.min(restore.selectedIndex, this.flatGroups.length - 1));
       this.lastHandoffPath = restore.handoffPath;
-      this.detailsExpanded = restore.detailsExpanded ?? false;
     }
   }
 
@@ -169,7 +176,7 @@ export class FindingsReview implements Component {
       statuses: this.items.map((item) => item.status),
       selectedIndex: this.selectedIndex,
       sortMode: this.sortMode,
-      detailsExpanded: this.detailsExpanded,
+      expanded: this.items.filter((item) => item.expanded).map((item) => item.originalIndex),
       fixed: new Map(this.fixedByIndex),
       handoffPath: this.lastHandoffPath,
     };
@@ -252,11 +259,18 @@ export class FindingsReview implements Component {
     }
   }
 
-  /** Move the highlight. Leaving a finding collapses its details, so the next one opens compact. */
+  /** Move the highlight. Each finding keeps its own expansion, so the one left behind stays open. */
   private select(index: number): void {
-    if (index === this.selectedIndex) return;
     this.selectedIndex = index;
-    this.detailsExpanded = false;
+  }
+
+  /** Open or close the highlighted finding's detail blocks. */
+  private setExpanded(expanded: boolean): void {
+    const current = this.flatGroups[this.selectedIndex];
+    if (current && current.item.expanded !== expanded) {
+      current.item.expanded = expanded;
+      this.invalidate();
+    }
   }
 
   handleInput(data: string): void {
@@ -370,18 +384,12 @@ export class FindingsReview implements Component {
     }
 
     if (matchesKey(data, Key.right)) {
-      if (!this.detailsExpanded) {
-        this.detailsExpanded = true;
-        this.invalidate();
-      }
+      this.setExpanded(true);
       return;
     }
 
     if (matchesKey(data, Key.left)) {
-      if (this.detailsExpanded) {
-        this.detailsExpanded = false;
-        this.invalidate();
-      }
+      this.setExpanded(false);
       return;
     }
 
@@ -567,14 +575,16 @@ export class FindingsReview implements Component {
   }
 
   /** The one selectable line per finding: marker, status, severity, reviewer, and location. */
-  private renderFindingRow(item: ReviewItem, selected: boolean, expanded: boolean, width: number): string {
+  private renderFindingRow(item: ReviewItem, selected: boolean, width: number): string {
     const t = this.theme;
     const status = t.fg(STATUS_COLORS[item.status], STATUS_LABELS[item.status].padEnd(STATUS_WIDTH));
     const severe = item.finding.severity === "critical" || item.finding.severity === "high";
     const severityText = severe ? item.finding.severity.toUpperCase() : item.finding.severity;
     const severity = t.fg(severe ? "error" : "muted", severityText.padEnd(SEVERITY_WIDTH));
-    const glyph = expanded ? EXPANDED_SELECTOR : SELECTOR;
-    const marker = selected ? t.bold(t.fg("accent", glyph)) : " ";
+    // Only the highlighted row's marker is bold, so the highlight still reads first.
+    const marker = selected
+      ? t.bold(t.fg("accent", item.expanded ? EXPANDED_SELECTOR : SELECTOR))
+      : item.expanded ? t.fg("dim", EXPANDED_SELECTOR) : " ";
     const sha = item.status === "fixed" ? this.fixedByIndex.get(item.originalIndex)?.commitSha : undefined;
     const reviewerName = sanitizeTerminalText(item.finding.reviewer);
     const reviewer = sha ? `${reviewerName} ${t.fg("dim", `@${sha}`)}` : reviewerName;
@@ -616,11 +626,11 @@ export class FindingsReview implements Component {
       }
 
       const selected = index === this.selectedIndex;
-      lines.push(this.renderFindingRow(item, selected, selected && this.detailsExpanded, width));
+      lines.push(this.renderFindingRow(item, selected, width));
 
-      // Every finding shows its Summary; only the highlighted one opens further.
+      // Every finding shows its Summary; an open one adds the blocks beneath it.
       const blocks: WrappedDetailBlock[] = [{ heading: "Summary:", content: this.wrapSummary(item, width) }];
-      if (selected && this.detailsExpanded) blocks.push(...this.detailBlocks(item, width));
+      if (item.expanded) blocks.push(...this.detailBlocks(item, width));
       for (const [blockIndex, block] of blocks.entries()) {
         if (blockIndex > 0) lines.push("");
         const flag = block.flag ? `${t.fg(block.flag, "⚑")} ` : "";
