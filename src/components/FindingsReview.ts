@@ -276,11 +276,6 @@ export class FindingsReview implements Component {
     }
   }
 
-  /** Move the highlight. Each finding keeps its own expansion, so the one left behind stays open. */
-  private select(index: number): void {
-    this.selectedIndex = index;
-  }
-
   /** Open or close the highlighted finding's detail blocks. */
   private setExpanded(expanded: boolean): void {
     const current = this.flatGroups[this.selectedIndex];
@@ -385,7 +380,7 @@ export class FindingsReview implements Component {
 
     if (matchesKey(data, Key.up)) {
       if (this.selectedIndex > 0) {
-        this.select(this.selectedIndex - 1);
+        this.selectedIndex = this.selectedIndex - 1;
         this.invalidateRender();
       }
       return;
@@ -394,7 +389,7 @@ export class FindingsReview implements Component {
     if (matchesKey(data, Key.down)) {
       const total = this.flatGroups.length;
       if (this.selectedIndex < total - 1) {
-        this.select(this.selectedIndex + 1);
+        this.selectedIndex = this.selectedIndex + 1;
         this.invalidateRender();
       }
       return;
@@ -518,9 +513,9 @@ export class FindingsReview implements Component {
       // The last page can still contain an unselected finding even when the
       // offset is already clamped at the end (and likewise at the top).
       if (bodyLength > bodyHeight && direction > 0 && this.selectedIndex < spans.length - 1) {
-        this.select(spans.length - 1);
+        this.selectedIndex = spans.length - 1;
       } else if (bodyLength > bodyHeight && direction < 0 && this.selectedIndex > 0) {
-        this.select(0);
+        this.selectedIndex = 0;
       }
       return;
     }
@@ -547,7 +542,7 @@ export class FindingsReview implements Component {
     targetIndex ??= direction > 0 ? spans.length - 1 : Math.max(0, this.selectedIndex - 1);
 
     this.scrollOffset = targetOffset;
-    this.select(targetIndex);
+    this.selectedIndex = targetIndex;
   }
 
   /**
