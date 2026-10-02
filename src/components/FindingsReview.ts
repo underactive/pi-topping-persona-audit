@@ -124,7 +124,7 @@ const detailWidth = (width: number): number => Math.max(2, width - 6);
  * highlight has moved off it.
  * The user cycles through apply → reject → defer states per finding.
  * Cancel requires confirmation; confirming returns a `{ kind: "cancelled" }` outcome
- * (the orchestrator writes a partial report and applies no fixes).
+ * (the orchestrator writes a partial report, keeping completed Fix Now fixes).
  *
  * Findings vary in height with word wrapping and expansion, so the body is
  * measured as it is built and scrolled in line space; see {@link resolveScroll}.

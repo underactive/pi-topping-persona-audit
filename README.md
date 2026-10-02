@@ -538,13 +538,14 @@ overriding the previous on a name collision:
 A stale copy in `~/.pi/agent/agents/` therefore shadows the bundled definitions;
 delete it if edits to `agents/*.md` appear to have no effect.
 
-**Cancellation semantics** — Esc in the ExpertPicker cancels cleanly, and two
-Escs in FindingsReview do (partial report written, no fixes applied). Esc in the ReviewerRetry
-checkpoint, shown when reviewer passes fail, is non-destructive by default: it skips
-the failed passes and continues the audit; only the explicit "Cancel audit" button
-cancels. Mid-run, `ctrl+shift+c` aborts the audit: the command handler owns its
-own AbortController, since `ctx.signal` is unavailable inside command handlers, and it aborts
-in-flight agent sessions.
+**Cancellation semantics** — Esc in the ExpertPicker returns to reviewer-source
+selection. Two Escs in FindingsReview cancel remaining work (partial report written),
+but completed Fix Now fixes remain on disk. Esc in the ReviewerRetry checkpoint,
+shown when reviewer passes fail, is non-destructive by default: it skips the failed
+passes and continues the audit; only the explicit "Cancel audit" button cancels.
+Mid-run, `ctrl+shift+c` aborts the audit: the command handler owns its own
+AbortController, since `ctx.signal` is unavailable inside command handlers, and it
+aborts in-flight agent sessions.
 
 ## Key Features
 
