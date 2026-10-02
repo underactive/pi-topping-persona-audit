@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Findings Review marks the expanded finding** — the highlighted finding's `❯` turns into a `⌄` while its details are open, so a row states its own expansion. Collapsing, or moving the highlight to another finding, restores the `❯`. Both glyphs are one column wide, so the row's columns never shift.
+
 ## [0.2.3] - 2026-09-30
 
 ### Changed

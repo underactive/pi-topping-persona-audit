@@ -92,6 +92,9 @@ const STATUS_COLORS: Record<FindingStatus, ThemeColor> = {
 const STATUS_WIDTH = 8;
 const SEVERITY_WIDTH = 8;
 
+/** Stands in for {@link SELECTOR} while the highlighted finding is expanded. Both are one column wide, so the row's columns never shift. */
+const EXPANDED_SELECTOR = "⌄";
+
 /** Columns left for detail text inside the frame, the row indent, and the heading indent. */
 const detailWidth = (width: number): number => Math.max(2, width - 6);
 
@@ -101,6 +104,7 @@ const detailWidth = (width: number): number => Math.max(2, width - 6);
  * Every finding shows its status row and Summary; → expands the highlighted
  * finding's remaining details, ← collapses them, and moving the highlight
  * collapses them as well, so at most one finding is open at a time.
+ * The highlighted row's marker points down while it is open.
  * The user cycles through apply → reject → defer states per finding.
  * Cancel requires confirmation; confirming returns a `{ kind: "cancelled" }` outcome
  * (the orchestrator writes a partial report and applies no fixes).
@@ -563,13 +567,14 @@ export class FindingsReview implements Component {
   }
 
   /** The one selectable line per finding: marker, status, severity, reviewer, and location. */
-  private renderFindingRow(item: ReviewItem, selected: boolean, width: number): string {
+  private renderFindingRow(item: ReviewItem, selected: boolean, expanded: boolean, width: number): string {
     const t = this.theme;
     const status = t.fg(STATUS_COLORS[item.status], STATUS_LABELS[item.status].padEnd(STATUS_WIDTH));
     const severe = item.finding.severity === "critical" || item.finding.severity === "high";
     const severityText = severe ? item.finding.severity.toUpperCase() : item.finding.severity;
     const severity = t.fg(severe ? "error" : "muted", severityText.padEnd(SEVERITY_WIDTH));
-    const marker = selected ? t.bold(t.fg("accent", SELECTOR)) : " ";
+    const glyph = expanded ? EXPANDED_SELECTOR : SELECTOR;
+    const marker = selected ? t.bold(t.fg("accent", glyph)) : " ";
     const sha = item.status === "fixed" ? this.fixedByIndex.get(item.originalIndex)?.commitSha : undefined;
     const reviewerName = sanitizeTerminalText(item.finding.reviewer);
     const reviewer = sha ? `${reviewerName} ${t.fg("dim", `@${sha}`)}` : reviewerName;
@@ -611,7 +616,7 @@ export class FindingsReview implements Component {
       }
 
       const selected = index === this.selectedIndex;
-      lines.push(this.renderFindingRow(item, selected, width));
+      lines.push(this.renderFindingRow(item, selected, selected && this.detailsExpanded, width));
 
       // Every finding shows its Summary; only the highlighted one opens further.
       const blocks: WrappedDetailBlock[] = [{ heading: "Summary:", content: this.wrapSummary(item, width) }];

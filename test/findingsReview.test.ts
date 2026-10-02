@@ -103,15 +103,17 @@ test("every finding can be selected without the marker scrolling out of view", (
     assert.ok(row, `finding ${i} has a visible highlighted row`);
     assert.match(strip(row), new RegExp(`❯ .*Reviewer ${String(i).padStart(2, "0")}`));
     ui.press(RIGHT);
-    assert.match(strip(ui.selected() ?? ""), new RegExp(`❯ .*Reviewer ${String(i).padStart(2, "0")}`), `finding ${i} stays visible while expanded`);
+    assert.match(strip(ui.selected() ?? ""), new RegExp(`⌄ .*Reviewer ${String(i).padStart(2, "0")}`), `finding ${i} stays visible while expanded`);
     ui.press(DOWN);
   }
 
-  // …and back up again, starting from where the descent left off.
+  // …and back up again, starting from where the descent left off. The last
+  // descent step pressed Down on the final finding, which changes nothing, so
+  // that finding is still open here — either marker keeps it selectable.
   for (let i = 12; i >= 1; i--) {
     const row = ui.selected();
     assert.ok(row, `finding ${i} is still reachable going back up`);
-    assert.match(strip(row), new RegExp(`❯ .*Reviewer ${String(i).padStart(2, "0")}`));
+    assert.match(strip(row), new RegExp(`[❯⌄] .*Reviewer ${String(i).padStart(2, "0")}`));
     ui.press(UP);
   }
 });
@@ -128,7 +130,23 @@ test("a finding taller than the viewport pins to its top rather than vanishing",
   ui.press(RIGHT);
   row = ui.selected();
   assert.ok(row, "expanding it keeps the selected row on screen");
-  assert.match(strip(row), /❯ .*Reviewer 02/);
+  assert.match(strip(row), /⌄ .*Reviewer 02/);
+});
+
+test("the marker turns downward only while the finding is expanded", () => {
+  const ui = harness(list(3), 40);
+
+  assert.match(strip(ui.selected() ?? ""), /^║ {2}❯ \[APPLY]/);
+
+  ui.press(RIGHT);
+  assert.match(strip(ui.selected() ?? ""), /^║ {2}⌄ \[APPLY]/, "expanding points the marker down");
+
+  ui.press(LEFT);
+  assert.match(strip(ui.selected() ?? ""), /^║ {2}❯ \[APPLY]/, "collapsing restores the chevron");
+
+  ui.press(RIGHT);
+  ui.press(DOWN);
+  assert.match(strip(ui.selected() ?? ""), /^║ {2}❯ \[APPLY]/, "moving the highlight collapses the previous finding");
 });
 
 test("PageUp and PageDown move through one rendered page and clamp at both ends", () => {
