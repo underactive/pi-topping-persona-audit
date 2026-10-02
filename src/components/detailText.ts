@@ -71,37 +71,26 @@ function push(segments: DetailSegment[], kind: DetailTextKind, text: string): vo
   segments.push({ kind, text });
 }
 
-/** The text between one pair of backticks: mostly code, with its own identifiers picked out. */
-function pushCodeSpan(inner: string, segments: DetailSegment[]): void {
-  let cursor = 0;
-  for (const match of inner.matchAll(CODEISH_PATTERN)) {
-    push(segments, "code", inner.slice(cursor, match.index));
-    push(segments, match.groups?.call ? "call" : "path", match[0]);
-    cursor = match.index + match[0].length;
-  }
-  push(segments, "code", inner.slice(cursor));
-}
-
-/** Split prose into `call` and `path` segments, leaving the rest as prose. */
-function pushProse(text: string, segments: DetailSegment[]): void {
+/** Scan prose or inline code for `call` and `path` segments. */
+function pushCodeish(text: string, background: "code" | "prose", segments: DetailSegment[]): void {
   let cursor = 0;
   for (const match of text.matchAll(CODEISH_PATTERN)) {
-    push(segments, "prose", text.slice(cursor, match.index));
+    push(segments, background, text.slice(cursor, match.index));
     push(segments, match.groups?.call ? "call" : "path", match[0]);
     cursor = match.index + match[0].length;
   }
-  push(segments, "prose", text.slice(cursor));
+  push(segments, background, text.slice(cursor));
 }
 
 /** Split one run of non-fence text into inline code spans and the prose around them. */
 function pushInline(text: string, segments: DetailSegment[]): void {
   let cursor = 0;
   for (const match of text.matchAll(INLINE_CODE_PATTERN)) {
-    pushProse(text.slice(cursor, match.index), segments);
-    pushCodeSpan(match[0].slice(1, -1), segments);
+    pushCodeish(text.slice(cursor, match.index), "prose", segments);
+    pushCodeish(match[0].slice(1, -1), "code", segments);
     cursor = match.index + match[0].length;
   }
-  pushProse(text.slice(cursor), segments);
+  pushCodeish(text.slice(cursor), "prose", segments);
 }
 
 /**
