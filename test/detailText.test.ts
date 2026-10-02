@@ -52,6 +52,8 @@ test("calls and paths are picked out of prose, and the rest stays prose", () => 
     ["prose", " today."],
   ]);
   assert.deepEqual(segments("this.buildBody()"), [["call", "this.buildBody()"]], "a method call on a receiver");
+  assert.deepEqual(segments("client.api.method()"), [["call", "client.api.method()"]], "a dotted method call");
+  assert.deepEqual(segments("1.client.api.method()"), [["prose", "1.client.api.method()"]], "do not restart inside a dotted receiver");
   assert.deepEqual(segments("@scope/pkg.json"), [["path", "@scope/pkg.json"]], "a scoped package path");
 });
 
@@ -61,6 +63,11 @@ test("prose that only looks like code is left alone", () => {
     ["prose", "Change 01 describing the edit in enough words"],
   ]);
   assert.deepEqual(segments("The 5/8 split stays prose"), [["prose", "The 5/8 split stays prose"]]);
+});
+
+test("a long identifier without parentheses stays prose", () => {
+  const text = "identifier".repeat(1_000);
+  assert.deepEqual(segments(text), [["prose", text]]);
 });
 
 test("a URL is not matched as a path from its tail", () => {

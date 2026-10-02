@@ -58,7 +58,7 @@ const INLINE_CODE_PATTERN = /`[^`\n]+`/g;
  * keeps it off the tail of a URL (`…/example.com/x.html` must not match as
  * `com/x.html`) and off a reference that is already inside a longer path.
  */
-const CODEISH_PATTERN = /(?<call>[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*\(\))|(?<path>(?<![\w./:-])(?:[A-Za-z0-9_@-]+\/)+[A-Za-z0-9_@.-]*\.[A-Za-z][A-Za-z0-9]*(?::\d+)?)/g;
+const CODEISH_PATTERN = /(?<call>(?<![A-Za-z0-9_$.])[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*\(\))|(?<path>(?<![\w./:-])(?:[A-Za-z0-9_@-]+\/)+[A-Za-z0-9_@.-]*\.[A-Za-z][A-Za-z0-9]*(?::\d+)?)/g;
 
 /** Append a segment, merging it into the previous one when the kind is unchanged. */
 function push(segments: DetailSegment[], kind: DetailTextKind, text: string): void {
