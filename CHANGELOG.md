@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- **Findings Review colors its detail text** — an expanded finding's block headings are now bold in the theme's `mdHeading` token instead of flat `text`, and the text under them is painted per segment: `` `code` `` in `mdCode`, `name()` in `syntaxFunction`, `path/file.ts:12` in `syntaxString`, and a fenced block in `mdCodeBlock`, with the prose around them left in `muted`. A segment carries its own color rather than sitting inside a muted line, so text after a highlighted identifier keeps its color. Headings stay non-status tokens — the ⚑ and the status column still carry severity — and the tokens match the ones pi's Markdown component uses, so the overlay and the saved report read alike.
 - **Findings Review keeps expanded findings open** — expansion now belongs to the finding rather than the highlight, so `↑`/`↓` and `PageUp`/`PageDown` no longer collapse the finding the highlight leaves and several findings can be open at once. `←` collapses only the highlighted finding, every open finding is still open when the review reopens after `F`, and an open finding the highlight is not on keeps a dimmed `⌄` so its state stays visible.
 
 ### Fixed

@@ -7,6 +7,7 @@ import { compareFindingsByExploitability } from "../findingOrder.ts";
 import { SEVERITY_ORDER } from "../types.ts";
 import type { Finding, FindingRecommendation, FindingsReviewOutcome, FindingsReviewResult, FindingStatus, FixedFinding, ReviewSessionState, ReviewSortMode } from "../types.ts";
 import { sanitizeTerminalText } from "./AuditProgress.ts";
+import { styleDetailText } from "./detailText.ts";
 import { FALLBACK_TERMINAL_ROWS, OVERLAY_HEIGHT_PERCENT, renderFramedBottom, renderFramedRow, renderFramedTop, SELECTOR, showOverlayPrompt } from "./menuChrome.ts";
 
 interface WrappedDetailBlock {
@@ -93,6 +94,14 @@ const STATUS_COLORS: Record<FindingStatus, ThemeColor> = {
 /** Widest status label and severity name, so the reviewer column holds still as statuses cycle. */
 const STATUS_WIDTH = 8;
 const SEVERITY_WIDTH = 8;
+
+/**
+ * Detail block headings. `mdHeading` is a non-status token, so the headings
+ * never imply a severity or a recommendation — the ⚑ and the status column
+ * carry those. The same token pi's Markdown component uses for its headings,
+ * which keeps a block label and a report heading looking alike.
+ */
+const HEADING_COLOR: ThemeColor = "mdHeading";
 
 /**
  * Stands in for {@link SELECTOR} on the row of an expanded finding, whether or
@@ -416,9 +425,18 @@ export class FindingsReview implements Component {
     return Math.max(1, Math.floor((usable * OVERLAY_HEIGHT_PERCENT) / 100));
   }
 
+  /**
+   * Sanitize, color and wrap one block of finding text. Coloring happens before
+   * wrapping so each segment carries its own color, and so wrapping can break
+   * inside a highlighted identifier without losing the color on the next line.
+   */
+  private wrapDetail(text: string, columns: number): string[] {
+    return wrapTextWithAnsi(styleDetailText(sanitizeTerminalText(text), this.theme), columns);
+  }
+
   private wrapSummary(item: ReviewItem, width: number): string[] {
     if (item.summaryCache && item.summaryCache.width === width) return item.summaryCache.lines;
-    const lines = wrapTextWithAnsi(sanitizeTerminalText(item.finding.summary || item.finding.rationale), detailWidth(width));
+    const lines = this.wrapDetail(item.finding.summary || item.finding.rationale, detailWidth(width));
     item.summaryCache = { width, lines };
     return lines;
   }
@@ -426,35 +444,32 @@ export class FindingsReview implements Component {
   private wrapDetails(item: ReviewItem, width: number): WrappedFindingDetails {
     if (item.detailsCache && item.detailsCache.width === width) return item.detailsCache;
     const columns = detailWidth(width);
-    const rationale = wrapTextWithAnsi(sanitizeTerminalText(item.finding.rationale), columns);
-    const suggestedChange = wrapTextWithAnsi(sanitizeTerminalText(item.finding.suggestedChange), columns);
+    const rationale = this.wrapDetail(item.finding.rationale, columns);
+    const suggestedChange = this.wrapDetail(item.finding.suggestedChange, columns);
     let reason: WrappedDetailBlock | undefined;
     if (item.finding.recommendationReason && item.finding.recommendation !== "apply") {
       const rejected = item.finding.recommendation === "reject";
       reason = {
         heading: rejected ? "Why reject:" : "Why defer:",
-        content: wrapTextWithAnsi(sanitizeTerminalText(item.finding.recommendationReason), columns),
+        content: this.wrapDetail(item.finding.recommendationReason, columns),
         flag: rejected ? "error" : "warning",
       };
     }
     const exploitability = item.finding.exploitability
-      ? wrapTextWithAnsi(
-          `${item.finding.exploitability}${item.finding.exploitabilityReason ? ` — ${sanitizeTerminalText(item.finding.exploitabilityReason)}` : ""}`,
+      ? this.wrapDetail(
+          `${item.finding.exploitability}${item.finding.exploitabilityReason ? ` — ${item.finding.exploitabilityReason}` : ""}`,
           columns,
         )
       : undefined;
     const disputes = item.finding.disputes?.map((dispute): WrappedDetailBlock => ({
       heading: `Disputed by ${sanitizeTerminalText(dispute.reviewer)} (${dispute.verdict}):`,
-      content: wrapTextWithAnsi(sanitizeTerminalText(dispute.reason), columns),
+      content: this.wrapDetail(dispute.reason, columns),
       flag: "warning",
     }));
     const derivedFrom = item.finding.derivedFrom?.length
       ? {
           heading: "Derived from:",
-          content: wrapTextWithAnsi(
-            item.finding.derivedFrom.map((source) => sanitizeTerminalText(source)).join(", "),
-            columns,
-          ),
+          content: this.wrapDetail(item.finding.derivedFrom.join(", "), columns),
         }
       : undefined;
     const cache = { width, rationale, suggestedChange, reason, exploitability, disputes, derivedFrom };
@@ -465,9 +480,11 @@ export class FindingsReview implements Component {
   private detailBlocks(item: ReviewItem, width: number): WrappedDetailBlock[] {
     const wrapped = this.wrapDetails(item, width);
     const blast = this.sortMode === "blast" ? item.finding.blastRadius : undefined;
-    // The bucket stays a content line: headings are not wrapped, so a long reason list would be clipped at the frame.
+    // The bucket stays a content line: it is painted but not wrapped, so a long reason list is clipped at the frame rather than reflowed under the heading.
     const blastInfo = blast
-      ? [`blast ${blast.level[0]!.toUpperCase()}${blast.level.slice(1)}${blast.reasons.length > 0 ? `: ${blast.reasons.slice(0, 2).map(sanitizeTerminalText).join(", ")}` : ""}`]
+      ? [styleDetailText(sanitizeTerminalText(
+          `blast ${blast.level[0]!.toUpperCase()}${blast.level.slice(1)}${blast.reasons.length > 0 ? `: ${blast.reasons.slice(0, 2).join(", ")}` : ""}`,
+        ), this.theme)]
       : [];
     return [
       { heading: `Rationale (${item.finding.category}):`, content: [...blastInfo, ...wrapped.rationale] },
@@ -634,9 +651,11 @@ export class FindingsReview implements Component {
       for (const [blockIndex, block] of blocks.entries()) {
         if (blockIndex > 0) lines.push("");
         const flag = block.flag ? `${t.fg(block.flag, "⚑")} ` : "";
-        lines.push(`    ${flag}${t.fg("text", block.heading)}`);
+        lines.push(`    ${flag}${t.bold(t.fg(HEADING_COLOR, block.heading))}`);
         for (const detail of block.content) {
-          lines.push(`      ${t.fg("muted", detail)}`);
+          // Already painted by wrapDetail, so wrapping it in a color here
+          // would reset the text after the first highlighted identifier.
+          lines.push(`      ${detail}`);
         }
       }
 

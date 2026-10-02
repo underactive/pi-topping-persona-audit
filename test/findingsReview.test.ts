@@ -675,15 +675,76 @@ test("finding details render exploitability, disputes, and deferral reasons cons
   const colored = harness([details], 60, undefined, tagged);
   colored.press(RIGHT);
   const coloredText = colored.rendered().join("\n");
-  assert.match(coloredText, /<text>Summary:<\/text>/);
-  assert.match(coloredText, /<text>Rationale \(bug\):<\/text>/);
-  assert.match(coloredText, /<text>Exploitability:<\/text>/);
-  assert.match(coloredText, /<warning>⚑<\/warning> <text>Disputed by Reviewer B \(overstated\):<\/text>/);
-  assert.match(coloredText, /<text>Suggested Change:<\/text>/);
-  assert.match(coloredText, /<warning>⚑<\/warning> <text>Why defer:<\/text>/);
+  // Built as pattern strings, not RegExps, so the callers can splice them into a larger expression.
+  const heading = (label: string): string => `<b><mdHeading>${label}</mdHeading></b>`;
+  assert.ok(coloredText.includes(heading("Summary:")), "Summary heading");
+  assert.ok(coloredText.includes(heading("Rationale (bug):")), "Rationale heading");
+  assert.ok(coloredText.includes(heading("Exploitability:")), "Exploitability heading");
+  assert.ok(coloredText.includes(`<warning>⚑</warning> <b><mdHeading>Disputed by Reviewer B (overstated):`), "Disputed heading");
+  assert.ok(coloredText.includes(heading("Suggested Change:")), "Suggested Change heading");
+  assert.ok(coloredText.includes(`<warning>⚑</warning> ${heading("Why defer:")}`), "Why defer heading");
   assert.match(coloredText, /<muted>The default disables it\.<\/muted>/);
   assert.match(coloredText, /<muted>Wait for the parser rewrite\.<\/muted>/);
   assert.doesNotMatch(coloredText, /<warning>(?:Exploitability:|Disputed by|Why defer:)/);
+  assert.doesNotMatch(coloredText, /<(?:success|error|warning|dim)><b>/, "headings never wear a status color");
+});
+
+test("detail headings keep one shared color, whatever block they label", () => {
+  const ui = harness([finding(1, {
+    recommendation: "defer",
+    recommendationReason: "Wait for the rewrite.",
+    disputes: [{ reviewer: "R B", verdict: "overstated", reason: "The default disables it." }],
+    exploitability: "conditional",
+  })], 60, undefined, tagged);
+  ui.press(RIGHT);
+  // The label, not the closing tags: a long heading is clipped at the frame by the tagged theme's width.
+  const headings = [...ui.rendered().join("\n").matchAll(/<b><(\w+)>([A-Z][^<\n]{0,40}:)/g)]
+    .map((match) => ({ color: match[1] ?? "", label: (match[2] ?? "").replace(/\s+$/, "") }))
+    .filter(({ label }) => !/^──/.test(label));
+
+  assert.ok(headings.length >= 5, `expected the detail block headings, saw ${headings.length}`);
+  for (const { color, label } of headings) {
+    assert.equal(color, "mdHeading", `${label} keeps the shared heading color`);
+  }
+});
+
+test("identifiers in finding text are colored while the prose around them stays muted", () => {
+  // One construct per block, each short enough to survive the tagged theme's width inflation.
+  const ui = harness([finding(1, {
+    summary: "`wrapText` drops state",
+    rationale: "See resolveScroll()",
+    suggestedChange: "at src/a.ts:1",
+  })], 60, undefined, tagged);
+  ui.press(RIGHT);
+  const text = ui.rendered().join("\n");
+
+  assert.ok(text.includes("<mdCode>wrapText</mdCode><muted> drops state</muted>"), "an inline code span, then prose");
+  assert.ok(text.includes("<muted>See </muted><syntaxFunction>resolveScroll()</syntaxFunction>"), "a call in prose");
+  assert.ok(text.includes("<muted>at </muted><syntaxString>src/a.ts:1</syntaxString>"), "a path in prose");
+  assert.doesNotMatch(text, /<code>/, "a segment is never painted twice");
+});
+
+test("a fenced block in the suggested change is painted as one block", () => {
+  // The overlay's sanitizer strips newlines from finding text, so a fence arrives already on one line.
+  const ui = harness([finding(1, { suggestedChange: "```ts return null;```" })], 60, undefined, tagged);
+  ui.press(RIGHT);
+  const text = ui.rendered().join("\n");
+
+  assert.ok(text.includes("<mdCodeBlock>```ts return null;```</mdCodeBlock>"), "the fence is one segment");
+  assert.doesNotMatch(text, /<mdCode>/, "nothing inside a fence is parsed as an inline code span");
+});
+
+test("a rejected finding's reason and disputes are colored like any other prose", () => {
+  const ui = harness([finding(1, {
+    recommendation: "defer",
+    recommendationReason: "keep `h`",
+    disputes: [{ reviewer: "Reviewer B", verdict: "overstated", reason: "An unmatched ` backtick" }],
+  })], 60, undefined, tagged);
+  ui.press(RIGHT);
+  const text = ui.rendered().join("\n");
+
+  assert.ok(text.includes("<muted>keep </muted><mdCode>h</mdCode>"), "a code span inside a flagged block");
+  assert.ok(text.includes("<muted>An unmatched ` backtick</muted>"), "an unmatched backtick stays prose");
 });
 
 test("a reject recommendation flags its reason in the error color", () => {
@@ -692,7 +753,7 @@ test("a reject recommendation flags its reason in the error color", () => {
   ui.press(RIGHT);
   const text = ui.rendered().join("\n");
 
-  assert.match(text, /<error>⚑<\/error> <text>Why reject:<\/text>/);
+  assert.match(text, /<error>⚑<\/error> <b><mdHeading>Why reject:<\/mdHeading><\/b>/);
   assert.match(text, /<muted>The caller already validates it\.<\/muted>/);
 });
 
