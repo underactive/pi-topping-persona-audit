@@ -401,15 +401,14 @@ itself is always the expected path; an unrepairable failure is left unresolved
 and named in the round's report entry, not papered over.
 
 **Stopping conditions.** The loop stops when a round passes, when the run is
-cancelled, when nothing is actionable, when a round's failures did not change
-from a round already seen, or after the configured round cap (the **Max fix +
+cancelled, when nothing is actionable, when an actionable failure set appears
+for a third time, or after the configured round cap (the **Max fix +
 verify rounds** setting, default 3 — round 1 plus up to that many minus one
-repairs; set it to 1 to disable auto-repair) — whichever comes first. The stagnation stop compares each round's
-actionable failure set (each fix keyed by its *verdict*, so `not-fixed` →
-`partial` still counts as progress and does not trip it) against every earlier
-round's, which also catches an `A → B → A` oscillation; when a repair leaves the
-set unchanged or returns it to an earlier state, another pass will not move it,
-so the remaining round budget is not spent. The final report's Fix + Verify
+repairs; set it to 1 to disable auto-repair) — whichever comes first. The stagnation check compares each round's actionable failure set (each fix
+keyed by its *verdict*, so `not-fixed` → `partial` still counts as progress and
+does not trip it) against earlier rounds, which also catches an `A → B → A`
+oscillation. A second occurrence schedules an escalated repair if round budget
+remains; a third occurrence stops the loop. The final report's Fix + Verify
 Rounds table shows every round's status, verdict counts, script gate result, and
 what the repair agent reported doing; the per-finding verdict table and chat
 summary reflect only the last round.
