@@ -708,6 +708,32 @@ test("detail headings keep one shared color, whatever block they label", () => {
   }
 });
 
+test("invalidate repaints cached summaries and details with the current theme colors", () => {
+  let color = 31;
+  const mutableTheme: ReviewTheme = {
+    fg: (_color, text) => `\x1b[${color}m${text}\x1b[0m`,
+    bg: (_color, text) => text,
+    bold: (text) => text,
+  };
+  const review = new FindingsReview(
+    [finding(1)],
+    mutableTheme,
+    () => {},
+    { requestRender: () => {}, terminal: { rows: 60 } },
+    async () => "handoff.md",
+  );
+  review.handleInput(RIGHT);
+  const before = review.render(WIDTH).join("\n");
+  assert.ok(before.includes("\x1b[31mSummary 01 stating"));
+  assert.ok(before.includes("\x1b[31mRationale 01 explaining"));
+
+  color = 34;
+  review.invalidate();
+  const after = review.render(WIDTH).join("\n");
+  assert.ok(after.includes("\x1b[34mSummary 01 stating"));
+  assert.ok(after.includes("\x1b[34mRationale 01 explaining"));
+});
+
 test("identifiers in finding text are colored while the prose around them stays muted", () => {
   // One construct per block, each short enough to survive the tagged theme's width inflation.
   const ui = harness([finding(1, {

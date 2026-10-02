@@ -249,12 +249,20 @@ export class FindingsReview implements Component {
     this.populateGroups();
     this.selectedIndex = selected ? Math.max(0, this.flatGroups.findIndex((entry) => entry.item === selected)) : 0;
     this.scrollOffset = 0;
-    this.invalidate();
+    this.invalidateRender();
   }
 
   // ── Component interface ─────────────────────────────────────────────────
 
   invalidate(): void {
+    this.invalidateRender();
+    for (const item of this.items) {
+      item.summaryCache = undefined;
+      item.detailsCache = undefined;
+    }
+  }
+
+  private invalidateRender(): void {
     this.cachedWidth = undefined;
     this.cachedHeight = undefined;
     this.cachedLines = undefined;
@@ -264,7 +272,7 @@ export class FindingsReview implements Component {
     const current = this.flatGroups[this.selectedIndex];
     if (current && current.item.status !== "fixed") {
       current.item.status = status;
-      this.invalidate();
+      this.invalidateRender();
     }
   }
 
@@ -278,7 +286,7 @@ export class FindingsReview implements Component {
     const current = this.flatGroups[this.selectedIndex];
     if (current && current.item.expanded !== expanded) {
       current.item.expanded = expanded;
-      this.invalidate();
+      this.invalidateRender();
     }
   }
 
@@ -289,7 +297,7 @@ export class FindingsReview implements Component {
     if (matchesKey(data, Key.escape)) {
       if (!this.awaitingCancelConfirm) {
         this.awaitingCancelConfirm = true;
-        this.invalidate();
+        this.invalidateRender();
         return;
       }
       this.done({ kind: "cancelled" });
@@ -297,7 +305,7 @@ export class FindingsReview implements Component {
     }
     if (this.awaitingCancelConfirm) {
       this.awaitingCancelConfirm = false;
-      this.invalidate();
+      this.invalidateRender();
     }
 
     if (data === "s" || data === "S") {
@@ -311,28 +319,28 @@ export class FindingsReview implements Component {
       const deferred = this.items.filter((item) => item.status === "defer").map((item) => item.finding);
       if (deferred.length === 0) {
         this.handoffNote = "No deferred items to hand off yet.";
-        this.invalidate();
+        this.invalidateRender();
         return;
       }
 
       this.handoffNote = "Writing handoff…";
       this.handoffWriting = true;
-      this.invalidate();
+      this.invalidateRender();
       void Promise.resolve()
         .then(() => this.onWriteHandoff(deferred))
         .then((path) => {
           this.lastHandoffPath = path;
           this.handoffNote = `Wrote ${deferred.length} deferred item(s) → ${path}`;
-          this.invalidate();
+          this.invalidateRender();
         })
         .catch((error: unknown) => {
           const message = error instanceof Error ? error.message : String(error);
           this.handoffNote = `Handoff write failed: ${message}`;
-          this.invalidate();
+          this.invalidateRender();
         })
         .finally(() => {
           this.handoffWriting = false;
-          this.invalidate();
+          this.invalidateRender();
           this.tui.requestRender();
         });
       return;
@@ -370,7 +378,7 @@ export class FindingsReview implements Component {
       if (current && current.item.status !== "fixed") {
         const idx = STATUS_CYCLE.indexOf(current.item.status);
         current.item.status = STATUS_CYCLE[(idx + 1) % STATUS_CYCLE.length]!;
-        this.invalidate();
+        this.invalidateRender();
       }
       return;
     }
@@ -378,7 +386,7 @@ export class FindingsReview implements Component {
     if (matchesKey(data, Key.up)) {
       if (this.selectedIndex > 0) {
         this.select(this.selectedIndex - 1);
-        this.invalidate();
+        this.invalidateRender();
       }
       return;
     }
@@ -387,7 +395,7 @@ export class FindingsReview implements Component {
       const total = this.flatGroups.length;
       if (this.selectedIndex < total - 1) {
         this.select(this.selectedIndex + 1);
-        this.invalidate();
+        this.invalidateRender();
       }
       return;
     }
@@ -404,13 +412,13 @@ export class FindingsReview implements Component {
 
     if (matchesKey(data, Key.pageUp)) {
       this.pendingPageDelta--;
-      this.invalidate();
+      this.invalidateRender();
       return;
     }
 
     if (matchesKey(data, Key.pageDown)) {
       this.pendingPageDelta++;
-      this.invalidate();
+      this.invalidateRender();
       return;
     }
   }
