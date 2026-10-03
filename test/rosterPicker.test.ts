@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { visibleWidth, type Component, type KeybindingsManager, type TUI } from "@earendil-works/pi-tui";
+import { visibleWidth, type Component, type KeybindingsManager, type TUI, type TuiMode } from "@earendil-works/pi-tui";
 import { COST_CONFIRM_RUN_THRESHOLD, type ExpertPickerTheme } from "../src/components/ExpertPicker.ts";
 import { PROMPT_OVERLAY_OPTIONS } from "../src/components/menuChrome.ts";
 import { TIERS } from "../src/components/ReviewerData.ts";
@@ -197,12 +197,13 @@ interface MountedOverlay {
 }
 
 /** Focused-overlay fake: Pi dispatches input straight to the component and settles on done. */
-function mountOverlay(rosters: Roster[], terminalRows?: number, initialRosterName?: string): MountedOverlay {
+function mountOverlay(rosters: Roster[], terminalRows?: number, initialRosterName?: string, mode?: TuiMode): MountedOverlay {
   let component: Component | undefined;
   let capturedOptions: unknown;
   const host = {
     requestRender: () => {},
     ...(terminalRows === undefined ? {} : { terminal: { rows: terminalRows } }),
+    ...(mode === undefined ? {} : { mode }),
   };
   const ctx = {
     ui: {
@@ -282,4 +283,25 @@ test("the shared 75% viewport windows a long roster list on a short terminal", (
   assert.match(scrolled.join("\n"), /❯ ◇ Roster06/);
 
   overlay.send(ESCAPE);
+});
+
+test("a fullscreen host windows the roster list exactly like a regular one, since overlays paint over pi's dock", () => {
+  const rosters: Roster[] = ALL_NAMES.slice(0, 12).map((name, index) => ({
+    name: `Roster${String(index + 1).padStart(2, "0")}`,
+    reviewers: [name],
+  }));
+  for (const rows of [40, 24]) {
+    const fullscreen = mountOverlay(rosters, rows, undefined, "fullscreen");
+    const regular = mountOverlay(rosters, rows, undefined, "regular");
+    assert.deepEqual(fullscreen.render(), regular.render(), `${rows}-row fullscreen and regular renders match`);
+    fullscreen.send(ESCAPE);
+    regular.send(ESCAPE);
+  }
+
+  // 75% of 8 rows is 6, under the 10-row floor; 14 rows give 10 outright.
+  const belowFloor = mountOverlay(rosters, 8, undefined, "fullscreen");
+  const atFloor = mountOverlay(rosters, 14, undefined, "regular");
+  assert.deepEqual(belowFloor.render(), atFloor.render(), "a short fullscreen terminal keeps the 10-row viewport floor");
+  belowFloor.send(ESCAPE);
+  atFloor.send(ESCAPE);
 });

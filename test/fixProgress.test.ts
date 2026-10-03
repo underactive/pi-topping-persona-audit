@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { Component, KeybindingsManager, TUI } from "@earendil-works/pi-tui";
+import type { Component, KeybindingsManager, TUI, TuiMode } from "@earendil-works/pi-tui";
 import type { TerminalInputHandler, Theme } from "@earendil-works/pi-coding-agent";
 import {
   FixGate,
@@ -50,12 +50,13 @@ const progress = {
 
 // ── FixGate (one decision overlay per gate) ────────────────────────────────
 
-function gateHarness(input: FixGateInput, rows = 40) {
-  const host: FixProgressHost = { requestRender: () => {}, terminal: { rows } };
+function gateHarness(input: FixGateInput, rows = 40, mode?: TuiMode) {
+  const host: FixProgressHost = { requestRender: () => {}, terminal: { rows }, mode };
   const decisions: FixGateDecision[] = [];
   const component = new FixGate(finding, input, theme, host, (decision) => decisions.push(decision));
   return {
     component,
+    host,
     lines: () => component.render(WIDTH).map(strip),
     press: (key: string) => component.handleInput(key),
     decisions: () => decisions,
@@ -231,6 +232,25 @@ test("bounds long chat history on a short terminal", () => {
 
   const lines = ui.lines();
   assert.ok(lines.some((l) => l.includes("earlier chat lines")));
+});
+
+const LONG_DIFF = Array.from({ length: 60 }, (_, i) => `+line ${i}`).join("\n");
+
+test("re-renders after a height-only resize, since pi does not invalidate on resize", () => {
+  const ui = gateHarness({ diff: LONG_DIFF, commitPlanned: true, attempt: 1 }, 40);
+  const tall = ui.lines();
+
+  ui.host.terminal = { rows: 20 };
+  const short = ui.lines();
+  assert.ok(short.length < tall.length, `the gate shrinks to the new height without invalidate(), got ${tall.length} then ${short.length} lines`);
+});
+
+test("a fullscreen host sizes the gate exactly like a regular one, since overlays paint over pi's dock", () => {
+  const input: FixGateInput = { diff: LONG_DIFF, commitPlanned: true, attempt: 1 };
+  const fullscreen = gateHarness(input, 40, "fullscreen").lines();
+  assert.ok(fullscreen.length < gateHarness(input, 1000).lines().length, "the diff is long enough to be height-limited at 40 rows");
+  assert.deepEqual(fullscreen, gateHarness(input, 40, "regular").lines());
+  assert.deepEqual(fullscreen, gateHarness(input, 40).lines());
 });
 
 test("propagates focus state to the embedded input widget", () => {

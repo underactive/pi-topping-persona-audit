@@ -19,7 +19,7 @@ import { DEFAULT_METER_SETTINGS, resolveMeterColor, type MeterSettings, type Thi
 import { shimmerString, type ShimmerTheme } from "../shimmer.ts";
 import { MIN_WAIT_DISPLAY_MS, RunClock } from "../runClock.ts";
 import type { Finding, HeadlessProgress } from "../types.ts";
-import { wrapText } from "./menuChrome.ts";
+import { FULLSCREEN_WIDGET_RESERVE_ROWS, usableTerminalRows, type ViewportHost, wrapText } from "./menuChrome.ts";
 
 export const AUDIT_PROGRESS_WIDGET_KEY = "persona-audit-progress";
 const SPINNER_INTERVAL_MS = 100;
@@ -58,7 +58,8 @@ const MIN_FOOTER_TOTAL_GAP = 2;
 /**
  * Share of the terminal the table may claim. Lower than an overlay's would be:
  * this sits above the editor for the whole run and cannot be dismissed, so it
- * has to leave the transcript readable.
+ * has to leave the transcript readable. In fullscreen it is a share of the rows
+ * above pi's dock, since the table shares the dock with the editor and footer.
  */
 const TABLE_HEIGHT_RATIO = 0.5;
 const TABLE_FRAMES = ["◐", "◓", "◑", "◒"] as const;
@@ -237,9 +238,8 @@ export interface AuditProgressSnapshot {
 export type ContextWindowResolver = (provider: string | undefined, model: string | undefined) => number | undefined;
 
 /** The slice of pi's `TUI` the table needs. Structural so tests can supply a stub. */
-export interface ProgressHost {
+export interface ProgressHost extends ViewportHost {
   requestRender(force?: boolean): void;
-  terminal?: { rows?: number };
 }
 
 /** The slice of pi's `Theme` the table needs. Structural so tests can supply a stub. */
@@ -796,11 +796,16 @@ export class AuditProgressTable implements Component {
     return meter.render((level, char) => ActivityMeter.colorizeCell(level, char, this.theme, color, !active));
   }
 
-  /** How many lines the table may use, so it never crowds out the editor below it. */
+  /**
+   * How many lines the table may use, so it never crowds out the editor below
+   * it. In fullscreen the ratio applies to the rows above pi's dock, since the
+   * table sits inside that dock with the editor and footer. An unknown height
+   * means no budget, which the frozen snapshot relies on.
+   */
   private rowBudget(): number {
     const rows = this.tui.terminal?.rows ?? 0;
     if (rows <= 0) return Number.POSITIVE_INFINITY;
-    return Math.max(TABLE_CHROME_ROWS, Math.floor(rows * TABLE_HEIGHT_RATIO));
+    return Math.max(TABLE_CHROME_ROWS, Math.floor(usableTerminalRows(this.tui, FULLSCREEN_WIDGET_RESERVE_ROWS) * TABLE_HEIGHT_RATIO));
   }
 
   /**

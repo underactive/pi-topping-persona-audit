@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { visibleWidth, type Component, type KeybindingsManager, type TUI } from "@earendil-works/pi-tui";
+import { visibleWidth, type Component, type KeybindingsManager, type TUI, type TuiMode } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { ExpertPicker, showExpertPicker, type ExpertPickerTheme } from "../src/components/ExpertPicker.ts";
 import { PROMPT_OVERLAY_OPTIONS } from "../src/components/menuChrome.ts";
@@ -239,12 +239,13 @@ interface MountedOverlay {
 }
 
 /** Focused-overlay fake: Pi dispatches input straight to the component and settles on done. */
-function mountOverlay(terminalRows?: number): MountedOverlay {
+function mountOverlay(terminalRows?: number, mode?: TuiMode): MountedOverlay {
   let component: Component | undefined;
   let capturedOptions: unknown;
   const host = {
     requestRender: () => {},
     ...(terminalRows === undefined ? {} : { terminal: { rows: terminalRows } }),
+    ...(mode === undefined ? {} : { mode }),
   };
   const ctx = {
     ui: {
@@ -308,4 +309,21 @@ test("the shared 75% viewport stays scrollable and unclipped on a short terminal
   assert.equal(scrolled.filter((line) => line.includes("❯")).length, 1);
 
   overlay.send(ESCAPE);
+});
+
+test("a fullscreen host windows the reviewer list exactly like a regular one, since overlays paint over pi's dock", () => {
+  for (const rows of [40, 20]) {
+    const fullscreen = mountOverlay(rows, "fullscreen");
+    const regular = mountOverlay(rows, "regular");
+    assert.deepEqual(fullscreen.render(), regular.render(), `${rows}-row fullscreen and regular renders match`);
+    fullscreen.send(ESCAPE);
+    regular.send(ESCAPE);
+  }
+
+  // 75% of 8 rows is 6, under the 10-row floor; 14 rows give 10 outright.
+  const belowFloor = mountOverlay(8, "fullscreen");
+  const atFloor = mountOverlay(14, "regular");
+  assert.deepEqual(belowFloor.render(), atFloor.render(), "a short fullscreen terminal keeps the 10-row viewport floor");
+  belowFloor.send(ESCAPE);
+  atFloor.send(ESCAPE);
 });

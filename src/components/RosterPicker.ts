@@ -13,8 +13,7 @@ import type { Roster } from "../modelConfig.ts";
 import type { ReviewerSelection } from "../types.ts";
 import { COST_CONFIRM_RUN_THRESHOLD, type ExpertPickerHost, type ExpertPickerTheme } from "./ExpertPicker.ts";
 import {
-  FALLBACK_TERMINAL_ROWS,
-  OVERLAY_HEIGHT_PERCENT,
+  overlayViewportRows,
   type OverlayPromptUi,
   renderMenuContentRow,
   renderMenuSectionDivider,
@@ -79,8 +78,7 @@ export class RosterPicker implements Component {
   }
 
   private viewportHeight(): number {
-    const rows = this.host?.terminal?.rows ?? 0;
-    return Math.max(10, Math.floor(((rows > 0 ? rows : FALLBACK_TERMINAL_ROWS) * OVERLAY_HEIGHT_PERCENT) / 100));
+    return overlayViewportRows(this.host, 10);
   }
 
   private currentRoster(): Roster | undefined {

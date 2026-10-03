@@ -15,7 +15,7 @@ import type { TerminalInputHandler, Theme, ThemeColor } from "@earendil-works/pi
 import type { AuditProgressWidget } from "./AuditProgress.ts";
 import type { Finding, HeadlessProgress } from "../types.ts";
 import { sanitizeDiffLine, sanitizeTerminalText } from "./AuditProgress.ts";
-import { FALLBACK_TERMINAL_ROWS, OVERLAY_HEIGHT_PERCENT, renderFramedBottom, renderFramedRow, renderFramedTop, showOverlayPrompt, wrapText } from "./menuChrome.ts";
+import { overlayViewportRows, renderFramedBottom, renderFramedRow, renderFramedTop, showOverlayPrompt, type ViewportHost, wrapText } from "./menuChrome.ts";
 
 export interface FixChatMessage {
   role: "user" | "assistant";
@@ -25,9 +25,8 @@ export interface FixChatMessage {
 export type FixGateDecision = "accept" | "retry" | "discard" | { type: "chat"; message: string };
 
 /** The slice of pi's `TUI` the surfaces need. Structural so tests can supply a stub. */
-export interface FixProgressHost {
+export interface FixProgressHost extends ViewportHost {
   requestRender(force?: boolean): void;
-  terminal?: { rows?: number };
 }
 
 /** The slice of pi's `Theme` the surfaces need. Structural so tests can supply a stub. */
@@ -72,11 +71,9 @@ function colorDiffLine(theme: FixProgressTheme, line: string): string {
   return theme.fg("muted", line);
 }
 
-/** Content viewport: 75% of the terminal, independent of the host overlay's maximum height. */
+/** Content viewport: the shared overlay budget, which the gate splits between diff and chat. */
 function viewportHeight(tui: FixProgressHost): number {
-  const rows = tui.terminal?.rows ?? 0;
-  const usable = rows > 0 ? rows : FALLBACK_TERMINAL_ROWS;
-  return Math.max(1, Math.floor((usable * OVERLAY_HEIGHT_PERCENT) / 100));
+  return overlayViewportRows(tui, 1);
 }
 
 /** Frame title, finding label, and rationale — identical on both surfaces. */
@@ -126,6 +123,7 @@ export class FixGate implements Component, Focusable {
   private settled = false;
 
   private cachedWidth: number | undefined;
+  private cachedViewport: number | undefined;
   private cachedLines: string[] | undefined;
 
   constructor(
@@ -237,17 +235,20 @@ export class FixGate implements Component, Focusable {
 
   invalidate(): void {
     this.cachedWidth = undefined;
+    this.cachedViewport = undefined;
     this.cachedLines = undefined;
   }
 
   render(width: number): string[] {
     const viewport = viewportHeight(this.tui);
-    if (this.cachedLines && this.cachedWidth === width) return this.cachedLines;
+    // Pi does not invalidate on resize, so a height change must miss the cache too.
+    if (this.cachedLines && this.cachedWidth === width && this.cachedViewport === viewport) return this.cachedLines;
     const inner = Math.max(0, width - 2);
     const header = renderFixHeader(this.theme, this.finding, inner, this.input.attempt);
     const body = this.renderGateBody(inner, viewport, header.length);
     const lines = assembleFixFrame(this.theme, inner, header, body);
     this.cachedWidth = width;
+    this.cachedViewport = viewport;
     this.cachedLines = lines;
     return lines;
   }

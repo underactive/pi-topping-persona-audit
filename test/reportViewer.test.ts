@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { type MarkdownTheme, visibleWidth } from "@earendil-works/pi-tui";
+import { type MarkdownTheme, type TuiMode, visibleWidth } from "@earendil-works/pi-tui";
 import {
   ReportViewer,
   type ReportViewerHeader,
@@ -47,12 +47,13 @@ function report(lines = 30): string {
   return Array.from({ length: lines }, (_, index) => `- Item ${String(index + 1).padStart(2, "0")}`).join("\n");
 }
 
-function harness(text = report(), rows = ROWS) {
+function harness(text = report(), rows = ROWS, mode?: TuiMode) {
   let renders = 0;
   let closed = 0;
   const host: ReportViewerHost = {
     requestRender: () => { renders++; },
     terminal: { rows },
+    ...(mode ? { mode } : {}),
   };
   const viewer = new ReportViewer(text, header, theme, markdownTheme, () => { closed++; }, host);
   return {
@@ -75,6 +76,15 @@ test("renders report chrome, position, and no lines beyond the overlay clip budg
   assert.match(lines[1] ?? "", /audit\.md/);
   assert.match(lines[lines.length - 2] ?? "", /↑↓ scroll.*u\/d page.*g\/G top\/bottom.*Esc close.*lines 1–12\/30/);
   assert.match(lines[lines.length - 1] ?? "", /^╚═+╝$/);
+});
+
+test("a fullscreen host sizes the viewer exactly like a regular one, since overlays paint over pi's dock", () => {
+  const render = (rows: number, mode?: TuiMode): string[] => harness(report(), rows, mode).rendered();
+  const regular = render(40, "regular");
+
+  assert.ok(regular.length < render(1000, "regular").length, "the report overflows a 40-row viewport, so its render depends on the height");
+  assert.deepEqual(render(40, "fullscreen"), regular);
+  assert.deepEqual(render(40), regular);
 });
 
 test("arrow keys scroll one rendered line and clamp at both ends", () => {

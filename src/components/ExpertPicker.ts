@@ -3,14 +3,14 @@ import { Key, matchesKey, type Component } from "@earendil-works/pi-tui";
 import type { ReviewerInfo, ReviewerSelection } from "../types.ts";
 import { TIERS } from "./ReviewerData.ts";
 import {
-  FALLBACK_TERMINAL_ROWS,
-  OVERLAY_HEIGHT_PERCENT,
+  overlayViewportRows,
   type OverlayPromptUi,
   renderMenuContentRow,
   renderMenuSectionDivider,
   renderMenuTopBorder,
   SELECTOR,
   showOverlayPrompt,
+  type ViewportHost,
   wrapText,
 } from "./menuChrome.ts";
 
@@ -21,9 +21,8 @@ export const COST_CONFIRM_RUN_THRESHOLD = 6;
 const LIST_CHROME_ROWS = 9;
 const FALLBACK_WIDTH = 80;
 
-export interface ExpertPickerHost {
+export interface ExpertPickerHost extends ViewportHost {
   requestRender(force?: boolean): void;
-  terminal?: { rows?: number };
 }
 
 export interface ExpertPickerTheme {
@@ -85,8 +84,7 @@ export class ExpertPicker implements Component {
   }
 
   private viewportHeight(): number {
-    const rows = this.host?.terminal?.rows ?? 0;
-    return Math.max(10, Math.floor(((rows > 0 ? rows : FALLBACK_TERMINAL_ROWS) * OVERLAY_HEIGHT_PERCENT) / 100));
+    return overlayViewportRows(this.host, 10);
   }
 
   private effectiveSelection(): ReviewerSelection {

@@ -2,12 +2,11 @@ import type { ExtensionCommandContext, ThemeColor } from "@earendil-works/pi-cod
 import { getMarkdownTheme } from "@earendil-works/pi-coding-agent";
 import type { Component, MarkdownTheme } from "@earendil-works/pi-tui";
 import { Key, Markdown, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { FALLBACK_TERMINAL_ROWS, OVERLAY_HEIGHT_PERCENT, renderFramedBottom, renderFramedRow, renderFramedTop, showOverlayPrompt } from "./menuChrome.ts";
+import { overlayViewportRows, renderFramedBottom, renderFramedRow, renderFramedTop, showOverlayPrompt, type ViewportHost } from "./menuChrome.ts";
 
 /** The slice of the TUI host required by the viewer; structural for unit tests. */
-export interface ReportViewerHost {
+export interface ReportViewerHost extends ViewportHost {
   requestRender(force?: boolean): void;
-  terminal?: { rows?: number };
 }
 
 /** The slice of the theme required by the viewer; structural for unit tests. */
@@ -123,9 +122,7 @@ export class ReportViewer implements Component {
   }
 
   private viewportHeight(): number {
-    const rows = this.tui.terminal?.rows ?? 0;
-    const terminalRows = rows > 0 ? rows : FALLBACK_TERMINAL_ROWS;
-    return Math.max(1, Math.floor((terminalRows * OVERLAY_HEIGHT_PERCENT) / 100));
+    return overlayViewportRows(this.tui, 1);
   }
 
   private bodyHeight(narrow = (this.lastWidth ?? 0) < NARROW_WIDTH): number {

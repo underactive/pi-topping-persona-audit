@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { visibleWidth, type TuiMode } from "@earendil-works/pi-tui";
 import type { WidgetPlacement } from "@earendil-works/pi-coding-agent";
 import {
   AUDIT_PROGRESS_WIDGET_KEY,
@@ -19,6 +19,7 @@ import {
   type ProgressTheme,
 } from "../src/components/AuditProgress.ts";
 import { ACTIVITY_METER_WIDTH } from "../src/activityMeter.ts";
+import { FULLSCREEN_WIDGET_RESERVE_ROWS } from "../src/components/menuChrome.ts";
 import type { Finding, HeadlessProgress } from "../src/types.ts";
 
 const strip = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
@@ -45,14 +46,14 @@ after(() => {
 });
 
 /** Fake extension context mirroring pi's setWidget replace/dispose semantics. */
-function fakeCtx(terminalRows = 40, theme: ProgressTheme = { fg: (_color, text) => text, bold: (text) => text }) {
+function fakeCtx(terminalRows = 40, theme: ProgressTheme = { fg: (_color, text) => text, bold: (text) => text }, mode?: TuiMode) {
   const state: { table: AuditProgressTable | undefined; mounts: number; disposed: number } = {
     table: undefined,
     mounts: 0,
     disposed: 0,
   };
   let renders = 0;
-  const tui: ProgressHost = { requestRender: () => renders++, terminal: { rows: terminalRows } };
+  const tui: ProgressHost = { requestRender: () => renders++, terminal: { rows: terminalRows }, mode };
   const placements: (WidgetPlacement | undefined)[] = [];
   const keys: string[] = [];
 
@@ -76,7 +77,7 @@ function fakeCtx(terminalRows = 40, theme: ProgressTheme = { fg: (_color, text) 
     },
   };
 
-  return { ctx, state, placements, keys, renderCount: () => renders };
+  return { ctx, state, tui, placements, keys, renderCount: () => renders };
 }
 
 function lines(table: AuditProgressTable | undefined, width = 120): string[] {
@@ -465,6 +466,87 @@ test("a frozen snapshot renders every row, since it has no terminal to budget ag
     assert.ok(frozen.some((l) => l.includes(label)), `${label} survives into the frozen transcript`);
   }
   assert.ok(!frozen.some((l) => l.includes("passes done")), "a frozen transcript folds nothing");
+});
+
+/** Twelve settled passes: inside a 40-row terminal's half-height budget, past it once pi's dock is taken off. */
+function twelveSettledWidget(ctx: AuditProgressContext): AuditProgressWidget {
+  const widget = new AuditProgressWidget(ctx);
+  for (let i = 0; i < 12; i++) {
+    widget.addRow("Review", `done:${i}`, `done reviewer ${i}`);
+    widget.startRow(`done:${i}`, "reviewing…");
+    widget.settleRow(`done:${i}`, "done", "812 tokens");
+  }
+  return widget;
+}
+
+test("in fullscreen the table budgets against the rows above pi's dock", () => {
+  const regular = fakeCtx(40, undefined, "regular");
+  const fullscreen = fakeCtx(40, undefined, "fullscreen");
+  const regularWidget = twelveSettledWidget(regular.ctx);
+  const fullscreenWidget = twelveSettledWidget(fullscreen.ctx);
+  regularWidget.mount();
+  fullscreenWidget.mount();
+
+  const regularLines = lines(regular.state.table);
+  const fullscreenLines = lines(fullscreen.state.table);
+  assert.ok(regularLines.some((l) => l.includes("done reviewer 11")), "twelve passes fit a regular 40-row budget");
+  assert.ok(fullscreenLines.some((l) => l.includes("12 passes done")), "the same passes fold once the dock's rows are reserved");
+  const budget = Math.floor((40 - FULLSCREEN_WIDGET_RESERVE_ROWS) * 0.5);
+  assert.ok(fullscreenLines.length <= budget, `the table stays inside the rows above the dock, got ${fullscreenLines.length} lines`);
+
+  regularWidget.stop();
+  fullscreenWidget.stop();
+});
+
+test("a regular host budgets exactly like a host that reports no mode", () => {
+  const regular = fakeCtx(40, undefined, "regular");
+  const unknown = fakeCtx(40);
+  const regularWidget = twelveSettledWidget(regular.ctx);
+  const unknownWidget = twelveSettledWidget(unknown.ctx);
+  regularWidget.mount();
+  unknownWidget.mount();
+
+  assert.deepEqual(lines(regular.state.table), lines(unknown.state.table));
+
+  regularWidget.stop();
+  unknownWidget.stop();
+});
+
+test("the table re-budgets when pi switches renderer under a mounted widget", () => {
+  const { ctx, state, tui } = fakeCtx(40, undefined, "fullscreen");
+  const widget = twelveSettledWidget(ctx);
+  widget.mount();
+  assert.ok(lines(state.table).some((l) => l.includes("12 passes done")), "fullscreen folds the passes");
+
+  tui.mode = "regular";
+  assert.ok(lines(state.table).some((l) => l.includes("done reviewer 11")), "the next render reads the new mode and unfolds them");
+
+  widget.stop();
+});
+
+test("a short fullscreen terminal floors the budget at the table's chrome", () => {
+  const twoSettled = (rows: number, mode: TuiMode): string[] => {
+    const { ctx, state } = fakeCtx(rows, undefined, mode);
+    const widget = new AuditProgressWidget(ctx);
+    for (const key of ["a", "b"]) {
+      widget.addRow("Review", key, `settled reviewer ${key}`);
+      widget.startRow(key, "reviewing…");
+      widget.settleRow(key, "done", "812 tokens");
+    }
+    widget.mount();
+    const rendered = lines(state.table);
+    widget.stop();
+    return rendered;
+  };
+  // A regular 10-row terminal's half-height budget is exactly the chrome floor.
+  const atFloor = twoSettled(10, "regular");
+
+  // 12 rows leave 7 above the dock and 9 leave 4; both budgets fall under the chrome floor.
+  for (const rows of [12, 9]) {
+    const rendered = twoSettled(rows, "fullscreen");
+    assert.deepEqual(rendered, atFloor, `a ${rows}-row fullscreen table renders like one at the chrome floor`);
+    assert.ok(rendered.some((l) => l.includes("2 passes done")), "the folded summary still renders");
+  }
 });
 
 // ── cell formatting ────────────────────────────────────────────────────────

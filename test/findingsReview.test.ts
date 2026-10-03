@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { type TuiMode, visibleWidth } from "@earendil-works/pi-tui";
 import { FindingsReview, type ReviewHost, type ReviewTheme } from "../src/components/FindingsReview.ts";
 import type { Finding, FindingsReviewOutcome, FindingsReviewResult, ReviewSessionState } from "../src/types.ts";
 
@@ -57,8 +57,8 @@ function finding(n: number, overrides: Partial<Finding> = {}): Finding {
  * clip to the overlay height. Assertions run against the clipped lines, since
  * anything past the budget is dropped before the user ever sees it.
  */
-function harness(findings: Finding[], rows: number, restore?: ReviewSessionState, activeTheme: ReviewTheme = theme) {
-  const host: ReviewHost = { requestRender: () => {}, terminal: { rows } };
+function harness(findings: Finding[], rows: number, restore?: ReviewSessionState, activeTheme: ReviewTheme = theme, mode?: TuiMode) {
+  const host: ReviewHost = { requestRender: () => {}, terminal: { rows }, ...(mode ? { mode } : {}) };
   const settled: FindingsReviewOutcome[] = [];
   const component = new FindingsReview(findings, activeTheme, (outcome) => settled.push(outcome), host, async () => "handoff.md", undefined, restore);
   const visible = (): string[] => component.render(WIDTH).slice(0, clipBudget(rows));
@@ -93,6 +93,15 @@ test("the overlay never renders past the height the host clips at", () => {
     assert.ok(after <= clipBudget(rows), `finding ${i} expanded: rendered ${after} lines, budget is ${clipBudget(rows)}`);
     ui.press(DOWN);
   }
+});
+
+test("a fullscreen host sizes the review exactly like a regular one, since overlays paint over pi's dock", () => {
+  const render = (rows: number, mode?: TuiMode): string[] => harness(list(30), rows, undefined, theme, mode).rendered();
+  const regular = render(40, "regular");
+
+  assert.ok(regular.length < render(1000, "regular").length, "the list overflows a 40-row viewport, so its render depends on the height");
+  assert.deepEqual(render(40, "fullscreen"), regular);
+  assert.deepEqual(render(40), regular, "a host that reports no mode renders the same");
 });
 
 test("every finding can be selected without the marker scrolling out of view", () => {

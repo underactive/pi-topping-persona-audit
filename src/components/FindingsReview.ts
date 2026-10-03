@@ -8,7 +8,7 @@ import { SEVERITY_ORDER } from "../types.ts";
 import type { Finding, FindingRecommendation, FindingsReviewOutcome, FindingsReviewResult, FindingStatus, FixedFinding, ReviewSessionState, ReviewSortMode } from "../types.ts";
 import { sanitizeTerminalText } from "./AuditProgress.ts";
 import { styleDetailText } from "./detailText.ts";
-import { FALLBACK_TERMINAL_ROWS, OVERLAY_HEIGHT_PERCENT, renderFramedBottom, renderFramedRow, renderFramedTop, SELECTOR, showOverlayPrompt } from "./menuChrome.ts";
+import { overlayViewportRows, renderFramedBottom, renderFramedRow, renderFramedTop, SELECTOR, showOverlayPrompt, type ViewportHost } from "./menuChrome.ts";
 
 interface WrappedDetailBlock {
   heading: string;
@@ -47,9 +47,8 @@ interface LineSpan {
 }
 
 /** The slice of pi's `TUI` the overlay needs. Structural so tests can supply a stub. */
-export interface ReviewHost {
+export interface ReviewHost extends ViewportHost {
   requestRender(force?: boolean): void;
-  terminal?: { rows?: number };
 }
 
 /** The slice of pi's `Theme` the overlay needs. Structural so tests can supply a stub. */
@@ -423,9 +422,7 @@ export class FindingsReview implements Component {
    * `render` is handed only a width, so the internal budget is rederived here.
    */
   private viewportHeight(): number {
-    const rows = this.tui.terminal?.rows ?? 0;
-    const usable = rows > 0 ? rows : FALLBACK_TERMINAL_ROWS;
-    return Math.max(1, Math.floor((usable * OVERLAY_HEIGHT_PERCENT) / 100));
+    return overlayViewportRows(this.tui, 1);
   }
 
   /**
