@@ -20,8 +20,6 @@ const ENTER = "\r";
 const ESCAPE = "\x1b";
 const TAB = "\t";
 
-const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
-
 test("guidance view renders the title and context action without audit details", () => {
   const component = new AuditSummaryComponent(tui, theme, config, () => {});
   const text = component.render(100).join("\n");
@@ -37,13 +35,24 @@ test("summary and additional context views keep the same height", () => {
   assert.equal(component.render(100).length, summaryHeight);
 });
 
-test("embedded editor preserves its draft when returning to and reopening the summary", async () => {
-  const component = new AuditSummaryComponent(tui, theme, config, () => {});
+test("embedded editor preserves its draft when returning to and reopening the summary", { timeout: 5_000 }, async () => {
+  // Closing the editor re-parses the draft, which stats each line on disk, and
+  // requests renders along the way, so wait on those renders until the summary
+  // is back rather than a fixed number of ticks. The timeout fails the test if
+  // the summary never comes back.
+  let rendered: (() => void) | undefined;
+  const host = { ...tui, requestRender: () => rendered?.() } as unknown as TUI;
+  const nextRender = () => new Promise<void>((resolve) => { rendered = resolve; });
+  const component = new AuditSummaryComponent(host, theme, config, () => {});
   component.handleInput(ENTER);
   assert.match(component.render(100).join("\n"), /Additional reviewer context/);
   for (const char of "Focus auth") component.handleInput(char);
+  let render = nextRender();
   component.handleInput(ESCAPE);
-  await settle();
+  do {
+    await render;
+    render = nextRender();
+  } while (!/Persona-audit - guidance/.test(component.render(100).join("\n")));
   assert.match(component.render(100).join("\n"), /10 chars/);
   component.handleInput(ENTER);
   assert.match(component.render(100).join("\n"), /Focus auth/);
