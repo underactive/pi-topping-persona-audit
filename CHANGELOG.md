@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-10-02
+
 ### Changed
 
 - **Findings Review colors its detail text** — an expanded finding's block headings are now bold in the theme's `mdHeading` token instead of flat `text`, and the text under them is painted per segment: `` `code` `` in `mdCode`, `name()` in `syntaxFunction`, `path/file.ts:12` in `syntaxString`, and a fenced block in `mdCodeBlock`, with the prose around them left in `muted`. A segment carries its own color rather than sitting inside a muted line, so text after a highlighted identifier keeps its color. Headings stay non-status tokens — the ⚑ and the status column still carry severity — and the tokens match the ones pi's Markdown component uses, so the overlay and the saved report read alike.
@@ -15,6 +17,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Fixed
 
 - **Findings Review marks the expanded finding** — the highlighted finding's `❯` turns into a `⌄` while its details are open, so a row states its own expansion. Collapsing restores the `❯`, and a finding left open under another highlight keeps a dimmed `⌄`. Both glyphs are one column wide, so the row's columns never shift.
+- **Findings Review repaints after the host invalidates it** — each finding's painted Summary and Rationale lines were cached per item, and those caches survived the component's `invalidate()`, so a host repaint after a theme change kept drawing the old colors on screen. `invalidate()` now clears every item's summary and detail paint caches. Navigation and other internal state changes go through a narrower private path, so moving through findings still reuses the word-wrapping caches instead of rebuilding them on every keystroke.
+- **Scanning a finding's detail text no longer goes quadratic** — the pattern behind the detail colorizer could restart a call match inside an identifier or a dotted receiver, so long identifier-heavy text was scanned in quadratic time. A lookbehind now stops a match from beginning mid-identifier; what the pattern matches, including the path alternative, is unchanged.
+- **README states the real cancellation and stopping behavior** — two sections described behavior the code stopped having some time ago. Fix + Verify stagnation no longer claims an immediate stop: a second occurrence of an actionable failure set schedules an escalated repair while round budget remains, and a third stops the loop. Cancellation no longer claims that Esc in the ExpertPicker cancels the command, or that cancelling the review applies no fixes: Esc there returns to reviewer-source selection, and two Escs in Findings Review cancel the remaining work while keeping the Fix Now fixes already applied and committed.
 
 ## [0.2.3] - 2026-09-30
 

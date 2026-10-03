@@ -484,8 +484,11 @@ The fixed row layout is status icon + gap + agent label + gap + CTX + gap +
 monitor + gap, followed by ACTIVITY and, when eligible, the four stats columns.
 The table aims for roughly half the terminal height, keeps the existing chrome
 floor, and subtracts one budget row for every rendered phase heading before
-allocating agent rows. On a short terminal, `↳` sub-rows and their reserved
-placeholders are dropped before any agent row is.
+allocating agent rows. In pi's default `tuiMode: "fullscreen"`, where the table
+shares the dock with the editor and footer below the transcript, that half is
+taken from the rows above the dock rather than the whole terminal; under
+`tuiMode: "regular"` the sizing is unchanged. On a short terminal, `↳` sub-rows
+and their reserved placeholders are dropped before any agent row is.
 
 On completion the sticky widget unmounts, and a frozen, read-only copy of the
 finished table — settled rows, final meter traces, the footer summary, and an
