@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Tested against pi 1.0.3** — the extension typechecks and its 624 tests pass against 1.0.3, and the development dependencies are now pinned to 1.0.3. pi 1.0.1–1.0.3 remove no symbol this extension imports; the changes to types it uses are additive (`samplingParamsByThinkingLevel` on provider model configs, which audit sessions inherit through the replayed provider configs).
+
 ## [0.2.4] - 2026-10-02
 
 ### Changed
