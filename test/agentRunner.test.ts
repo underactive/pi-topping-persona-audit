@@ -20,10 +20,13 @@ import {
   createIsolatedResourceLoader,
   getAllAssistantText,
   getFinalAssistantText,
+  isVirtualModelRef,
   promptAgentSession,
   resolveModelRef,
   resolveTurnCostModel,
+  runAgentSession,
   TurnCostTracker,
+  virtualModelMessage,
   type SessionMessage,
 } from "../src/agentRunner.ts";
 
@@ -120,6 +123,76 @@ test("resolveModelRef throws with the available-model list when nothing matches"
     () => resolveModelRef("zzz-rt-test-nonexistent-model-xyz", registry),
     /Model not found: "zzz-rt-test-nonexistent-model-xyz"[\s\S]*zzz-rt-test-provider\/zzz-rt-test-alpha-4-5[\s\S]*zzz-rt-test-provider\/zzz-rt-test-beta/,
   );
+});
+
+// ── Virtual (router) models ───────────────────────────────────────────────
+
+/**
+ * The same registry with one virtual model, registered the way autorouter does.
+ * pi marks the provider configured on registration, so the entry reaches
+ * getAvailable()/find() and only the router — not a missing key — distinguishes
+ * it from a physical model with credentials.
+ */
+async function testRegistryWithVirtualModel(): Promise<ModelRegistry> {
+  const registry = await testRegistry();
+  const target = registry.find("zzz-rt-test-provider", "zzz-rt-test-alpha-4-5");
+  assert.ok(target);
+  registry.registerVirtualModel({
+    provider: "zzz-rt-test-virtual",
+    id: "auto",
+    name: "ZZZ RT Test Virtual Auto",
+    route: () => ({ model: target, thinkingLevel: "off" }),
+  });
+  return registry;
+}
+
+test("isVirtualModelRef recognizes only pi's virtual catalog entries", () => {
+  assert.equal(isVirtualModelRef({ api: "pi-virtual" }), true);
+  assert.equal(isVirtualModelRef({ api: "anthropic-messages" }), false);
+  assert.equal(isVirtualModelRef({ api: "openai-completions" }), false, "a physical model must keep pi's own missing-key error");
+  assert.equal(isVirtualModelRef(undefined), false);
+});
+
+test("virtualModelMessage names the model, the reason, and the fix", () => {
+  const message = virtualModelMessage("litellm-auto/auto");
+  assert.ok(message.startsWith("litellm-auto/auto is a virtual (router) model"));
+  assert.ok(message.includes("/persona-audit-settings"));
+  assert.ok(message.includes("/model"));
+});
+
+test("resolveModelRef resolves a registered virtual model", async () => {
+  const registry = await testRegistryWithVirtualModel();
+  const resolved = resolveModelRef("zzz-rt-test-virtual/auto", registry);
+  assert.equal(resolved?.provider, "zzz-rt-test-virtual");
+  assert.equal(resolved?.id, "auto");
+  assert.ok(isVirtualModelRef(resolved));
+});
+
+test("runAgentSession names a virtual model instead of failing with pi's missing-API-key error", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "persona-audit-virtual-model-"));
+  try {
+    const registry = await testRegistryWithVirtualModel();
+    const result = await runAgentSession({
+      agentName: "probe",
+      systemPrompt: "",
+      tools: [],
+      model: "zzz-rt-test-virtual/auto",
+      task: "hello",
+      cwd,
+      modelRegistry: registry,
+      projectTrusted: false,
+    });
+
+    assert.equal(result.stopReason, "error");
+    assert.equal(
+      result.errorMessage,
+      virtualModelMessage("zzz-rt-test-virtual/auto"),
+      "the guard must produce its own message, not pi's missing-key one",
+    );
+    assert.ok(!result.errorMessage.includes("No API key found"));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
 });
 
 test("calculateTurnCost uses registry rates, including long-cache writes", async () => {

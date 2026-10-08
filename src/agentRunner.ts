@@ -120,6 +120,38 @@ export function resolveModelRef(input: string | undefined, registry: ModelRegist
   throw new Error(`Model not found: "${input}".\n\nAvailable models:\n${modelList}`);
 }
 
+/**
+ * API id pi assigns to virtual (router) catalog entries — `VIRTUAL_MODEL_API` in
+ * pi's core/virtual-models.ts. pi exports only VIRTUAL_MODEL_STATE_ENTRY from
+ * its package root, so the value is duplicated here.
+ */
+const VIRTUAL_MODEL_API = "pi-virtual";
+
+/**
+ * Whether a resolved catalogue entry is a virtual (router) model, mirroring pi's
+ * own `isVirtualModel()`. A virtual model picks a physical model per request
+ * through a router registered on the session that created it.
+ */
+export function isVirtualModelRef(model: { api: string } | undefined): boolean {
+  return model?.api === VIRTUAL_MODEL_API;
+}
+
+/**
+ * Actionable replacement for pi's "No API key found for <provider>", which is
+ * what an isolated audit session reports when its model is virtual: the fresh
+ * runtime replays registered providers but never the router, so pi's auth
+ * preflight fails against the virtual provider, which holds no key of its own.
+ *
+ * The first line carries the gist; Fix Now's toast renders only that line.
+ */
+export function virtualModelMessage(label: string): string {
+  return [
+    `${label} is a virtual (router) model, and an audit session cannot run one.`,
+    "Audit sessions build their own model runtime and replay only registered providers, so the router that would pick a physical model is not available, and the virtual provider has no API key of its own.",
+    "Set a physical model for the Dispatch model and each phase in /persona-audit-settings, or select a physical model for this session with /model.",
+  ].join(" ");
+}
+
 // Lives for as long as the registry object itself: pi hands extensions a
 // stable registry per session, and dropping the registry drops its runtime
 // cache with it — same lifetime rule as CATALOGUES in modelCatalogue.ts.
@@ -375,6 +407,12 @@ export async function createInteractiveAgentSession(
   opts: CreateInteractiveSessionOptions,
 ): Promise<InteractiveAgentSession> {
   const resolvedModel = resolveModelRef(opts.model, opts.modelRegistry);
+  // A virtual (router) model cannot run here: the fresh runtime built below
+  // replays registered providers, never the router, so pi fails its auth
+  // preflight on the router's provider with a misleading missing-key error.
+  if (resolvedModel && isVirtualModelRef(resolvedModel)) {
+    throw new Error(virtualModelMessage(`${resolvedModel.provider}/${resolvedModel.id}`));
+  }
   const agentDir = getAgentDir();
   const settings = SettingsManager.create(opts.cwd, agentDir, { projectTrusted: opts.projectTrusted });
   const modelRuntime = await buildRuntimeWithExtensionProviders(opts.modelRegistry, agentDir);

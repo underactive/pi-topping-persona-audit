@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A virtual dispatch or phase model now names itself instead of reporting a missing API key** — virtual (router) models such as `litellm-auto/*` are listed in pi's model catalogue, so they can be selected as the Dispatch model, a phase model, or inherited as the session model. An isolated audit session replays registered providers onto a fresh model runtime but never the router that picks a physical model, so pi's auth preflight failed on the virtual provider — which holds no credential of its own — with `No API key found for litellm-auto`, surfacing as `Reviewer recommendation failed: No API key found for litellm-auto`. Audit sessions now detect a virtual model before creating the session and fail with an actionable message naming the model and pointing at `/persona-audit-settings` (or `/model` for the session). A physical provider with genuinely missing credentials still reports pi's original error.
+
 ## [0.2.5] - 2026-10-05
 
 ### Changed
