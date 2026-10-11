@@ -407,11 +407,16 @@ export async function createInteractiveAgentSession(
   opts: CreateInteractiveSessionOptions,
 ): Promise<InteractiveAgentSession> {
   const resolvedModel = resolveModelRef(opts.model, opts.modelRegistry);
-  // A virtual (router) model cannot run here: the fresh runtime built below
-  // replays registered providers, never the router, so pi fails its auth
-  // preflight on the router's provider with a misleading missing-key error.
+  // A virtual (router) model cannot run in an isolated session: its fresh
+  // runtime replays registered providers, never the router.
   if (resolvedModel && isVirtualModelRef(resolvedModel)) {
-    throw new Error(virtualModelMessage(`${resolvedModel.provider}/${resolvedModel.id}`));
+    const errorMessage = virtualModelMessage(`${resolvedModel.provider}/${resolvedModel.id}`);
+    return {
+      async prompt(): Promise<HeadlessResult> {
+        return failedResult(errorMessage);
+      },
+      dispose(): void {},
+    };
   }
   const agentDir = getAgentDir();
   const settings = SettingsManager.create(opts.cwd, agentDir, { projectTrusted: opts.projectTrusted });

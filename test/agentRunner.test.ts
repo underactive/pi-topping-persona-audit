@@ -195,6 +195,30 @@ test("runAgentSession names a virtual model instead of failing with pi's missing
   }
 });
 
+test("createInteractiveAgentSession returns a failed prompt result for a virtual model", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "persona-audit-virtual-session-"));
+  try {
+    const session = await createInteractiveAgentSession({
+      agentName: "probe",
+      systemPrompt: "",
+      tools: [],
+      model: "zzz-rt-test-virtual/auto",
+      cwd,
+      modelRegistry: await testRegistryWithVirtualModel(),
+      projectTrusted: false,
+    });
+    try {
+      const result = await session.prompt("hello");
+      assert.equal(result.stopReason, "error");
+      assert.equal(result.errorMessage, virtualModelMessage("zzz-rt-test-virtual/auto"));
+    } finally {
+      session.dispose();
+    }
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("calculateTurnCost uses registry rates, including long-cache writes", async () => {
   const registry = await testRegistry();
   const model = registry.find("zzz-rt-test-provider", "zzz-rt-test-alpha-4-5");
