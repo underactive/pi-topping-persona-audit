@@ -20,7 +20,7 @@ import {
   createIsolatedResourceLoader,
   getAllAssistantText,
   getFinalAssistantText,
-  isVirtualModelRef,
+  isVirtualModel,
   promptAgentSession,
   resolveModelRef,
   resolveTurnCostModel,
@@ -146,26 +146,27 @@ async function testRegistryWithVirtualModel(): Promise<ModelRegistry> {
   return registry;
 }
 
-test("isVirtualModelRef recognizes only pi's virtual catalog entries", () => {
-  assert.equal(isVirtualModelRef({ api: "pi-virtual" }), true);
-  assert.equal(isVirtualModelRef({ api: "anthropic-messages" }), false);
-  assert.equal(isVirtualModelRef({ api: "openai-completions" }), false, "a physical model must keep pi's own missing-key error");
-  assert.equal(isVirtualModelRef(undefined), false);
+test("isVirtualModel recognizes only pi's virtual catalog entries", () => {
+  assert.equal(isVirtualModel({ api: "pi-virtual" }), true);
+  assert.equal(isVirtualModel({ api: "anthropic-messages" }), false);
+  assert.equal(isVirtualModel({ api: "openai-completions" }), false, "a physical model must keep pi's own missing-key error");
 });
 
 test("virtualModelMessage names the model, the reason, and the fix", () => {
   const message = virtualModelMessage("litellm-auto/auto");
   assert.ok(message.startsWith("litellm-auto/auto is a virtual (router) model"));
-  assert.ok(message.includes("/persona-audit-settings"));
-  assert.ok(message.includes("/model"));
+  assert.ok(message.split("\n", 1)[0]?.includes("phase picker"));
+  assert.ok(message.split("\n", 1)[0]?.includes("/persona-audit-settings"));
+  assert.ok(message.split("\n", 1)[0]?.includes("/model"));
 });
 
 test("resolveModelRef resolves a registered virtual model", async () => {
   const registry = await testRegistryWithVirtualModel();
   const resolved = resolveModelRef("zzz-rt-test-virtual/auto", registry);
+  assert.ok(resolved);
   assert.equal(resolved?.provider, "zzz-rt-test-virtual");
   assert.equal(resolved?.id, "auto");
-  assert.ok(isVirtualModelRef(resolved));
+  assert.ok(isVirtualModel(resolved));
 });
 
 test("runAgentSession names a virtual model instead of failing with pi's missing-API-key error", async () => {

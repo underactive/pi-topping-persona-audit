@@ -2216,7 +2216,7 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
           const options = reconcileOptions();
           let result = await runAgentSession(options);
           // A transient provider error drops every recommendation from this phase, so it gets one retry before prompting.
-          // A "Model not found" error is resolveModelRef rejecting the ref before any network call — deterministic and permanent.
+          // A "Model not found" error or virtual-model rejection happens before any network call — deterministic and permanent.
           if (
             isFailedRun(result) &&
             result.stopReason === "error" &&

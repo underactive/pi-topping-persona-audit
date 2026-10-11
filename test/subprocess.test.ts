@@ -10,6 +10,7 @@ import {
   mapWithConcurrencyLimit,
   OutputActivityTracker,
 } from "../src/subprocess.ts";
+import { virtualModelMessage } from "../src/agentRunner.ts";
 import type { AssistantMessageEvent, Message } from "@earendil-works/pi-ai";
 
 // ── Fixtures: minimal fake assistant messages/events (the tracker only reads .role and .usage) ──
@@ -113,8 +114,9 @@ test("mapWithConcurrencyLimit preserves order and caps concurrency", async () =>
 
 // ── Permanent-failure classification ────────────────────────────────────
 
-test("isPermanentRunFailure recognizes resolveModelRef's pre-network error", () => {
+test("isPermanentRunFailure recognizes pre-network errors", () => {
   assert.equal(isPermanentRunFailure('Model not found: "gpt-99".\n\nAvailable models:\n- gpt-5'), true);
+  assert.equal(isPermanentRunFailure(virtualModelMessage("litellm-auto/auto")), true);
   assert.equal(isPermanentRunFailure("model not found: gpt-99"), false, "resolveModelRef's prefix is capitalized");
   assert.equal(isPermanentRunFailure("connection reset by peer"), false);
   assert.equal(isPermanentRunFailure(""), false);

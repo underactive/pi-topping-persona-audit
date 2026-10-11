@@ -250,7 +250,7 @@ export function isFailedRun(result: HeadlessResult): boolean {
   return result.aborted || result.stopReason === "error" || result.stopReason === "aborted";
 }
 
-/** Matched against the errorMessage resolveModelRef throws before any network call. */
+/** Matched against pre-network errors from resolveModelRef and the virtual-model guard. */
 export function isPermanentRunFailure(errorMessage: string | undefined): boolean {
-  return !!errorMessage && errorMessage.startsWith("Model not found");
+  return !!errorMessage && (errorMessage.startsWith("Model not found") || errorMessage.includes("is a virtual (router) model"));
 }

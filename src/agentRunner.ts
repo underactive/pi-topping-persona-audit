@@ -121,7 +121,7 @@ export function resolveModelRef(input: string | undefined, registry: ModelRegist
 }
 
 /**
- * API id pi assigns to virtual (router) catalog entries — `VIRTUAL_MODEL_API` in
+ * API id pi assigns to virtual (router) catalogue entries — `VIRTUAL_MODEL_API` in
  * pi's core/virtual-models.ts. pi exports only VIRTUAL_MODEL_STATE_ENTRY from
  * its package root, so the value is duplicated here.
  */
@@ -130,26 +130,26 @@ const VIRTUAL_MODEL_API = "pi-virtual";
 /**
  * Whether a resolved catalogue entry is a virtual (router) model, mirroring pi's
  * own `isVirtualModel()`. A virtual model picks a physical model per request
- * through a router registered on the session that created it.
+ * through a router registered on the host's model registry
+ * (`registerVirtualModel()`), which buildRuntime() does not replay.
  */
-export function isVirtualModelRef(model: { api: string } | undefined): boolean {
-  return model?.api === VIRTUAL_MODEL_API;
+export function isVirtualModel(model: { api: string }): boolean {
+  return model.api === VIRTUAL_MODEL_API;
 }
 
 /**
- * Actionable replacement for pi's "No API key found for <provider>", which is
- * what an isolated audit session reports when its model is virtual: the fresh
- * runtime replays registered providers but never the router, so pi's auth
- * preflight fails against the virtual provider, which holds no key of its own.
+ * Actionable replacement for the error an isolated audit session hits on a virtual
+ * model — for a keyless router provider, pi's "No API key found for <provider>".
+ * The fresh runtime replays registered providers but never the router, and pi
+ * cannot send a request for a virtual model that was never routed.
  *
  * The first line carries the gist; Fix Now's toast renders only that line.
  */
 export function virtualModelMessage(label: string): string {
   return [
-    `${label} is a virtual (router) model, and an audit session cannot run one.`,
-    "Audit sessions build their own model runtime and replay only registered providers, so the router that would pick a physical model is not available, and the virtual provider has no API key of its own.",
-    "Set a physical model for the Dispatch model and each phase in /persona-audit-settings, or select a physical model for this session with /model.",
-  ].join(" ");
+    `${label} is a virtual (router) model; choose a physical one in the phase picker, /persona-audit-settings (Dispatch), or /model.`,
+    "Audit sessions build their own model runtime and replay only registered providers, so the router that would pick a physical model is not available.",
+  ].join("\n");
 }
 
 // Lives for as long as the registry object itself: pi hands extensions a
@@ -402,14 +402,15 @@ export function buildHeadlessSessionOptions(
  * Creates a persistent interactive agent session.
  * The session maintains conversation history across multiple prompt() calls
  * until dispose() is called.
+ * Rejects when a supplied `opts.model` does not resolve. A virtual (router) model returns
+ * a session whose prompt() produces a failed HeadlessResult; runAgentSession()
+ * reports both failures in its returned HeadlessResult.
  */
 export async function createInteractiveAgentSession(
   opts: CreateInteractiveSessionOptions,
 ): Promise<InteractiveAgentSession> {
   const resolvedModel = resolveModelRef(opts.model, opts.modelRegistry);
-  // A virtual (router) model cannot run in an isolated session: its fresh
-  // runtime replays registered providers, never the router.
-  if (resolvedModel && isVirtualModelRef(resolvedModel)) {
+  if (resolvedModel && isVirtualModel(resolvedModel)) {
     const errorMessage = virtualModelMessage(`${resolvedModel.provider}/${resolvedModel.id}`);
     return {
       async prompt(): Promise<HeadlessResult> {
