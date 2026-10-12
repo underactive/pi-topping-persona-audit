@@ -116,7 +116,7 @@ test("mapWithConcurrencyLimit preserves order and caps concurrency", async () =>
 
 test("isPermanentRunFailure recognizes pre-network errors", () => {
   assert.equal(isPermanentRunFailure('Model not found: "gpt-99".\n\nAvailable models:\n- gpt-5'), true);
-  assert.equal(isPermanentRunFailure(virtualModelMessage("litellm-auto/auto")), true);
+  assert.equal(isPermanentRunFailure(virtualModelMessage("routesense/auto")), true);
   assert.equal(isPermanentRunFailure("model not found: gpt-99"), false, "resolveModelRef's prefix is capitalized");
   assert.equal(isPermanentRunFailure("connection reset by peer"), false);
   assert.equal(isPermanentRunFailure(""), false);

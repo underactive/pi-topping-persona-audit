@@ -153,8 +153,8 @@ test("isVirtualModel recognizes only pi's virtual catalog entries", () => {
 });
 
 test("virtualModelMessage names the model, the reason, and the fix", () => {
-  const message = virtualModelMessage("litellm-auto/auto");
-  assert.ok(message.startsWith("litellm-auto/auto is a virtual (router) model"));
+  const message = virtualModelMessage("routesense/auto");
+  assert.ok(message.startsWith("routesense/auto is a virtual (router) model"));
   assert.ok(message.split("\n", 1)[0]?.includes("phase picker"));
   assert.ok(message.split("\n", 1)[0]?.includes("/persona-audit-settings"));
   assert.ok(message.split("\n", 1)[0]?.includes("/model"));
