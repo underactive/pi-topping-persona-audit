@@ -6,17 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
-## [0.2.5] - 2026-10-05
-
-### Changed
-
-- **Tested against pi 1.0.3** — the extension typechecks and its 624 tests pass against 1.0.3, and the development dependencies are now pinned to 1.0.3. pi 1.0.1–1.0.3 remove no symbol this extension imports; the changes to types it uses are additive (`samplingParamsByThinkingLevel` on provider model configs, which audit sessions inherit through the replayed provider configs).
+## [0.3.0] - 2026-10-12
 
 ### Fixed
 
 - **Audit sessions name a virtual dispatch or phase model instead of reporting a missing API key** — virtual (router) models such as `litellm-auto/*` are listed in pi's model catalogue, so they can be selected as the Dispatch model, a phase model, or inherited as the session model. An isolated audit session replays registered providers onto a fresh model runtime but never the router that picks a physical model, so pi's auth preflight failed on the virtual provider — which holds no credential of its own — with `No API key found for litellm-auto`, surfacing as `Reviewer recommendation failed: No API key found for litellm-auto`. Audit sessions now detect a virtual model and report a failed run whose message names the model and points at the phase picker, the Dispatch model in `/persona-audit-settings`, or `/model` for the session. A physical provider with genuinely missing credentials still reports pi's original error.
 - **Fix Now no longer aborts the audit on a virtual fix model** — creating the fix session threw the virtual-model error instead of reporting it. `runFixNow` rejected, the rejection propagated out of the audit, and every remaining finding was lost with it. The fix session now reports a failed run, so Fix Now takes its normal failure path: it notifies `fix agent failed: <model> is a virtual (router) model`, applies no fix, and the review continues.
 - **Virtual-model rejections are no longer retried as transient errors** — the adjudicator's reconcile pass retries a non-permanent failure once after five seconds, and it recognized only `Model not found` as permanent. A virtual-model rejection also happens before any network call, so the retry fails the same way. The check now matches that message too, and the reconcile pass ends at once with the message that names the model.
+
+## [0.2.5] - 2026-10-05
+
+### Changed
+
+- **Tested against pi 1.0.3** — the extension typechecks and its 624 tests pass against 1.0.3, and the development dependencies are now pinned to 1.0.3. pi 1.0.1–1.0.3 remove no symbol this extension imports; the changes to types it uses are additive (`samplingParamsByThinkingLevel` on provider model configs, which audit sessions inherit through the replayed provider configs).
 
 ## [0.2.4] - 2026-10-02
 
