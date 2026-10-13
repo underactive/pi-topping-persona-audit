@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Tested against pi 1.2.0** — the extension typechecks and its 629 tests pass against 1.2.0, and the development dependencies are now pinned to 1.2.0. pi 1.0.4–1.2.0 remove no symbol this extension imports, so every import from pi-ai, pi-tui and pi-coding-agent compiles unchanged. pi 1.2.0's breaking changes to `before_agent_start` and to runs started by `pi.sendMessage()` do not reach it: the extension registers no `before_agent_start` handler, and its one `pi.sendMessage()` call, the end-of-audit summary, passes `triggerTurn: false`, which still appends the message at once when the session is idle. pi 1.2.0 also stops depending on `@earendil-works/chord`, which removes it and its `esbuild` toolchain from the development install; the extension never imported either.
+
 ## [0.3.0] - 2026-10-12
 
 ### Fixed
