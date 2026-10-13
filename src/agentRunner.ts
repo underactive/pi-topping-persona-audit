@@ -392,6 +392,7 @@ export function buildHeadlessSessionOptions(
     // The SDK clamps every level to model capability, including "max".
     thinkingLevel: opts.thinking,
     tools: opts.tools,
+    excludeTools: opts.excludeTools,
     resourceLoader,
     sessionManager: SessionManager.inMemory(opts.cwd),
     settingsManager: createHeadlessSettingsManager(settings),

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { calculateCost, InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import {
+  createAgentSession,
   DefaultResourceLoader,
   getAgentDir,
   ModelRegistry,
@@ -29,6 +30,8 @@ import {
   virtualModelMessage,
   type SessionMessage,
 } from "../src/agentRunner.ts";
+import { withoutBash } from "../src/subprocess.ts";
+import type { HeadlessOptions } from "../src/types.ts";
 
 // Exercises the real ModelRegistry.registerProvider() path — the same
 // mechanism a bridge/extension provider uses at runtime — rather than a
@@ -483,6 +486,7 @@ test("buildHeadlessSessionOptions isolates the session and forwards max thinking
         projectTrusted: false,
         systemPrompt: "",
         tools: ["read"],
+        excludeTools: ["bash"],
         agentName: "probe",
         thinking: "max",
       },
@@ -498,6 +502,46 @@ test("buildHeadlessSessionOptions isolates the session and forwards max thinking
     assert.equal(options.settingsManager?.isProjectTrusted(), false);
     assert.equal(options.resourceLoader, loader);
     assert.equal(options.model, model, "the runner must forward the exact model object");
+    assert.deepEqual(options.excludeTools, ["bash"], "the runner must forward the exclusions");
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+    await rm(agentDir, { recursive: true, force: true });
+  }
+});
+
+test("withoutBash() keeps bash out of a real pi session even when a * entry matches it", async () => {
+  // No prompt is sent, so no model call: only the session's tool setup runs.
+  const cwd = await mkdtemp(join(tmpdir(), "persona-audit-nobash-"));
+  const agentDir = await mkdtemp(join(tmpdir(), "persona-audit-nobash-agent-"));
+  try {
+    const registry = await testRegistry();
+    const runtime = await buildRuntimeWithExtensionProviders(registry, agentDir);
+    const settings = SettingsManager.create(cwd, agentDir, { projectTrusted: false });
+    const loader = createIsolatedResourceLoader(cwd, agentDir, "", settings);
+    await loader.reload();
+    const model = registry.find("zzz-rt-test-provider", "zzz-rt-test-alpha-4-5");
+    assert.ok(model);
+
+    const toolsOf = async (tools: Pick<HeadlessOptions, "tools" | "excludeTools">) => {
+      const base = { cwd, modelRegistry: registry, projectTrusted: false, systemPrompt: "", agentName: "probe" };
+      const { session } = await createAgentSession(
+        buildHeadlessSessionOptions({ ...base, ...tools }, agentDir, runtime, loader, model, settings),
+      );
+      try {
+        return { active: session.getActiveToolNames(), registered: session.getAllTools().map((tool) => tool.name) };
+      } finally {
+        session.dispose();
+      }
+    };
+
+    // Control: the wildcard alone activates bash, so the exclusion is what keeps it out below.
+    const unguarded = await toolsOf({ tools: ["read", "edit", "*"] });
+    assert.ok(unguarded.active.includes("bash"), "pi's * wildcard matches bash");
+
+    const guarded = await toolsOf(withoutBash(["read", "edit", "*"]));
+    assert.ok(!guarded.active.includes("bash"), `bash must not be active: ${guarded.active.join(", ")}`);
+    assert.ok(!guarded.registered.includes("bash"), "bash must not be registered, so nothing can reach it");
+    assert.ok(guarded.active.includes("edit"), "the session keeps its other tools");
   } finally {
     await rm(cwd, { recursive: true, force: true });
     await rm(agentDir, { recursive: true, force: true });

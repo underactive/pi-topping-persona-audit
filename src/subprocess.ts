@@ -12,13 +12,14 @@ import * as path from "node:path";
 import type { AssistantMessageEvent, Message } from "@earendil-works/pi-ai";
 import { CONFIG_DIR_NAME, getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import { StreamingWordCounter } from "./activityMeter.ts";
-import type { HeadlessResult } from "./types.ts";
+import type { HeadlessOptions, HeadlessResult } from "./types.ts";
 
 // ── Agent discovery (pattern from examples/extensions/subagent/agents.ts) ──
 
 export interface AgentConfig {
   name: string;
   description: string;
+  /** Frontmatter `tools:` entries as written; `resolveAgentTools()` turns them into a session's tools. */
   tools?: string[];
   model?: string;
   systemPrompt: string;
@@ -126,6 +127,55 @@ export function discoverAgents(cwd: string): AgentConfig[] {
     }
   }
   return [...agentMap.values()];
+}
+
+// ── Agent tool lists ───
+
+/** Whether a `tools:` entry edits a default list (`+name`/`-name`) rather than naming a tool, as pi 1.1.0+ reads it. */
+function isToolModifier(entry: string): boolean {
+  return entry.startsWith("+") || entry.startsWith("-");
+}
+
+/**
+ * The tools an agent's sessions get: its frontmatter `tools:`, or `defaults` (the
+ * role's own tools) when the file lists none. A list made only of `+name`/`-name`
+ * entries edits `defaults`. Passed through, pi 1.1.0+ would apply it to pi's own
+ * default tools (`read, bash, edit, write`) and lift its allowlist, so it is
+ * resolved here and pi only ever receives tool names and `*` patterns.
+ *
+ * Throws, naming the agent file, on the lists pi rejects: names mixed with
+ * `+`/`-` entries, and a `+`/`-` entry holding a `*` pattern.
+ */
+export function resolveAgentTools(agent: Pick<AgentConfig, "tools" | "filePath">, defaults: readonly string[]): string[] {
+  const entries = agent.tools;
+  if (!entries) return [...defaults];
+  const modifiers = entries.filter(isToolModifier);
+  if (modifiers.length === 0) return [...entries];
+  if (modifiers.length < entries.length) {
+    throw new Error(`Invalid tools in ${agent.filePath}: tool names cannot be mixed with +name or -name entries`);
+  }
+  const pattern = modifiers.find((entry) => entry.includes("*"));
+  if (pattern) {
+    throw new Error(`Invalid tools in ${agent.filePath}: +name and -name entries take exact tool names, not patterns: ${pattern}`);
+  }
+  const tools = [...defaults];
+  for (const entry of modifiers) {
+    const name = entry.slice(1);
+    const index = tools.indexOf(name);
+    if (entry.startsWith("+") && index === -1 && name) tools.push(name);
+    else if (entry.startsWith("-") && index !== -1) tools.splice(index, 1);
+  }
+  return tools;
+}
+
+/**
+ * Tool options for a session that edits files but must never shell out. Dropping
+ * "bash" from the allowlist is not enough on its own: since pi 1.0.4 a `*` entry
+ * is a wildcard that matches bash again. pi checks `excludeTools` before the
+ * allowlist, so an excluded tool is never registered, whatever the list matches.
+ */
+export function withoutBash(tools: readonly string[]): Pick<HeadlessOptions, "tools" | "excludeTools"> {
+  return { tools: tools.filter((t) => t !== "bash"), excludeTools: ["bash"] };
 }
 
 // ── Concurrency helper ───

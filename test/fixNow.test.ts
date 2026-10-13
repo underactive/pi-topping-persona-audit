@@ -106,6 +106,7 @@ function makeDeps(opts: HarnessOptions) {
     createSession: async (options): Promise<InteractiveAgentSession> => {
       assert.equal(options.agentName, "fix now implement");
       assert.ok(!options.tools.includes("bash"), "the fix agent never gets bash");
+      assert.deepEqual(options.excludeTools, ["bash"], "nor can a * entry in its tools re-admit it");
       assert.equal(options.projectTrusted, false);
       assert.ok(sessions.every((session) => session.disposed), "the prior attempt is disposed before retry");
       const record: FakeSessionRecord = { options, prompts: [], disposed: false };

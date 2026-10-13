@@ -4,46 +4,36 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
-const orchestratorPath = join(
-  dirname(fileURLToPath(import.meta.url)),
-  "..",
-  "src",
-  "orchestrator.ts",
-);
+const srcDir = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
 
-// Returns the `tools:` expression passed to the runAgentSession call whose
-// `agentName` line matches `namePattern`, scanning forward from that line.
-const toolsForSession = (lines: string[], namePattern: RegExp): string | undefined => {
+// Returns the line that sets the tools of the session whose `agentName` line
+// matches `namePattern` (a `tools:` property or a withoutBash() spread),
+// scanning forward from that line.
+const toolsLineForSession = (lines: string[], namePattern: RegExp): string | undefined => {
   const start = lines.findIndex((l) => namePattern.test(l));
   if (start === -1) return undefined;
   for (let i = start + 1; i < lines.length && i < start + 20; i++) {
-    const m = lines[i]?.match(/^\s*tools:\s*(.+?),?\s*$/);
-    if (m) return m[1];
+    const line = lines[i]?.trim();
+    if (line && (/^tools:\s/.test(line) || /^\.\.\.withoutBash\(/.test(line))) return line;
   }
   return undefined;
 };
 
-test("implement and gate-repair adjudicator sessions filter bash out of their tools", async () => {
-  const src = await readFile(orchestratorPath, "utf-8");
-  const lines = src.split("\n");
-
-  // EDIT_TOOLS contains "bash"; an edit-capable adjudicator session that
-  // receives it unfiltered can shell out and escape the file-manifest
-  // containment, so "touch only your files" degrades to prompt-only. Both the
-  // fix-implement and gate-repair sessions must strip "bash" before it
-  // reaches runAgentSession.
-  const sessions: Array<[string, RegExp]> = [
-    ["implement", /agentName:\s*`adjudicator implement/],
-    ["gate-repair", /agentName:\s*`adjudicator repair/],
+test("implement, gate-repair and Fix Now sessions take their tools from withoutBash()", async () => {
+  // The adjudicator's tools include "bash"; an edit-capable session that
+  // receives it can shell out and escape the file-manifest containment, so
+  // "touch only your files" degrades to prompt-only. withoutBash() drops it
+  // from the allowlist and excludes it, so no `*` entry can re-admit it.
+  const sessions: Array<[string, string, RegExp]> = [
+    ["implement", "orchestrator.ts", /agentName:\s*`adjudicator implement/],
+    ["gate-repair", "orchestrator.ts", /agentName:\s*`adjudicator repair/],
+    ["Fix Now", "fixNow.ts", /agentName:\s*"fix now implement"/],
   ];
 
-  for (const [label, pattern] of sessions) {
-    const tools = toolsForSession(lines, pattern);
-    assert.ok(tools, `could not locate the ${label} adjudicator session's tools line`);
-    assert.match(
-      tools,
-      /\.filter\(.*!==\s*["']bash["']/,
-      `${label} adjudicator tools must filter out bash: ${tools}`,
-    );
+  for (const [label, file, pattern] of sessions) {
+    const lines = (await readFile(join(srcDir, file), "utf-8")).split("\n");
+    const toolsLine = toolsLineForSession(lines, pattern);
+    assert.ok(toolsLine, `could not locate the ${label} adjudicator session's tools line in ${file}`);
+    assert.match(toolsLine, /^\.\.\.withoutBash\(/, `${label} adjudicator tools must keep bash out: ${toolsLine}`);
   }
 });

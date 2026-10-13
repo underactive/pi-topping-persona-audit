@@ -52,6 +52,8 @@ import {
   isFailedRun,
   isPermanentRunFailure,
   mapWithConcurrencyLimit,
+  resolveAgentTools,
+  withoutBash,
 } from "./subprocess.ts";
 import {
   type CollectionDiagnostics,
@@ -157,7 +159,7 @@ const findingLabel = (f: { file: string; line: number }): string =>
   f.line > 0 ? `${f.file}:${f.line}` : f.file;
 
 export const READ_ONLY_TOOLS = ["read", "grep", "find", "ls"];
-const EDIT_TOOLS = [...READ_ONLY_TOOLS, "bash", "edit", "write"];
+export const EDIT_TOOLS = [...READ_ONLY_TOOLS, "bash", "edit", "write"];
 export const AGENT_IDLE_TIMEOUT_MS = 600_000;
 
 /** Cap on retries prompted by unusable (low-match) verifier output, per round. */
@@ -1720,6 +1722,10 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
         `Required agents not found (need "${REVIEWER_AGENT}", "${ADJUDICATOR_AGENT}" and "${VERIFIER_AGENT}"; available: ${available})`,
       );
     }
+    // Only the adjudicator's frontmatter tools reach a session. Resolved before
+    // anything spawns, so an override pi would reject fails here with its file
+    // named instead of in the implement phase after the review has run.
+    const adjudicatorTools = resolveAgentTools(adjudicatorAgent, EDIT_TOOLS);
     // Validate personalities up front so we fail before spawning anything.
     // Skipped on resume: handoff reviewer names are historical labels, not
     // personalities to spawn.
@@ -2374,7 +2380,7 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
           ctx,
           adjudicatorSystemPrompt: adjudicatorAgent.systemPrompt,
           verifierSystemPrompt: verifierAgent.systemPrompt,
-          adjudicatorTools: adjudicatorAgent.tools ?? EDIT_TOOLS,
+          adjudicatorTools,
           readOnlyTools: READ_ONLY_TOOLS,
           implementModel: { model: implementModel.model, thinking: implementModel.thinking },
           verifyModel: { model: verifyModel.model, thinking: verifyModel.thinking },
@@ -2483,7 +2489,7 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
       const result = await runAgentSession({
         agentName: `adjudicator implement ${batch.index + 1}/${applyBatches.length}`,
         systemPrompt: adjudicatorAgent.systemPrompt,
-        tools: (adjudicatorAgent.tools ?? EDIT_TOOLS).filter((t) => t !== "bash"),
+        ...withoutBash(adjudicatorTools),
         model: implementModel.model,
         thinking: implementModel.thinking,
         task: buildApplyTask(batch),
@@ -2816,7 +2822,7 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
         const repairRun = await runAgentSession({
           agentName: `adjudicator repair round ${nextRound}${escalatedSuffix}`,
           systemPrompt: adjudicatorAgent.systemPrompt,
-          tools: (adjudicatorAgent.tools ?? EDIT_TOOLS).filter((t) => t !== "bash"),
+          ...withoutBash(adjudicatorTools),
           model: implementModel.model,
           thinking: implementModel.thinking,
           task: repair.task,

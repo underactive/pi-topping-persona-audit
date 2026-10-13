@@ -9,6 +9,7 @@ import {
   loadAgentsFromDir,
   mapWithConcurrencyLimit,
   OutputActivityTracker,
+  resolveAgentTools,
 } from "../src/subprocess.ts";
 import { virtualModelMessage } from "../src/agentRunner.ts";
 import type { AssistantMessageEvent, Message } from "@earendil-works/pi-ai";
@@ -93,6 +94,61 @@ test("discovery finds the required agents from a cwd with no project-local .pi/a
   const names = discoverAgents(tmpdir()).map((a) => a.name);
   assert.ok(names.includes("persona-audit-reviewer"));
   assert.ok(names.includes("persona-audit-adjudicator"));
+});
+
+// ── Agent tool lists ──
+
+const ROLE_TOOLS = ["read", "grep", "find", "ls", "bash", "edit", "write"];
+const agentFile = "/home/me/.pi/agent/agents/persona-audit-adjudicator.md";
+
+test("resolveAgentTools keeps a list of names and falls back to a copy of the role's tools", () => {
+  assert.deepEqual(resolveAgentTools({ tools: ["read", "edit"], filePath: agentFile }, ROLE_TOOLS), ["read", "edit"]);
+  assert.deepEqual(
+    resolveAgentTools({ tools: ["read", "mcp__*"], filePath: agentFile }, ROLE_TOOLS),
+    ["read", "mcp__*"],
+    "patterns among names are left for pi to match",
+  );
+  const fallback = resolveAgentTools({ filePath: agentFile }, ROLE_TOOLS);
+  assert.deepEqual(fallback, ROLE_TOOLS);
+  fallback.pop();
+  assert.equal(ROLE_TOOLS.length, 7, "callers may change the result without touching the shared defaults");
+});
+
+test("resolveAgentTools applies +name/-name entries to the role's tools, not pi's defaults", () => {
+  // Passed through, pi 1.1.0+ would edit read/bash/edit/write and drop grep, find and ls.
+  assert.deepEqual(resolveAgentTools({ tools: ["-write"], filePath: agentFile }, ROLE_TOOLS), [
+    "read",
+    "grep",
+    "find",
+    "ls",
+    "bash",
+    "edit",
+  ]);
+  assert.deepEqual(resolveAgentTools({ tools: ["+codemode", "-ls"], filePath: agentFile }, ROLE_TOOLS), [
+    "read",
+    "grep",
+    "find",
+    "bash",
+    "edit",
+    "write",
+    "codemode",
+  ]);
+  assert.deepEqual(
+    resolveAgentTools({ tools: ["+read", "-missing", "+"], filePath: agentFile }, ROLE_TOOLS),
+    ROLE_TOOLS,
+    "adding a present tool, removing an absent one, or a bare + changes nothing",
+  );
+});
+
+test("resolveAgentTools rejects the lists pi rejects, naming the agent file", () => {
+  assert.throws(
+    () => resolveAgentTools({ tools: ["read", "-write"], filePath: agentFile }, ROLE_TOOLS),
+    new Error(`Invalid tools in ${agentFile}: tool names cannot be mixed with +name or -name entries`),
+  );
+  assert.throws(
+    () => resolveAgentTools({ tools: ["+mcp__*"], filePath: agentFile }, ROLE_TOOLS),
+    new Error(`Invalid tools in ${agentFile}: +name and -name entries take exact tool names, not patterns: +mcp__*`),
+  );
 });
 
 // ── Concurrency ──────────────────────────────────────────────

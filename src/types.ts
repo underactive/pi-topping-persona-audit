@@ -240,6 +240,8 @@ export interface HeadlessOptions {
   systemPrompt: string;
   /** Tool allowlist passed to the agent session (from agent .md frontmatter). */
   tools: string[];
+  /** Tools the session never registers, even when `tools` names them or matches them with a `*` pattern. */
+  excludeTools?: string[];
   /** Model pattern resolved against the model registry (from agent .md frontmatter). */
   model?: string;
   /** Thinking level passed to the agent session, if a per-phase override is set. */

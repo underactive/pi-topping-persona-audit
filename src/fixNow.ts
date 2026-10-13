@@ -20,7 +20,7 @@ import { gitCommitFiles, gitDiff, gitRestoreFiles, gitStatusPorcelain, type File
 import type { ThinkingLevel } from "./modelConfig.ts";
 import { FIX_NOW_APPLY_DIRECTIVE, UNTRUSTED_DATA_RULE } from "./skillContent.ts";
 import { resolveTargetPath } from "./snapshot.ts";
-import { isFailedRun } from "./subprocess.ts";
+import { isFailedRun, withoutBash } from "./subprocess.ts";
 import type { Finding, FixedFinding, HeadlessOptions, HeadlessResult, ReviewSessionState } from "./types.ts";
 
 const AGENT_IDLE_TIMEOUT_MS = 600_000;
@@ -37,7 +37,7 @@ export interface FixNowDeps {
   ctx: Pick<ExtensionCommandContext, "cwd" | "ui" | "modelRegistry">;
   adjudicatorSystemPrompt: string;
   verifierSystemPrompt: string;
-  /** Adjudicator tool allowlist; bash is stripped here, matching the batch implement phase. */
+  /** Adjudicator tools resolved from its frontmatter; bash is kept out here, matching the batch implement phase. */
   adjudicatorTools: string[];
   readOnlyTools: string[];
   implementModel: PhaseModel;
@@ -319,7 +319,7 @@ export async function runFixNow(
   const implementOptions: CreateInteractiveSessionOptions = {
     agentName: "fix now implement",
     systemPrompt: deps.adjudicatorSystemPrompt,
-    tools: deps.adjudicatorTools.filter((t) => t !== "bash"),
+    ...withoutBash(deps.adjudicatorTools),
     model: deps.implementModel.model,
     thinking: deps.implementModel.thinking,
     cwd: ctx.cwd,

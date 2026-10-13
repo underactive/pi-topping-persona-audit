@@ -540,6 +540,14 @@ overriding the previous on a name collision:
 A stale copy in `~/.pi/agent/agents/` therefore shadows the bundled definitions;
 delete it if edits to `agents/*.md` appear to have no effect.
 
+**Adjudicator tool overrides** — the adjudicator's `tools:` frontmatter sets the
+tools of the sessions that edit code: batch implement, gate repair, and Fix Now.
+A list made only of `+name` and `-name` entries edits the bundled list instead of
+replacing it, so `tools: -write` keeps every other bundled tool. A list that
+mixes names with `+`/`-` entries stops the audit before any session starts, with
+an error naming the file. Whatever the list says, including a `*` pattern, those
+sessions never get `bash`.
+
 **Cancellation semantics** — Esc in the ExpertPicker returns to reviewer-source
 selection. Two Escs in FindingsReview cancel remaining work (partial report written),
 but completed Fix Now fixes remain on disk. Esc in the ReviewerRetry checkpoint,
