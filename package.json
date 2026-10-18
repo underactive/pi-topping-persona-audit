@@ -32,7 +32,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node --test test/*.test.ts",
+    "test": "node -C compiled --test test/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
