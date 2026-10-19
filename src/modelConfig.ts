@@ -4,9 +4,14 @@
  * appearance, and the Linus Torvalds reviewer's register.
  */
 
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { getAgentDir, type ThemeColor } from "@earendil-works/pi-coding-agent";
+import {
+  createSettingsStore,
+  sanitize,
+  type SettingsChange,
+  type SettingsWriteResult,
+} from "@underactive/pi-topping-primitives/settings";
 
 export interface ModelRef {
   provider: string;
@@ -189,10 +194,11 @@ function isPhaseModelChoice(value: unknown): value is PhaseModelChoice {
     && isThinkingLevel((value as PhaseModelChoice).thinking);
 }
 
-/** Pure parser over a settings file's raw contents — no I/O, so tests need none. */
-export function parsePersonaAuditSettings(raw: string): PersonaAuditConfig {
+/** Pure validator over parsed JSON — no I/O. `undefined` (a missing file) and non-objects give the defaults. */
+export function sanitizePersonaAuditSettings(raw: unknown): PersonaAuditConfig {
+  if (!sanitize.isRecord(raw)) return emptyConfig();
   try {
-    const parsed = JSON.parse(raw) as Partial<PersonaAuditConfig>;
+    const parsed = raw as Partial<PersonaAuditConfig>;
 
     const phases: Partial<PhaseModelSelection> = {};
     if (parsed.phases && typeof parsed.phases === "object") {
@@ -261,20 +267,38 @@ export function parsePersonaAuditSettings(raw: string): PersonaAuditConfig {
   }
 }
 
-export function loadPersonaAuditConfig(): PersonaAuditConfig {
+/** Pure parser over a settings file's raw contents — no I/O, so tests need none. */
+export function parsePersonaAuditSettings(raw: string): PersonaAuditConfig {
   try {
-    return parsePersonaAuditSettings(readFileSync(personaAuditSettingsPath(), "utf-8"));
+    return sanitizePersonaAuditSettings(JSON.parse(raw));
   } catch {
     return emptyConfig();
   }
 }
 
-export function savePersonaAuditConfig(config: PersonaAuditConfig): void {
-  const path = personaAuditSettingsPath();
-  mkdirSync(dirname(path), { recursive: true });
-  const tmp = `${path}.tmp`;
-  writeFileSync(tmp, `${JSON.stringify(config, null, "\t")}\n`, "utf-8");
-  renameSync(tmp, path);
+const personaAuditStore = createSettingsStore<PersonaAuditConfig>({
+  path: personaAuditSettingsPath,
+  codec: {
+    sanitize: sanitizePersonaAuditSettings,
+    serialize: (config) => `${JSON.stringify(config, null, "\t")}\n`,
+  },
+});
+
+/** A missing or corrupt file reads as the defaults. Never throws. */
+export function loadPersonaAuditConfig(): PersonaAuditConfig {
+  return personaAuditStore.read();
+}
+
+/** Whole-config atomic write. Prefer `updatePersonaAuditConfig` when starting from an earlier read. */
+export function savePersonaAuditConfig(config: PersonaAuditConfig): SettingsWriteResult<PersonaAuditConfig> {
+  return personaAuditStore.write(config);
+}
+
+/** Locked read-modify-write; refuses to overwrite a file that is not valid JSON. */
+export function updatePersonaAuditConfig(
+  change: SettingsChange<PersonaAuditConfig>,
+): SettingsWriteResult<PersonaAuditConfig> {
+  return personaAuditStore.update(change);
 }
 
 

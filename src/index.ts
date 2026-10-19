@@ -1098,13 +1098,9 @@ export default function (pi: ExtensionAPI): void {
         }
         break;
       }
-      try {
-        savePersonaAuditConfig(draft);
-      } catch (error) {
-        ctx.ui.notify(
-          `Could not save persona-audit settings: ${error instanceof Error ? error.message : String(error)}`,
-          "error",
-        );
+      const saved = savePersonaAuditConfig(draft);
+      if (!saved.ok) {
+        ctx.ui.notify(`Could not save persona-audit settings: ${saved.message}`, "error");
         return;
       }
       ctx.ui.notify("Persona-audit settings saved", "info");

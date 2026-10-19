@@ -35,7 +35,7 @@ import {
   modelRefLabel,
   phaseModelChoiceLabel,
   PHASE_SLOTS,
-  savePersonaAuditConfig,
+  updatePersonaAuditConfig,
   THINKING_LEVELS,
   thinkingOptionsForModel,
   type ModelRef,
@@ -748,14 +748,16 @@ export async function showPhaseModelPicker(
 
   if (result.action !== "start") return result;
 
+  const selectedThinking: Record<string, ThinkingLevel> = {};
   for (const slot of PHASE_SLOTS) {
-    thinkingOverrides[modelRefLabel(result.selections[slot].ref)] = result.selections[slot].thinking;
+    selectedThinking[modelRefLabel(result.selections[slot].ref)] = result.selections[slot].thinking;
   }
-  try {
-    savePersonaAuditConfig({ ...saved, phases: { ...result.selections }, thinkingOverrides });
-  } catch (error) {
-    ctx.ui.notify(`Could not save phase model settings: ${error instanceof Error ? error.message : String(error)}`, "warning");
-  }
+  const persisted = updatePersonaAuditConfig((current) => ({
+    ...current,
+    phases: { ...result.selections },
+    thinkingOverrides: { ...current.thinkingOverrides, ...selectedThinking },
+  }));
+  if (!persisted.ok) ctx.ui.notify(`Could not save phase model settings: ${persisted.message}`, "warning");
 
   return result;
 }
