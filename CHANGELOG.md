@@ -11,6 +11,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Settings are read and written by the shared `@underactive/pi-topping-primitives` 0.2.0 settings store. The path and tab format are unchanged; temp files get unique names, the file is created 0600 (directory 0700 when new), and a failed save still shows `Could not save persona-audit settings: …`.
 - Phase-model saves from the picker are now locked read-modify-write updates that merge into the file as it is now, instead of writing back a config read before the overlay opened. A settings file that is not valid JSON is refused rather than overwritten, with `Could not save phase model settings: …`.
 - Use `PI_VIRTUAL_MODEL_API` from `@underactive/pi-topping-primitives/contracts` to identify virtual models.
+- The activity meter, shimmer, tool-activity label, output-token tracker and run clock now come from `@underactive/pi-topping-primitives` 0.3.0 (`/activity` and `/activity-tui`) instead of vendored copies.
+- The audit progress table's activity meters now saturate at an inclusive 80 tokens/s instead of 40, following the shared `rateToLevel` default.
+
+### Fixed
+
+- Tool-activity labels are sanitised before truncation: terminal sequences and control characters are removed, so a tool argument can no longer inject escape sequences into the progress table.
+- Invalid exact or partial usage (negative, NaN or Infinity) now falls back to the word-count estimate instead of being added to the output-token count.
 
 ## [0.3.1] - 2026-10-16
 

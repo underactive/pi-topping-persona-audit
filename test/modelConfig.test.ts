@@ -13,7 +13,6 @@ import {
   MIN_VERIFY_ROUNDS,
   parsePersonaAuditSettings,
   resolveMeterColor,
-  thinkingColorFor,
   thinkingOptionsForModel,
   type PersonaAuditConfig,
 } from "../src/modelConfig.ts";
@@ -113,8 +112,6 @@ test("parsePersonaAuditSettings defaults the meter and rejects each invalid fiel
 });
 
 test("thinking-level meter colors resolve to native theme colors", () => {
-  assert.equal(thinkingColorFor("high"), "thinkingHigh");
-  assert.equal(thinkingColorFor(undefined), "accent");
   assert.equal(resolveMeterColor("thinkingLevel", "high"), "thinkingHigh");
   assert.equal(resolveMeterColor("thinkingLevel", undefined), "accent");
   assert.equal(resolveMeterColor("warning", "high"), "warning");

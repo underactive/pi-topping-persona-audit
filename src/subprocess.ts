@@ -1,6 +1,6 @@
 /**
- * Project agent discovery, concurrency helper, and shared telemetry
- * (OutputActivityTracker, formatToolActivity) used by agentRunner.ts.
+ * Project agent discovery, concurrency helper, and run-outcome helpers used by
+ * agentRunner.ts.
  *
  * Agent discovery is ported from the official bundled `subagent` example
  * extension (@earendil-works/pi-coding-agent/examples/extensions/subagent).
@@ -9,9 +9,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { AssistantMessageEvent, Message } from "@earendil-works/pi-ai";
 import { CONFIG_DIR_NAME, getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
-import { StreamingWordCounter } from "./activityMeter.ts";
 import type { HeadlessOptions, HeadlessResult } from "./types.ts";
 
 // ── Agent discovery (pattern from examples/extensions/subagent/agents.ts) ──
@@ -204,95 +202,6 @@ export async function mapWithConcurrencyLimit<TIn, TOut>(
 export function tail(text: string, maxChars: number): string {
   const trimmed = text.trim();
   return trimmed.length > maxChars ? `…${trimmed.slice(-maxChars)}` : trimmed;
-}
-
-// ── Live tool activity ────
-
-/** Max length of a one-line tool-activity description surfaced for progress UIs. */
-const ACTIVITY_MAX = 80;
-
-function collapseWhitespace(text: string): string {
-  return text.replace(/\s+/g, " ").trim();
-}
-
-/**
- * Pick the most informative string argument for a one-line activity label.
- * Prefers well-known tool arg names (command, pattern, path, …); falls back to
- * the first non-empty string value.
- */
-function summarizeToolArgs(args: unknown): string {
-  if (!args || typeof args !== "object") return "";
-  const record = args as Record<string, unknown>;
-  const preferred = ["command", "pattern", "query", "path", "file", "glob", "dir", "url", "name"];
-  for (const key of preferred) {
-    const value = record[key];
-    if (typeof value === "string" && value.trim()) return collapseWhitespace(value);
-  }
-  for (const value of Object.values(record)) {
-    if (typeof value === "string" && value.trim()) return collapseWhitespace(value);
-  }
-  return "";
-}
-
-/** Format a `tool_execution_start` event into a single-line "toolName arg" label. */
-export function formatToolActivity(toolName: string, args: unknown): string {
-  const detail = summarizeToolArgs(args);
-  const label = detail ? `${toolName}  ${detail}` : String(toolName);
-  return collapseWhitespace(label).slice(0, ACTIVITY_MAX);
-}
-
-/**
- * Tracks how much text a task is generating, for the activity monitor.
- *
- * Providers vary in what they report: some stream `usage.output` on the
- * in-flight partial, some only attach usage to the finished message, some
- * never report it at all. Exact usage always wins; otherwise words are counted
- * incrementally off the streamed deltas so the meter still moves.
- */
-export class OutputActivityTracker {
-  #counter = new StreamingWordCounter();
-  #confirmed = 0;
-  #liveExact: number | undefined;
-  #liveWords = 0;
-  #revision = 0;
-
-  /** Begin a new assistant turn, discarding only the previous turn's live estimate. */
-  messageStart(message: Message | undefined): void {
-    if (message?.role !== "assistant") return;
-    this.#resetTurn();
-  }
-
-  messageUpdate(assistantEvent: AssistantMessageEvent | undefined, partial: Message | undefined): void {
-    const exact = partial?.role === "assistant" ? partial.usage?.output : undefined;
-    if (typeof exact === "number" && exact > 0) this.#liveExact = exact;
-    if (assistantEvent?.type !== "text_delta" && assistantEvent?.type !== "thinking_delta") return;
-    // Counted per stream kind so a word split across deltas isn't double
-    // counted, and interleaved thinking/text streams don't corrupt each other.
-    this.#liveWords += this.#counter.count(assistantEvent.delta, assistantEvent.type);
-  }
-
-  messageEnd(message: Message | undefined): void {
-    if (message?.role !== "assistant") return;
-    const exact = message.usage?.output;
-    const estimate = this.#liveExact ?? this.#liveWords;
-    if (typeof exact === "number") {
-      this.#confirmed += exact;
-      if (exact !== estimate) this.#revision++;
-    } else {
-      this.#confirmed += estimate;
-    }
-    this.#resetTurn();
-  }
-
-  snapshot(): { tokens: number; revision: number } {
-    return { tokens: this.#confirmed + (this.#liveExact ?? this.#liveWords), revision: this.#revision };
-  }
-
-  #resetTurn(): void {
-    this.#liveExact = undefined;
-    this.#liveWords = 0;
-    this.#counter.reset();
-  }
 }
 
 /** Whether a run should be treated as failed. */

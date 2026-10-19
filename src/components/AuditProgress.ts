@@ -9,15 +9,22 @@ import { truncateToWidth, visibleWidth, type Component } from "@earendil-works/p
 import {
   ACTIVITY_METER_WIDTH,
   ActivityMeter,
-  rateToLevel,
-  TokRateTracker,
   type ActivityMeterLevel,
-} from "../activityMeter.ts";
+  formatElapsedClock as formatElapsed,
+  MIN_WAIT_DISPLAY_MS,
+  rateToLevel,
+  RunClock,
+  TokRateTracker,
+} from "@underactive/pi-topping-primitives/activity";
+import {
+  type AnsiTheme,
+  highlightActivity,
+  renderIdleMeter,
+  renderMeter as renderMeterCells,
+  shimmerString,
+} from "@underactive/pi-topping-primitives/activity-tui";
 import { normalizeFindingText } from "../dedup.ts";
-import { highlightActivity } from "../toolActivity.ts";
 import { DEFAULT_METER_SETTINGS, resolveMeterColor, type MeterSettings, type ThinkingLevel } from "../modelConfig.ts";
-import { shimmerString, type ShimmerTheme } from "../shimmer.ts";
-import { MIN_WAIT_DISPLAY_MS, RunClock } from "../runClock.ts";
 import type { Finding, HeadlessProgress } from "../types.ts";
 import { FULLSCREEN_WIDGET_RESERVE_ROWS, usableTerminalRows, type ViewportHost, wrapText } from "./menuChrome.ts";
 
@@ -140,11 +147,8 @@ export function totalCost(rows: AuditProgressRow[]): TotalCost {
   return { costUsd, incomplete };
 }
 
-/** Elapsed time as `M:SS`. Minutes keep counting past 60 rather than rolling into an hours field. */
-export function formatElapsed(ms: number): string {
-  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
-  return `${Math.floor(totalSeconds / 60)}:${String(totalSeconds % 60).padStart(2, "0")}`;
-}
+/** Elapsed time as `M:SS`; minutes keep counting past 60. Re-exported for the spinner and tests. */
+export { formatElapsed };
 
 /** Working rows animate, render bright, and may carry a tool-activity sub-row. */
 function isActive(state: RowState): boolean {
@@ -745,7 +749,7 @@ export class AuditProgressTable implements Component {
       for (const row of view.progressRows()) {
         const levels = frozenMeters[row.key];
         if (!levels) continue;
-        const meter = new ActivityMeter(meterSettings.direction);
+        const meter = new ActivityMeter({ direction: meterSettings.direction });
         meter.setLevels(levels);
         this.meters.set(row.key, { meter, tracker: new TokRateTracker(), revision: row.outputRevision });
       }
@@ -776,7 +780,7 @@ export class AuditProgressTable implements Component {
     for (const row of rows) {
       let entry = this.meters.get(row.key);
       if (!entry) {
-        entry = { meter: new ActivityMeter(this.meterSettings.direction), tracker: new TokRateTracker(), revision: row.outputRevision };
+        entry = { meter: new ActivityMeter({ direction: this.meterSettings.direction }), tracker: new TokRateTracker(), revision: row.outputRevision };
         this.meters.set(row.key, entry);
       }
       if (entry.revision !== row.outputRevision) {
@@ -791,9 +795,9 @@ export class AuditProgressTable implements Component {
 
   private renderMeter(key: string, active: boolean, phase: AuditPhase): string {
     const meter = this.meters.get(key)?.meter;
-    if (!meter) return this.theme.fg("dim", "⢀".repeat(ACTIVITY_METER_WIDTH));
+    if (!meter) return renderIdleMeter(this.theme);
     const color = resolveMeterColor(this.meterSettings.color, this.view.phaseThinking()[phase]);
-    return meter.render((level, char) => ActivityMeter.colorizeCell(level, char, this.theme, color, !active));
+    return renderMeterCells(meter, this.theme, color, !active);
   }
 
   /**
@@ -829,7 +833,7 @@ export class AuditProgressTable implements Component {
     const paint = (lit: boolean, text: string) => {
       if (!lit) return th.fg("dim", text);
       return th.getFgAnsi
-        ? shimmerString(text, now - this.createdAt, th as ShimmerTheme, "ltr", "normal", true)
+        ? shimmerString(text, now - this.createdAt, th as AnsiTheme, "ltr", "normal", true)
         : th.fg("text", text);
     };
     // Each boundary carries a two-row powerline chevron: the "\" half on the name

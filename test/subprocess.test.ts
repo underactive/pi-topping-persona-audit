@@ -4,69 +4,12 @@ import { tmpdir } from "node:os";
 import {
   BUNDLED_AGENTS_DIR,
   discoverAgents,
-  formatToolActivity,
   isPermanentRunFailure,
   loadAgentsFromDir,
   mapWithConcurrencyLimit,
-  OutputActivityTracker,
   resolveAgentTools,
 } from "../src/subprocess.ts";
 import { virtualModelMessage } from "../src/agentRunner.ts";
-import type { AssistantMessageEvent, Message } from "@earendil-works/pi-ai";
-
-// ── Fixtures: minimal fake assistant messages/events (the tracker only reads .role and .usage) ──
-
-const fakeAssistantMessage = (usage?: Record<string, unknown>): Message =>
-  ({ role: "assistant", content: [], usage } as unknown as Message);
-
-const textDelta = (delta: string): AssistantMessageEvent => ({ type: "text_delta", delta }) as AssistantMessageEvent;
-
-// ── OutputActivityTracker ───────────────────────────────────────────────────
-
-test("OutputActivityTracker estimates generated output from deltas and revises it on exact usage", () => {
-  const tracker = new OutputActivityTracker();
-  tracker.messageStart(fakeAssistantMessage());
-  tracker.messageUpdate(textDelta("hello world "), fakeAssistantMessage());
-  tracker.messageUpdate(textDelta("frag"), fakeAssistantMessage());
-  tracker.messageUpdate(textDelta("ment "), fakeAssistantMessage());
-  assert.equal(tracker.snapshot().tokens, 3, "a word split across deltas counts once");
-  assert.equal(tracker.snapshot().revision, 0);
-
-  tracker.messageEnd(fakeAssistantMessage({ output: 12 }));
-  assert.equal(tracker.snapshot().tokens, 12);
-  assert.equal(tracker.snapshot().revision, 1, "exact usage superseding an estimate bumps the revision");
-});
-
-test("OutputActivityTracker prefers exact partial usage over the word estimate", () => {
-  const tracker = new OutputActivityTracker();
-  tracker.messageStart(fakeAssistantMessage());
-  tracker.messageUpdate(textDelta("one two three four five "), fakeAssistantMessage());
-  tracker.messageUpdate(undefined, fakeAssistantMessage({ output: 30 }));
-  assert.equal(tracker.snapshot().tokens, 30);
-});
-
-test("OutputActivityTracker resets its live estimate on a new turn without touching confirmed totals", () => {
-  const tracker = new OutputActivityTracker();
-  tracker.messageStart(fakeAssistantMessage());
-  tracker.messageUpdate(textDelta("first turn words here"), fakeAssistantMessage());
-  tracker.messageEnd(fakeAssistantMessage({ output: 4 }));
-  assert.equal(tracker.snapshot().tokens, 4);
-
-  tracker.messageStart(fakeAssistantMessage());
-  assert.equal(tracker.snapshot().tokens, 4, "starting a new turn must not discard the prior confirmed total");
-  tracker.messageUpdate(textDelta("second"), fakeAssistantMessage());
-  assert.equal(tracker.snapshot().tokens, 5, "confirmed total plus the new turn's live estimate");
-});
-
-// ── Tool activity formatting ─────────────────────────────────────────────────
-
-test("formatToolActivity collapses whitespace, prefers known args, and caps length", () => {
-  assert.equal(formatToolActivity("bash", { command: "npm run  check\n --verbose" }), "bash npm run check --verbose");
-  assert.equal(formatToolActivity("ls", undefined), "ls");
-  assert.equal(formatToolActivity("read", { limit: 20, file: "src/a.ts" }), "read src/a.ts");
-  assert.equal(formatToolActivity("custom", { note: "fallback value" }), "custom fallback value");
-  assert.equal(formatToolActivity("bash", { command: "x".repeat(200) }).length, 80);
-});
 
 // ── Agent discovery ────────────────────────────────────────
 

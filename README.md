@@ -522,7 +522,7 @@ adjudicator implement, the per-finding verifier, and regression-test authoring:
 - **Orchestrator** (`src/orchestrator.ts`) — the audit state machine: cache load/merge, reviewer agent-session batches, deterministic collection, optional cross-examination pass, adjudicator agent sessions (including exploitability grading), FindingsReview TUI, verification (including the automatic gate-repair round loop, see [Fix + verify rounds](#fix--verify-rounds)), and report writing. Writes a durable partial report after every reviewer pass and on cancellation/failure.
 - **Agent runner** (`src/agentRunner.ts`) — runs each LLM task as an isolated in-process agent session via `createAgentSession()`, with model resolution, extension-provider replay, idle-timeout abort, and live telemetry.
 - **Agent discovery & telemetry** (`src/subprocess.ts`) — agent-config discovery from `*.md` frontmatter (`tools`/`model`), concurrency helper, and shared output-activity tracking used by agentRunner.ts.
-- **Progress surface** (`src/components/AuditProgress.ts`, `src/components/ReportViewer.ts`, `src/components/SettingsMenu.ts`, `src/activityMeter.ts`) — the phased `aboveEditor` table, post-audit report overlay, the activity monitor's settings menu, and output-rate meter. The table and meter are ported from pi-moa-plan's fan-out widget so the two extensions stay visually consistent while remaining independently installable.
+- **Progress surface** (`src/components/AuditProgress.ts`, `src/components/ReportViewer.ts`, `src/components/SettingsMenu.ts`) — the phased `aboveEditor` table, post-audit report overlay, the activity monitor's settings menu, and output-rate meter. The table is ported from pi-moa-plan's fan-out widget; the meter, shimmer, run clock and tool-activity label come from `@underactive/pi-topping-primitives` (`./activity`, `./activity-tui`), so the two extensions render the same way.
 - **Reviewer retry checkpoint** (`src/components/ReviewerRetry.ts`) — shown after a review batch settles with failures; lets the user retry failed passes (optionally on a different model) or skip them before triage.
 - **Verifier retry checkpoint** (`src/components/VerifierRetry.ts`) — shown only when the verifier *agent process itself* fails to run (a provider error, not a fix verdict); lets the user re-run it on a different model (which then also authors the regression tests) or skip verification. Ordinary `not-fixed`/`partial` verdicts and failed scripts do not reach this checkpoint — they trigger the orchestrator's automatic gate-repair round instead, with no user action needed.
 - **Report & verification** (`src/report.ts`, `src/verify.ts`) — pure report templates (full/compact/partial + chat summary), the `check`/`lint`/`test` verification gate, and the rule that folds per-finding verdicts and script results into one status.
@@ -608,8 +608,6 @@ pi-topping-persona-audit/
 │   ├── findingsTransport.ts  # Reviewer output parsing/collection (pure)
 │   ├── dedup.ts              # Deterministic finding dedup (pure)
 │   ├── skillContent.ts       # 53 personalities + agent-session prompt contracts
-│   ├── activityMeter.ts      # Vendored output-rate meter + streaming word counter
-│   ├── runClock.ts           # Pause-aware run clock: excludes user-decision spans from work time
 │   ├── types.ts              # Shared types
 │   └── components/
 │       ├── AuditProgress.ts  # Live phased progress table (aboveEditor widget)

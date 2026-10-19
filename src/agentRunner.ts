@@ -20,8 +20,9 @@ import {
   type CreateAgentSessionOptions,
   type ModelRegistry,
 } from "@earendil-works/pi-coding-agent";
+import { OutputTokenAccount } from "@underactive/pi-topping-primitives/activity";
+import { formatToolActivity } from "@underactive/pi-topping-primitives/activity-tui";
 import { PI_VIRTUAL_MODEL_API } from "@underactive/pi-topping-primitives/contracts";
-import { formatToolActivity, OutputActivityTracker } from "./subprocess.ts";
 import type { HeadlessOptions, HeadlessResult, HeadlessUsage } from "./types.ts";
 
 export type SessionMessage = AgentSession["messages"][number];
@@ -435,7 +436,7 @@ export async function createInteractiveAgentSession(
       }
 
       const startIndex = session.messages.length;
-      const tracker = new OutputActivityTracker();
+      const tracker = new OutputTokenAccount();
       const usage = emptyUsage();
       let activity: string | undefined;
       let toolCalls = 0;

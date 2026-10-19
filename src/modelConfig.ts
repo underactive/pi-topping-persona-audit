@@ -6,6 +6,7 @@
 
 import { join } from "node:path";
 import { getAgentDir, type ThemeColor } from "@earendil-works/pi-coding-agent";
+import { thinkingLevelThemeColor } from "@underactive/pi-topping-primitives/activity-tui";
 import {
   createSettingsStore,
   sanitize,
@@ -48,24 +49,9 @@ const FIXED_METER_COLORS = ["accent", "border", "borderAccent", "success", "erro
 export const METER_COLORS = ["thinkingLevel", ...FIXED_METER_COLORS] as const;
 export type MeterColor = (typeof METER_COLORS)[number];
 
-const THINKING_METER_COLORS: Record<ThinkingLevel, ThemeColor> = {
-  off: "thinkingOff",
-  minimal: "thinkingMinimal",
-  low: "thinkingLow",
-  medium: "thinkingMedium",
-  high: "thinkingHigh",
-  xhigh: "thinkingXhigh",
-  max: "thinkingMax",
-};
-
-/** Resolve a ThinkingLevel to its meter theme color, falling back to accent. */
-export function thinkingColorFor(thinking: ThinkingLevel | undefined): ThemeColor {
-  return thinking !== undefined ? THINKING_METER_COLORS[thinking] : "accent";
-}
-
 /** Resolve a MeterColor to a concrete ThemeColor for rendering. */
 export function resolveMeterColor(color: MeterColor, thinking: ThinkingLevel | undefined): ThemeColor {
-  if (color === "thinkingLevel") return thinkingColorFor(thinking);
+  if (color === "thinkingLevel") return thinkingLevelThemeColor(thinking);
   return color;
 }
 

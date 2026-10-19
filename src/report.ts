@@ -11,7 +11,7 @@ import * as path from "node:path";
 import { normalizeFindingText, normalizeMultilineText } from "./dedup.ts";
 import { HANDOFF_SCHEMA_VERSION, renderHandoffResumeBlock } from "./handoff.ts";
 import { compareFindingsByExploitability } from "./findingOrder.ts";
-import { MIN_WAIT_DISPLAY_MS } from "./runClock.ts";
+import { MIN_WAIT_DISPLAY_MS } from "@underactive/pi-topping-primitives/activity";
 import type {
   AuditMode,
   AuditSummary,

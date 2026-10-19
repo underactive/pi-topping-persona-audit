@@ -24,7 +24,7 @@ import { coerceFinding, dedupFindings, isRecord, normalizeFindingText } from "./
 import { fallbackSteSummary, MAX_FINDING_SUMMARY_LENGTH } from "./findingSummary.ts";
 import { type AuditProgressWidget, formatTokens } from "./components/AuditProgress.ts";
 import { TIERS } from "./components/ReviewerData.ts";
-import { RunClock } from "./runClock.ts";
+import { RunClock } from "@underactive/pi-topping-primitives/activity";
 import type { ReviewerFailurePrompt } from "./components/ReviewerRetry.ts";
 import type { AdjudicatorFailurePrompt, AdjudicatorRetryDecision } from "./components/AdjudicatorRetry.ts";
 import type { VerifierFailurePrompt, VerifierRetryDecision } from "./components/VerifierRetry.ts";

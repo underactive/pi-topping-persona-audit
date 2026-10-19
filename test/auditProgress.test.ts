@@ -18,7 +18,7 @@ import {
   type ProgressHost,
   type ProgressTheme,
 } from "../src/components/AuditProgress.ts";
-import { ACTIVITY_METER_WIDTH } from "../src/activityMeter.ts";
+import { ACTIVITY_METER_WIDTH } from "@underactive/pi-topping-primitives/activity";
 import { FULLSCREEN_WIDGET_RESERVE_ROWS } from "../src/components/menuChrome.ts";
 import type { Finding, HeadlessProgress } from "../src/types.ts";
 

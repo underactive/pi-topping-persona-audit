@@ -15,7 +15,7 @@ import { gitHeadCommit } from "./git.ts";
 import { resolveTargetPath } from "./snapshot.ts";
 import { REVIEWER_OUTPUT_CONTRACT, getPersonality } from "./skillContent.ts";
 import { renderChatSummary } from "./report.ts";
-import { bindUIPromptWaits } from "./runClock.ts";
+import { bindUIPromptWaits } from "@underactive/pi-topping-primitives/activity";
 import {
   AUDIT_PROGRESS_ENTRY_TYPE,
   AUDIT_PROGRESS_WIDGET_KEY,
