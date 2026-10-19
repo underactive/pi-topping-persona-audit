@@ -52,5 +52,8 @@
       "./index.ts"
     ],
     "image": "https://raw.githubusercontent.com/underactive/pi-topping-persona-audit/main/media/persona_audit_demo.png"
+  },
+  "dependencies": {
+    "@underactive/pi-topping-primitives": "^0.1.0"
   }
 }
