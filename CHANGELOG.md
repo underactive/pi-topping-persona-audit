@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Use `PI_VIRTUAL_MODEL_API` from `@underactive/pi-topping-primitives/contracts` to identify virtual models.
+
 ## [0.3.1] - 2026-10-16
 
 ### Changed

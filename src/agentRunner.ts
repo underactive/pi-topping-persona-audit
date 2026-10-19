@@ -20,6 +20,7 @@ import {
   type CreateAgentSessionOptions,
   type ModelRegistry,
 } from "@earendil-works/pi-coding-agent";
+import { PI_VIRTUAL_MODEL_API } from "@underactive/pi-topping-primitives/contracts";
 import { formatToolActivity, OutputActivityTracker } from "./subprocess.ts";
 import type { HeadlessOptions, HeadlessResult, HeadlessUsage } from "./types.ts";
 
@@ -121,20 +122,13 @@ export function resolveModelRef(input: string | undefined, registry: ModelRegist
 }
 
 /**
- * API id pi assigns to virtual (router) catalogue entries — `VIRTUAL_MODEL_API` in
- * pi's core/virtual-models.ts. pi exports only VIRTUAL_MODEL_STATE_ENTRY from
- * its package root, so the value is duplicated here.
- */
-const VIRTUAL_MODEL_API = "pi-virtual";
-
-/**
  * Whether a resolved catalogue entry is a virtual (router) model, mirroring pi's
  * own `isVirtualModel()`. A virtual model picks a physical model per request
  * through a router registered on the host's model registry
  * (`registerVirtualModel()`), which buildRuntime() does not replay.
  */
 export function isVirtualModel(model: { api: string }): boolean {
-  return model.api === VIRTUAL_MODEL_API;
+  return model.api === PI_VIRTUAL_MODEL_API;
 }
 
 /**
