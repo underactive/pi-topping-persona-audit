@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- The agent file loader, the upward `.pi/agents` walk and the concurrency map now come from `@underactive/pi-topping-primitives` 0.8.0 (`./process`). The bundled, user and project layering and the rule that a project-local `persona-audit-*` file cannot shadow a bundled agent stay local, and each now has a test.
+- A malformed project or user agent file (bad YAML, or a non-string `name`, `description`, `tools` or `model`) is now skipped instead of aborting `/persona-audit`, and a non-string `name` can no longer crash discovery. A YAML `null` for `tools` or `model` counts as absent.
+- A non-integer or `NaN` concurrency limit now works instead of throwing.
 - Model references, catalogues, thinking helpers and the unframed picker now come from `@underactive/pi-topping-primitives` 0.5.0; phase, retry and warning policy remains local.
 - Saved model references with an empty provider or id are now treated as unset.
 - Model-picker footer hints wrap instead of being clipped, and pasted text filters models.

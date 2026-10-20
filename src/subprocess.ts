@@ -1,98 +1,35 @@
 /**
- * Project agent discovery, concurrency helper, and run-outcome helpers used by
+ * Agent discovery layering, concurrency re-export, and run-outcome helpers used by
  * agentRunner.ts.
  *
- * Agent discovery is ported from the official bundled `subagent` example
- * extension (@earendil-works/pi-coding-agent/examples/extensions/subagent).
- * Keeping it project-local avoids a dependency on the example package.
+ * The agent file loader, the upward `.pi/agents` walk and the concurrency map come from
+ * `@underactive/pi-topping-primitives/process` (ported from the official bundled `subagent`
+ * example extension, @earendil-works/pi-coding-agent/examples/extensions/subagent). What stays here
+ * is this extension's own layering: the bundled `agents/` directory, the user and project layers,
+ * and the rule that a project-local file cannot shadow a bundled `persona-audit-*` agent.
  */
 
-import * as fs from "node:fs";
 import * as path from "node:path";
-import { CONFIG_DIR_NAME, getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import {
+  type AgentDefinition,
+  findNearestProjectAgentsDir,
+  loadAgentsFromDir,
+} from "@underactive/pi-topping-primitives/process";
 import type { HeadlessOptions, HeadlessResult } from "./types.ts";
 
-// ── Agent discovery (pattern from examples/extensions/subagent/agents.ts) ──
+export { loadAgentsFromDir, mapWithConcurrencyLimit } from "@underactive/pi-topping-primitives/process";
 
-export interface AgentConfig {
-  name: string;
-  description: string;
-  /** Frontmatter `tools:` entries as written; `resolveAgentTools()` turns them into a session's tools. */
-  tools?: string[];
-  model?: string;
-  systemPrompt: string;
-  source: AgentSource;
-  filePath: string;
-}
+// ── Agent discovery (pattern from examples/extensions/subagent/agents.ts) ──
 
 /** Where an agent definition came from, in ascending precedence order. */
 export type AgentSource = "bundled" | "user" | "project";
 
-export function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
-  const agents: AgentConfig[] = [];
-
-  if (!fs.existsSync(dir)) return agents;
-
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return agents;
-  }
-
-  for (const entry of entries) {
-    if (!entry.name.endsWith(".md")) continue;
-    if (!entry.isFile() && !entry.isSymbolicLink()) continue;
-
-    const filePath = path.join(dir, entry.name);
-    let content: string;
-    try {
-      content = fs.readFileSync(filePath, "utf-8");
-    } catch {
-      continue;
-    }
-
-    const { frontmatter, body } = parseFrontmatter<Record<string, string>>(content);
-    if (!frontmatter.name || !frontmatter.description) continue;
-
-    const tools = frontmatter.tools
-      ?.split(",")
-      .map((t: string) => t.trim())
-      .filter(Boolean);
-
-    agents.push({
-      name: frontmatter.name,
-      description: frontmatter.description,
-      tools: tools && tools.length > 0 ? tools : undefined,
-      model: frontmatter.model,
-      systemPrompt: body,
-      source,
-      filePath,
-    });
-  }
-
-  return agents;
-}
-
-function isDirectory(p: string): boolean {
-  try {
-    return fs.statSync(p).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
-function findNearestProjectAgentsDir(cwd: string): string | null {
-  let currentDir = cwd;
-  while (true) {
-    const candidate = path.join(currentDir, CONFIG_DIR_NAME, "agents");
-    if (isDirectory(candidate)) return candidate;
-
-    const parentDir = path.dirname(currentDir);
-    if (parentDir === currentDir) return null;
-    currentDir = parentDir;
-  }
-}
+/**
+ * An agent definition. `tools` is the frontmatter `tools:` entries as written;
+ * `resolveAgentTools()` turns them into a session's tools. No `thinking` is read.
+ */
+export type AgentConfig = AgentDefinition<AgentSource>;
 
 /**
  * This extension's own agent definitions, resolved from the module location
@@ -174,28 +111,6 @@ export function resolveAgentTools(agent: Pick<AgentConfig, "tools" | "filePath">
  */
 export function withoutBash(tools: readonly string[]): Pick<HeadlessOptions, "tools" | "excludeTools"> {
   return { tools: tools.filter((t) => t !== "bash"), excludeTools: ["bash"] };
-}
-
-// ── Concurrency helper ───
-
-export async function mapWithConcurrencyLimit<TIn, TOut>(
-  items: TIn[],
-  concurrency: number,
-  fn: (item: TIn, index: number) => Promise<TOut>,
-): Promise<TOut[]> {
-  if (items.length === 0) return [];
-  const limit = Math.max(1, Math.min(concurrency, items.length));
-  const results: TOut[] = new Array(items.length);
-  let nextIndex = 0;
-  const workers = new Array(limit).fill(null).map(async () => {
-    while (true) {
-      const current = nextIndex++;
-      if (current >= items.length) return;
-      results[current] = await fn(items[current] as TIn, current);
-    }
-  });
-  await Promise.all(workers);
-  return results;
 }
 
 /** Keep the last `maxChars` of captured output, marking any elision with a leading ellipsis. */
