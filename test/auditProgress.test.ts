@@ -7,7 +7,6 @@ import {
   AuditProgressTable,
   AuditProgressWidget,
   contextCell,
-  formatCost,
   formatElapsed,
   formatTokens,
   renderAuditSnapshot,
@@ -566,16 +565,6 @@ test("formatTokens and formatElapsed use compact, non-rolling units", () => {
   assert.equal(formatElapsed(0), "0:00");
   assert.equal(formatElapsed(65_000), "1:05");
   assert.equal(formatElapsed(3_725_000), "62:05", "minutes keep counting past an hour");
-});
-
-test("formatCost uses fixed precision, clamps negatives, and dashes invalid values", () => {
-  assert.equal(formatCost(undefined), "—");
-  assert.equal(formatCost(Number.NaN), "—");
-  assert.equal(formatCost(Number.POSITIVE_INFINITY), "—");
-  assert.equal(formatCost(Number.NEGATIVE_INFINITY), "—");
-  assert.equal(formatCost(0), "$0.000");
-  assert.equal(formatCost(0.1234), "$0.123");
-  assert.equal(formatCost(-1), "$0.000");
 });
 
 test("totalCost sums valid telemetry and marks missing or invalid rows incomplete", () => {

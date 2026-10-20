@@ -23,6 +23,8 @@ import {
   renderMeter as renderMeterCells,
   shimmerString,
 } from "@underactive/pi-topping-primitives/activity-tui";
+import { QUADRANT_SPINNER_FRAMES as TABLE_FRAMES } from "@underactive/pi-topping-primitives/glyphs";
+import { formatCostUsd as formatCost, sanitizeTerminalBytes as sanitizeTerminalText } from "@underactive/pi-topping-primitives/text";
 import { normalizeFindingText } from "../dedup.ts";
 import { DEFAULT_METER_SETTINGS, resolveMeterColor, type MeterSettings, type ThinkingLevel } from "../modelConfig.ts";
 import type { Finding, HeadlessProgress } from "../types.ts";
@@ -69,7 +71,6 @@ const MIN_FOOTER_TOTAL_GAP = 2;
  * above pi's dock, since the table shares the dock with the editor and footer.
  */
 const TABLE_HEIGHT_RATIO = 0.5;
-const TABLE_FRAMES = ["◐", "◓", "◑", "◒"] as const;
 /** Border, header, separator, footer and bottom border — the rows a table always costs. */
 const TABLE_CHROME_ROWS = 5;
 /** One horizontal-rule heading row per phase group. */
@@ -121,12 +122,6 @@ export function contextCell(contextTokens: number | undefined, contextWindow: nu
   return `${(ratio * 100).toFixed(1)}%/${formatTokens(contextWindow)}`.padStart(CTX_COL_WIDTH);
 }
 
-/** Format cumulative model cost in USD, or a dash when the model is not in the registry. */
-export function formatCost(costUsd: number | undefined): string {
-  if (costUsd === undefined || !Number.isFinite(costUsd)) return "—";
-  return `$${Math.max(0, costUsd).toFixed(3)}`;
-}
-
 /** Aggregate model-cost telemetry across every progress row. */
 export interface TotalCost {
   costUsd: number;
@@ -147,8 +142,11 @@ export function totalCost(rows: AuditProgressRow[]): TotalCost {
   return { costUsd, incomplete };
 }
 
-/** Elapsed time as `M:SS`; minutes keep counting past 60. Re-exported for the spinner and tests. */
-export { formatElapsed };
+/**
+ * Shared helpers under the names this module's importers and tests already use: the elapsed
+ * clock (`M:SS`, minutes keep counting past 60), the cost formatter and the terminal-byte sanitiser.
+ */
+export { formatCost, formatElapsed, sanitizeTerminalText };
 
 /** Working rows animate, render bright, and may carry a tool-activity sub-row. */
 function isActive(state: RowState): boolean {
@@ -695,11 +693,6 @@ function cell(text: string, width: number, align: "left" | "right" | "center" = 
     return " ".repeat(left) + shown + " ".repeat(padding - left);
   }
   return shown + " ".repeat(padding);
-}
-
-/** Strip C0/C1 bytes from untrusted labels so they cannot alter terminal state. */
-export function sanitizeTerminalText(text: string): string {
-  return text.replace(/[\x00-\x1f\x7f-\x9f]/g, "");
 }
 
 /** Like sanitizeTerminalText but keeps tab — git diff lines rely on it for indentation. */

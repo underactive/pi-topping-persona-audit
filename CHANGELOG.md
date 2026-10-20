@@ -17,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Use `PI_VIRTUAL_MODEL_API` from `@underactive/pi-topping-primitives/contracts` to identify virtual models.
 - The activity meter, shimmer, tool-activity label, output-token tracker and run clock now come from `@underactive/pi-topping-primitives` 0.3.0 (`/activity` and `/activity-tui`) instead of vendored copies.
 - The audit progress table's activity meters now saturate at an inclusive 80 tokens/s instead of 40, following the shared `rateToLevel` default.
+- Cost formatting (`formatCost`), terminal-byte sanitising (`sanitizeTerminalText`) and the progress table's spinner frames now come from `@underactive/pi-topping-primitives` 0.6.0 (`./text`, `./glyphs`); rendered output is unchanged.
 
 ### Fixed
 
