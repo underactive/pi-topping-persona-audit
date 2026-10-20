@@ -14,23 +14,24 @@ import {
   type SettingsWriteResult,
 } from "@underactive/pi-topping-primitives/settings";
 
-export interface ModelRef {
-  provider: string;
-  id: string;
-}
+import {
+  isModelRef,
+  isThinkingLevel,
+  modelRefLabel,
+  type ModelRef,
+  type ThinkingLevel,
+} from "@underactive/pi-topping-primitives/models";
 
-/**
- * pi's thinking-level vocabulary, in pi's canonical order (see
- * `pi.getThinkingLevel()` / `--thinking <level>`). `xhigh` and `max` are
- * distinct levels a model may expose independently, so neither is folded
- * into the other.
- */
-export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
-export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
-
-export function isThinkingLevel(value: string): value is ThinkingLevel {
-  return (THINKING_LEVELS as readonly string[]).includes(value);
-}
+export {
+  defaultThinkingForModel,
+  isModelRef,
+  isThinkingLevel,
+  modelRefLabel,
+  THINKING_LEVELS,
+  thinkingOptionsForModel,
+  type ModelRef,
+  type ThinkingLevel,
+} from "@underactive/pi-topping-primitives/models";
 
 /** The four audit phases a model + thinking level can be assigned to. */
 export const PHASE_SLOTS = ["review", "triage", "implement", "verify"] as const;
@@ -147,13 +148,6 @@ export function clampVerifyRounds(value: unknown): number {
 /** Persistent persona-audit settings, colocated with pi's user-level settings. */
 export function personaAuditSettingsPath(): string {
   return join(getAgentDir(), "persona-audit", "settings.json");
-}
-
-function isModelRef(value: unknown): value is ModelRef {
-  return !!value
-    && typeof value === "object"
-    && typeof (value as ModelRef).provider === "string"
-    && typeof (value as ModelRef).id === "string";
 }
 
 function isMeterColor(value: unknown): value is MeterColor {
@@ -287,34 +281,6 @@ export function updatePersonaAuditConfig(
   return personaAuditStore.update(change);
 }
 
-
-/**
- * The levels to offer for a model, in pi's canonical thinking-level order.
- * The registry's declared range is the whole answer — a level it does not list
- * is one the backend will refuse.
- */
-export function thinkingOptionsForModel(registryLevels: ThinkingLevel[]): ThinkingLevel[] {
-  return THINKING_LEVELS.filter((level) => registryLevels.includes(level));
-}
-
-/** Selects a model's saved level, the current level, or a sensible default in that order. */
-export function defaultThinkingForModel(
-  key: string,
-  thinkingOverrides: Record<string, ThinkingLevel>,
-  currentLevel: ThinkingLevel,
-  registryLevels: ThinkingLevel[],
-): ThinkingLevel {
-  const options = thinkingOptionsForModel(registryLevels);
-  const saved = thinkingOverrides[key];
-  if (saved && options.includes(saved)) return saved;
-  if (options.includes(currentLevel)) return currentLevel;
-  if (options.includes("medium")) return "medium";
-  return options[0] ?? "medium";
-}
-
-export function modelRefLabel(ref: ModelRef): string {
-  return `${ref.provider}/${ref.id}`;
-}
 
 export function phaseModelChoiceLabel(choice: PhaseModelChoice): string {
   return `${modelRefLabel(choice.ref)} (thinking: ${choice.thinking})`;

@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  defaultThinkingForModel,
   DEFAULT_METER_SETTINGS,
   DEFAULT_CROSS_EXAMINATION_MODE,
   DEFAULT_TEMPERAMENT,
@@ -13,7 +12,6 @@ import {
   MIN_VERIFY_ROUNDS,
   parsePersonaAuditSettings,
   resolveMeterColor,
-  thinkingOptionsForModel,
   type PersonaAuditConfig,
 } from "../src/modelConfig.ts";
 
@@ -135,6 +133,15 @@ test("parsePersonaAuditSettings drops unknown thinking levels and malformed phas
     implement: { ref: { provider: "openai", id: "gpt-5" }, thinking: "low" },
   });
   assert.deepEqual(parsed.thinkingOverrides, { "openai/gpt-5": "low" });
+
+  for (const ref of [{ provider: "", id: "model" }, { provider: "provider", id: "" }]) {
+    const invalid = parsePersonaAuditSettings(JSON.stringify({
+      phases: { review: { ref, thinking: "low" } },
+      dispatch: { ref, thinking: "low" },
+    }));
+    assert.deepEqual(invalid.phases, {});
+    assert.equal("dispatch" in invalid, false);
+  }
 });
 
 test("parsePersonaAuditSettings sanitizes rosters while preserving unknown reviewers", () => {
@@ -173,18 +180,4 @@ test("parsePersonaAuditSettings defaults malformed roster collections", () => {
   assert.deepEqual(parsePersonaAuditSettings("{}").rosters, []);
   assert.deepEqual(parsePersonaAuditSettings(JSON.stringify({ rosters: {} })).rosters, []);
   assert.deepEqual(parsePersonaAuditSettings(JSON.stringify({ rosters: [null, "bad", { name: "Valid" }] })).rosters, []);
-});
-
-test("thinkingOptionsForModel filters to the registry's declared levels in canonical order", () => {
-  assert.deepEqual(thinkingOptionsForModel(["high", "off", "medium"]), ["off", "medium", "high"]);
-  assert.deepEqual(thinkingOptionsForModel([]), []);
-});
-
-test("defaultThinkingForModel prefers a saved override, then the current level, then medium, then the first supported", () => {
-  const overrides = { "anthropic/claude-opus-4-6": "xhigh" as const };
-
-  assert.equal(defaultThinkingForModel("anthropic/claude-opus-4-6", overrides, "low", ["low", "medium", "xhigh"]), "xhigh");
-  assert.equal(defaultThinkingForModel("openai/gpt-5", overrides, "low", ["low", "medium", "high"]), "low");
-  assert.equal(defaultThinkingForModel("openai/gpt-5", overrides, "off", ["low", "medium", "high"]), "medium");
-  assert.equal(defaultThinkingForModel("openai/gpt-5", overrides, "off", ["low", "high"]), "low");
 });

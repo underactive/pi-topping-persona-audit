@@ -47,7 +47,7 @@ import {
   type PhaseModelSelection,
   type Temperament,
 } from "./modelConfig.ts";
-import { getModelCatalogue, validateSavedChoice } from "./modelCatalogue.ts";
+import { getModelCatalogue, validateSavedChoice } from "@underactive/pi-topping-primitives/models";
 import { additionalContextFingerprint, describeAdditionalContext, hasAdditionalContext, type AdditionalContext } from "./additionalContext.ts";
 import { parsePersonaAuditArgs, type AuditExclusions } from "./args.ts";
 import type { AuditMode, Finding, ReviewerSelection } from "./types.ts";

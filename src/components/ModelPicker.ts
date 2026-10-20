@@ -9,35 +9,26 @@
  * Ported from pi-moa-plan's `src/moaModelPicker.ts` (`TwoPaneModelThinking`)
  * and `src/moaSetupOverlay.ts` (overview/slot navigation shape). Models and
  * thinking levels both come from the model registry (see
- * `../modelCatalogue.ts`), so a confirmed selection is usable by
+ * `@underactive/pi-topping-primitives/models`), so a confirmed selection is usable by
  * construction and nothing verifies it after the picker closes.
  */
 
 import type { ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
+import { Key, type Component, type TUI } from "@earendil-works/pi-tui";
 import {
-  fuzzyFilter,
-  Key,
-  matchesKey,
-  SelectList,
-  truncateToWidth,
-  visibleWidth,
-  type Component,
-  type SelectItem,
-  type SelectListLayoutOptions,
-  type SelectListTheme,
-  type TUI,
-} from "@earendil-works/pi-tui";
-import { getModelCatalogue, validateSavedChoice } from "../modelCatalogue.ts";
+  getModelCatalogue,
+  registryLevelOptions,
+  TwoPaneModelThinking,
+  validateSavedChoice,
+} from "@underactive/pi-topping-primitives/models";
+
 import {
   defaultThinkingForModel,
-  isThinkingLevel,
   loadPersonaAuditConfig,
   modelRefLabel,
   phaseModelChoiceLabel,
   PHASE_SLOTS,
   updatePersonaAuditConfig,
-  THINKING_LEVELS,
-  thinkingOptionsForModel,
   type ModelRef,
   type PhaseModelChoice,
   type PhaseModelSelection,
@@ -48,15 +39,14 @@ import {
   MenuComponent,
   renderMenuBottomBorder,
   renderMenuContentRow,
-  renderMenuFooterContents,
   renderMenuSeparator,
   renderMenuTopBorder,
-  SELECTOR,
   showOverlayPrompt,
   wrapText,
-  type MenuFooterContents,
   type MenuItem,
 } from "./menuChrome.ts";
+
+export type { TwoPaneModelThinking } from "@underactive/pi-topping-primitives/models";
 
 export type PhaseModelPickerResult =
   | { action: "start"; selections: PhaseModelSelection }
@@ -97,122 +87,6 @@ export function seedPhaseSelections(
   return { selections, dropped: [...dropped] };
 }
 
-const MAX_VISIBLE_ROWS = 10;
-const SELECTED_ROW_SENTINEL = "\u0000";
-
-/**
- * pi-tui's SelectList owns navigation and filtering, but its current renderer
- * hard-codes a different marker and only foreground-colors the active item.
- * Keep that behavior isolated here while matching the persona-audit overlays.
- */
-export class ConsistentSelectList extends SelectList {
-  private readonly pickerTheme: Theme;
-
-  constructor(items: SelectItem[], maxVisible: number, theme: Theme, layout?: SelectListLayoutOptions) {
-    // SelectList exposes the selected line only through selectedText; the
-    // sentinel carries that fact out to render() without changing navigation.
-    const selectListTheme: SelectListTheme = {
-      selectedPrefix: (text) => theme.fg("accent", text),
-      selectedText: (text) => SELECTED_ROW_SENTINEL + theme.fg("accent", text),
-      description: (text) => theme.fg("muted", text),
-      scrollInfo: (text) => theme.fg("muted", text),
-      noMatch: (text) => theme.fg("muted", text),
-    };
-    super(items, maxVisible, selectListTheme, layout);
-    this.pickerTheme = theme;
-  }
-
-  override render(width: number, highlight = true): string[] {
-    return super.render(width).map((line) => {
-      if (!line.startsWith(SELECTED_ROW_SENTINEL)) return line;
-      const row = line.slice(SELECTED_ROW_SENTINEL.length)
-        .replace(/^((?:\x1b\[[0-9;]*m)*)\u2192 /, `$1${SELECTOR} `);
-      const clipped = truncateToWidth(row, width, "…");
-      const padded = clipped + " ".repeat(Math.max(0, width - visibleWidth(clipped)));
-      return highlight ? this.pickerTheme.bg("selectedBg", padded) : padded;
-    });
-  }
-}
-
-/**
- * Truncates a slash-namespaced model ref (`provider/accounts/.../model-name`)
- * so the parts that matter to identify the model survive first. Priority:
- * the model name (last segment) is mandatory, then the first segment (the
- * namespace root), then the segment right before the model name, then
- * whatever else still fits. Skipped runs collapse to a single ellipsis.
- */
-export function smartTruncateModelLabel(text: string, maxWidth: number): string {
-  const ELLIPSIS = "…";
-  const ANSI_RE = /\x1b\[[0-9;]*m/g;
-  if (visibleWidth(text) <= maxWidth) return text;
-  const segments = text.split("/");
-  const n = segments.length;
-  if (n === 1) return truncateToWidth(text, maxWidth, ELLIPSIS).replace(ANSI_RE, "");
-
-  const lastIndex = n - 1;
-  const kept = new Set<number>([lastIndex]);
-  const priority: number[] = [];
-  priority.push(0);
-  if (n - 2 > 0) priority.push(n - 2);
-  for (let i = 1; i <= n - 3; i++) priority.push(i);
-
-  const render = () => {
-    const parts: string[] = [];
-    let i = 0;
-    while (i < n) {
-      if (kept.has(i)) {
-        parts.push(segments[i]!);
-        i++;
-      } else {
-        while (i < n && !kept.has(i)) i++;
-        parts.push(ELLIPSIS);
-      }
-    }
-    return parts.join("/");
-  };
-
-  let current = render();
-  if (visibleWidth(current) > maxWidth) {
-    const skeleton = `${ELLIPSIS}/`;
-    const budget = Math.max(0, maxWidth - visibleWidth(skeleton));
-    return (skeleton + truncateToWidth(segments[lastIndex]!, budget, ELLIPSIS)).replace(ANSI_RE, "");
-  }
-
-  for (const index of priority) {
-    kept.add(index);
-    const candidate = render();
-    if (visibleWidth(candidate) > maxWidth) {
-      kept.delete(index);
-      continue;
-    }
-    current = candidate;
-  }
-  return current;
-}
-
-const MODEL_LIST_LAYOUT: SelectListLayoutOptions = {
-  truncatePrimary: ({ text, maxWidth }) => smartTruncateModelLabel(text, maxWidth),
-};
-
-export function modelThinkingPaneWidths(bodyWidth: number): { left: number; right: number } {
-  const divider = 1;
-  const longestLevel = THINKING_LEVELS.reduce((longest, level) => level.length > longest.length ? level : longest);
-  // One composed inset plus SelectList's two safety columns after its selector.
-  const rightMin = Math.max(visibleWidth(" Thinking"), visibleWidth(`${SELECTOR} ${longestLevel}`) + 3);
-  const right = Math.max(1, Math.min(rightMin, Math.max(1, bodyWidth - divider - 1)));
-  return { left: Math.max(1, bodyWidth - divider - right), right };
-}
-
-function parseRef(value: string): ModelRef {
-  const idx = value.indexOf("/");
-  if (idx === -1) throw new Error(`model ref missing '/': ${value}`);
-  return { provider: value.slice(0, idx), id: value.slice(idx + 1) };
-}
-
-function toModelItems(refs: ModelRef[]): SelectItem[] {
-  return refs.map((r) => { const label = modelRefLabel(r); return { value: label, label }; });
-}
-
 /**
  * Caution shown under the thinking pane when the effective level is "off" —
  * either the model exposes no thinking mode at all, or the user picked "off" on
@@ -229,212 +103,35 @@ export function thinkingOffWarning(options: ThinkingLevel[], selected: ThinkingL
   return `⚠ ${lead} — it runs in a single pass with no reasoning step, which makes it less reliable at careful multi-step work like landing exact-text edits or judging diffs. A thinking-capable model is recommended.`;
 }
 
-/**
- * Reusable two-pane selector: models on the left and model-specific thinking
- * levels on the right. The model filter always owns text input; Tab or the
- * left/right arrows move the selection focus between panes.
- */
-export class TwoPaneModelThinking {
-  private readonly tui: TUI;
-  private readonly theme: Theme;
-  private readonly thinkingOverrides: Record<string, ThinkingLevel>;
-  private readonly currentThinking: ThinkingLevel;
-  private readonly ctx: ExtensionCommandContext;
-  private readonly modelItems: SelectItem[];
-  private modelList: ConsistentSelectList;
-  private levelList: ConsistentSelectList;
-  private filter = "";
-  private activePane: "model" | "level" | "buttons" = "model";
-  private activeButton = 0;
+/** Model rows the picker has always shown; the shared body cap also counts header, filter and scroll rows. */
+const PICKER_LIST_ROWS = 10;
 
-  constructor(
-    tui: TUI,
-    theme: Theme,
-    availableRefs: ModelRef[],
-    thinkingOverrides: Record<string, ThinkingLevel>,
-    currentThinking: ThinkingLevel,
-    ctx: ExtensionCommandContext,
-  ) {
-    this.tui = tui;
-    this.theme = theme;
-    this.thinkingOverrides = thinkingOverrides;
-    this.currentThinking = currentThinking;
-    this.ctx = ctx;
-    this.modelItems = toModelItems(availableRefs);
-    this.modelList = new ConsistentSelectList([], 1, theme);
-    this.levelList = new ConsistentSelectList([], 1, theme);
-    this.reset();
-  }
+/** Header plus a possible scroll row, and the filter row while one is typed. */
+function pickerBodyRows(filter: string): number {
+  return PICKER_LIST_ROWS + 2 + (filter ? 1 : 0);
+}
 
-  reset(defaultRef?: ModelRef): void {
-    this.filter = "";
-    this.activePane = "model";
-    this.activeButton = 0;
-    this.rebuildModelList();
-    if (defaultRef) {
-      const defaultIndex = this.modelItems.findIndex((item) => item.value === modelRefLabel(defaultRef));
-      if (defaultIndex >= 0) this.modelList.setSelectedIndex(defaultIndex);
-    }
-    this.rebuildThinkingList();
-  }
-
-  private rebuildModelList(): void {
-    const items = this.filter.trim()
-      ? fuzzyFilter(this.modelItems, this.filter, (item) => item.label)
-      : this.modelItems;
-    this.modelList = new ConsistentSelectList(
-      items,
-      Math.min(Math.max(items.length, 1), MAX_VISIBLE_ROWS),
-      this.theme,
-      MODEL_LIST_LAYOUT,
-    );
-    this.modelList.onSelectionChange = () => {
-      this.rebuildThinkingList();
-      this.tui.requestRender();
-    };
-  }
-
-  private rebuildThinkingList(): void {
-    const key = this.modelList.getSelectedItem()?.value;
-    const registryLevels = key
-      ? getModelCatalogue(this.ctx.modelRegistry).thinkingLevelsFor(parseRef(key))
-      : [];
-    const levels = thinkingOptionsForModel(registryLevels);
-    const items = levels.map((level) => ({ value: level, label: level }));
-    this.levelList = new ConsistentSelectList(items, Math.min(Math.max(items.length, 1), MAX_VISIBLE_ROWS), this.theme);
-    if (!key) return;
-    const preferred = defaultThinkingForModel(key, this.thinkingOverrides, this.currentThinking, registryLevels);
-    const preferredIndex = levels.indexOf(preferred);
-    if (preferredIndex >= 0) this.levelList.setSelectedIndex(preferredIndex);
-  }
-
-  handleInput(data: string): "confirm" | "back" | undefined {
-    // Ctrl+C is Escape here too: a focused overlay owns the keyboard, so the
-    // host's Ctrl+C handling is unreachable while a slot or retry view is open.
-    if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"))) return "back";
-    if (matchesKey(data, Key.tab)) {
-      // Tab cycles Models → Thinking → action buttons → Models;
-      // left/right continue to switch between Models and Thinking (or
-      // between buttons, once the action bar is focused).
-      this.activePane = this.activePane === "model" ? "level" : this.activePane === "level" ? "buttons" : "model";
-      this.tui.requestRender();
-      return undefined;
-    }
-    if (this.activePane === "buttons") {
-      if (matchesKey(data, Key.left) || matchesKey(data, Key.right)) {
-        this.activeButton = this.activeButton === 0 ? 1 : 0;
-        this.tui.requestRender();
-        return undefined;
-      }
-      if (matchesKey(data, Key.enter)) {
-        if (this.activeButton === 1) return "back";
-        return this.modelList.getSelectedItem() && this.levelList.getSelectedItem()
-          ? "confirm"
-          : undefined;
-      }
-      return undefined;
-    }
-    if (matchesKey(data, Key.enter)) {
-      return this.modelList.getSelectedItem() && this.levelList.getSelectedItem() ? "confirm" : undefined;
-    }
-    if (matchesKey(data, Key.left) || matchesKey(data, Key.right)) {
-      this.activePane = this.activePane === "model" ? "level" : "model";
-      this.tui.requestRender();
-      return undefined;
-    }
-    if (data === "\x7f" || data === "\b") {
-      this.activePane = "model";
-      if (this.filter.length > 0) {
-        this.filter = this.filter.slice(0, -1);
-        this.rebuildModelList();
-        this.rebuildThinkingList();
-        this.tui.requestRender();
-      }
-      return undefined;
-    }
-    if (data.length === 1 && data >= " ") {
-      this.activePane = "model";
-      this.filter += data;
-      this.rebuildModelList();
-      this.rebuildThinkingList();
-      this.tui.requestRender();
-      return undefined;
-    }
-    (this.activePane === "model" ? this.modelList : this.levelList).handleInput(data);
-    this.tui.requestRender();
-    return undefined;
-  }
-
-  getSelected(): { ref: ModelRef; thinking: ThinkingLevel } {
-    const model = this.modelList.getSelectedItem();
-    const level = this.levelList.getSelectedItem();
-    if (!model || !level || !isThinkingLevel(level.value)) {
-      throw new Error("Cannot confirm an empty model or thinking-level selection");
-    }
-    return { ref: parseRef(model.value), thinking: level.value };
-  }
-
-  render(bodyWidth: number): string[] {
-    const { left: leftWidth, right: rightWidth } = modelThinkingPaneWidths(bodyWidth);
-    const column = (text: string, width: number) => truncateToWidth(text, width, "", true);
-    const paneDivider = this.theme.fg("border", "│");
-    const headers = column(
-      this.activePane === "model" ? this.theme.bold(this.theme.fg("accent", " Models")) : this.theme.bold(" Models"),
-      leftWidth,
-    ) + paneDivider + column(
-      ` ${this.activePane === "level" ? this.theme.bold(this.theme.fg("accent", "Thinking")) : this.theme.bold("Thinking")}`,
-      rightWidth,
-    );
-    const modelLines = this.modelList.render(Math.max(1, leftWidth - 1), false);
-    const levelLines = this.levelList.render(Math.max(1, rightWidth - 1), false);
-    const rows = Math.max(modelLines.length, levelLines.length);
-    const lines = [
-      ...(this.filter ? [column(this.theme.fg("muted", ` filter: ${this.filter}`), bodyWidth)] : []),
-      headers,
-    ];
-    for (let index = 0; index < rows; index++) {
-      const modelLine = modelLines[index] ?? "";
-      const levelLine = levelLines[index] ?? "";
-      let leftCell = column(` ${modelLine}`, leftWidth);
-      let rightCell = column(` ${levelLine}`, rightWidth);
-      if (this.activePane === "model" && modelLine.includes(SELECTOR)) {
-        leftCell = this.theme.bg("selectedBg", leftCell);
-      }
-      if (this.activePane === "level" && levelLine.includes(SELECTOR)) {
-        rightCell = this.theme.bg("selectedBg", rightCell);
-      }
-      lines.push(leftCell + paneDivider + rightCell);
-    }
-    const selectedLevel = this.levelList.getSelectedItem()?.value;
-    if (selectedLevel && isThinkingLevel(selectedLevel)) {
-      const key = this.modelList.getSelectedItem()?.value;
-      const registryLevels = key
-        ? getModelCatalogue(this.ctx.modelRegistry).thinkingLevelsFor(parseRef(key))
-        : [];
-      const warning = thinkingOffWarning(thinkingOptionsForModel(registryLevels), selectedLevel);
-      if (warning) {
-        lines.push("");
-        for (const wline of wrapText(warning, bodyWidth)) lines.push(this.theme.fg("warning", wline));
-      }
-    }
-    return lines;
-  }
-
-  renderFooter(bodyWidth: number, hints: string): MenuFooterContents {
-    const buttonText = (label: string, index: number) => {
-      const isActive = this.activeButton === index;
-      const text = isActive ? `[ ${label} ]` : `‹ ${label} ›`;
-      return isActive && this.activePane === "buttons"
-        ? this.theme.bold(this.theme.fg("accent", text))
-        : this.theme.fg("muted", text);
-    };
-    return renderMenuFooterContents(this.theme, bodyWidth, `${buttonText("Select", 0)}    ${buttonText("Cancel", 1)}`, hints);
-  }
-
-  invalidate(): void {
-    this.modelList.invalidate();
-    this.levelList.invalidate();
-  }
+/** Bind the shared unframed picker to persona-audit's thinking and keyboard policy. */
+export function createPhaseModelPicker(
+  tui: TUI,
+  theme: Theme,
+  refs: ModelRef[],
+  thinkingOverrides: Record<string, ThinkingLevel>,
+  currentThinking: ThinkingLevel,
+  ctx: ExtensionCommandContext,
+): TwoPaneModelThinking {
+  return new TwoPaneModelThinking({
+    theme,
+    refs,
+    marker: "❯ ",
+    maxVisibleRows: pickerBodyRows(""),
+    backKeys: [Key.escape, Key.ctrl("c")],
+    requestRender: () => tui.requestRender(),
+    levelOptions: registryLevelOptions(ctx.modelRegistry),
+    preferredLevel: (ref, options) => defaultThinkingForModel(
+      modelRefLabel(ref), thinkingOverrides, currentThinking, options,
+    ),
+  });
 }
 
 const PICKER_HINT = "type filters models • ↑↓ navigate pane • tab panes/buttons • ←→ switch/select • enter select • esc back";
@@ -447,8 +144,14 @@ function renderFramedPicker(
   description: string,
   twoPane: TwoPaneModelThinking,
 ): string[] {
+  twoPane.setMaxVisibleRows(pickerBodyRows(twoPane.snapshot().filter));
   const pickerLines = twoPane.render(bodyWidth);
-  const { actionRow, hintRow } = twoPane.renderFooter(bodyWidth, PICKER_HINT);
+  const snapshot = twoPane.snapshot();
+  const warning = snapshot.thinking && thinkingOffWarning(snapshot.levelOptions, snapshot.thinking);
+  if (warning) {
+    pickerLines.push("", ...wrapText(warning, bodyWidth).map((line) => th.fg("warning", line)));
+  }
+  const { actionRow, hintRows } = twoPane.renderFooter(bodyWidth, PICKER_HINT);
   return [
     renderMenuTopBorder(th, innerWidth, title),
     ...wrapText(description, bodyWidth).map((line) => renderMenuContentRow(th, innerWidth, th.fg("muted", ` ${line}`))),
@@ -457,7 +160,8 @@ function renderFramedPicker(
     renderMenuSeparator(th, innerWidth),
     renderMenuContentRow(th, innerWidth, actionRow),
     renderMenuSeparator(th, innerWidth),
-    renderMenuContentRow(th, innerWidth, hintRow),
+    // Hints keep the two-column inset every persona-audit footer uses (innerWidth = bodyWidth + 2).
+    ...hintRows.map((line) => renderMenuContentRow(th, innerWidth, `  ${line}`)),
     renderMenuBottomBorder(th, innerWidth),
   ];
 }
@@ -497,7 +201,7 @@ export class RetryModelSubView {
     this.currentRef = current.ref;
     this.borderTitle = borderTitle;
     this.description = description;
-    this.twoPane = new TwoPaneModelThinking(tui, theme, availableRefs, thinkingOverrides, currentThinking, ctx);
+    this.twoPane = createPhaseModelPicker(tui, theme, availableRefs, thinkingOverrides, currentThinking, ctx);
   }
 
   get isActive(): boolean {
@@ -615,7 +319,7 @@ class PhaseModelPickerComponent implements Component {
     this.selections = selections;
     this.thinkingOverrides = thinkingOverrides;
     this.done = done;
-    this.twoPane = new TwoPaneModelThinking(tui, theme, availableRefs, thinkingOverrides, currentThinking, ctx);
+    this.twoPane = createPhaseModelPicker(tui, theme, availableRefs, thinkingOverrides, currentThinking, ctx);
 
     const slotItem = (descriptor: PhaseSlotDescriptor): MenuItem => ({
       id: descriptor.slot,

@@ -3,14 +3,14 @@ import { test } from "node:test";
 import type { ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
 import { visibleWidth, type Component, type TUI } from "@earendil-works/pi-tui";
 import {
-  modelThinkingPaneWidths,
   seedPhaseSelections,
   showPhaseModelPicker,
-  smartTruncateModelLabel,
   thinkingOffWarning,
-  TwoPaneModelThinking,
+  createPhaseModelPicker,
+  RetryModelSubView,
   type PhaseModelPickerResult,
 } from "../src/components/ModelPicker.ts";
+import { modelThinkingPaneWidths } from "@underactive/pi-topping-primitives/models";
 import { PROMPT_OVERLAY_OPTIONS } from "../src/components/menuChrome.ts";
 import {
   PHASE_SLOTS,
@@ -94,7 +94,7 @@ test("ctrl+c inside a slot view returns to the overview instead of settling the 
 });
 
 test("TwoPaneModelThinking treats ctrl+c as back", () => {
-  const picker = new TwoPaneModelThinking(
+  const picker = createPhaseModelPicker(
     tui,
     theme,
     [{ provider: "test", id: "model" }],
@@ -110,7 +110,7 @@ test("the phase overview's Cancel button still aborts the audit", async () => {
 });
 
 test("model picker normalizes SelectList rows to the persona-audit marker and highlight", () => {
-  const picker = new TwoPaneModelThinking(
+  const picker = createPhaseModelPicker(
     tui,
     theme,
     [{ provider: "test", id: "model" }],
@@ -132,7 +132,7 @@ test("model picker normalizes SelectList rows to the persona-audit marker and hi
 });
 
 test("model picker moves the selection highlight with pane focus", () => {
-  const picker = new TwoPaneModelThinking(
+  const picker = createPhaseModelPicker(
     tui,
     theme,
     [{ provider: "test", id: "model" }],
@@ -158,17 +158,50 @@ test("thinkingOffWarning flags off and no-thinking models, stays quiet on real l
   assert.match(thinkingOffWarning(["off"], "off")!, /no thinking mode/);
 });
 
-test("the model picker renders a warning when the selected thinking level is off", () => {
-  const picker = new TwoPaneModelThinking(
+test("the framed model picker renders a warning when the selected thinking level is off", () => {
+  const picker = new RetryModelSubView(
     tui,
     theme,
+    context,
     [{ provider: "test", id: "model" }],
     {},
     currentThinking,
-    context,
+    { label: "test/model", ref: { provider: "test", id: "model" } },
+    "Retry model",
+    "Choose a model for this retry.",
   );
+  picker.open();
   const lines = picker.render(50);
   assert.ok(lines.some((line) => line.includes("⚠")), "expected a thinking-off warning in the render");
+  const plain = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""));
+  assert.ok(plain.some((line) => line.startsWith("  type filters models")), "footer hints keep the two-column inset");
+  for (const line of lines) assert.equal(visibleWidth(line), 50);
+});
+
+test("the framed model picker keeps ten model rows with or without a filter", () => {
+  for (const count of [9, 10, 11, 15]) {
+    const refs: ModelRef[] = Array.from({ length: count }, (_, index) => ({ provider: "test", id: `model-${index}` }));
+    const view: RetryModelSubView = new RetryModelSubView(
+      tui,
+      theme,
+      context,
+      refs,
+      {},
+      currentThinking,
+      { label: "test/model-0", ref: refs[0]! },
+      "Retry model",
+      "Choose a model for this retry.",
+    );
+    view.open();
+    for (const filter of ["", "model"]) {
+      for (const key of filter) view.handleInput(key);
+      const lines: string[] = view.render(80);
+      const modelRows = lines.filter((line) => /test\/model-\d+/.test(line)).length;
+      assert.equal(modelRows, Math.min(count, 10), `count=${count} filter=${filter}`);
+      assert.equal(lines.some((line) => /\(\d+\/\d+\)/.test(line)), count > 10, `scroll count=${count} filter=${filter}`);
+      for (const line of lines) assert.equal(visibleWidth(line), 80);
+    }
+  }
 });
 
 test("seedPhaseSelections replaces a retired saved model and recomputes thinking", () => {
@@ -228,28 +261,4 @@ test("seedPhaseSelections reports each retired saved model once", () => {
   );
 
   assert.deepEqual(seeded.dropped, ["gone/retired"]);
-});
-
-test("smartTruncateModelLabel keeps last segment, first segment, and collapses skipped runs", () => {
-  const result = smartTruncateModelLabel("openai/accounts/org-1/models/gpt-4o-mini", 20);
-  // Last segment survives.
-  assert.ok(result.endsWith("gpt-4o-mini"), `last segment should survive, got: ${result}`);
-  // First segment kept.
-  assert.ok(result.startsWith("openai/"), `first segment should be kept, got: ${result}`);
-  // Skipped runs collapse to a single ellipsis.
-  const ellipsisCount = (result.match(/…/g) ?? []).length;
-  assert.equal(ellipsisCount, 1, `expected exactly 1 ellipsis, got ${ellipsisCount}: ${result}`);
-  // Fits within maxWidth.
-  assert.ok(visibleWidth(result) <= 20, `expected width <= 20, got ${visibleWidth(result)}: ${result}`);
-});
-
-test("smartTruncateModelLabel falls back to skeleton when even minimal segments don't fit", () => {
-  const result = smartTruncateModelLabel("openai/accounts/org-1/models/gpt-4o-mini", 10);
-  // Starts with the skeleton prefix.
-  assert.ok(result.startsWith("…/"), `expected skeleton prefix, got: ${result}`);
-  // The model name is truncated — shorter than the original.
-  const suffix = result.slice("…/".length);
-  assert.ok(suffix.length < "gpt-4o-mini".length, `expected model name truncated, got suffix: ${suffix}`);
-  // Fits within maxWidth.
-  assert.ok(visibleWidth(result) <= 10, `expected width <= 10, got ${visibleWidth(result)}: ${result}`);
 });

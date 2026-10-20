@@ -17,7 +17,7 @@
 import type { ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
 import type { TUI } from "@earendil-works/pi-tui";
 import { normalizeFindingText } from "../dedup.ts";
-import { getModelCatalogue } from "../modelCatalogue.ts";
+import { getModelCatalogue } from "@underactive/pi-topping-primitives/models";
 import {
   loadPersonaAuditConfig,
   type ModelRef,

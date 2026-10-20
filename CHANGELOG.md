@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- Model references, catalogues, thinking helpers and the unframed picker now come from `@underactive/pi-topping-primitives` 0.5.0; phase, retry and warning policy remains local.
+- Saved model references with an empty provider or id are now treated as unset.
+- Model-picker footer hints wrap instead of being clipped, and pasted text filters models.
+- In the model picker, typing or Backspace while the Select/Cancel buttons are focused now edits the filter and returns to Models; a selected model that still matches stays selected while filtering; kitty-encoded keys filter; Backspace follows pi's key parser and removes one whole character.
 - Settings are read and written by the shared `@underactive/pi-topping-primitives` 0.2.0 settings store. The path and tab format are unchanged; temp files get unique names, the file is created 0600 (directory 0700 when new), and a failed save still shows `Could not save persona-audit settings: …`.
 - Phase-model saves from the picker are now locked read-modify-write updates that merge into the file as it is now, instead of writing back a config read before the overlay opened. A settings file that is not valid JSON is refused rather than overwritten, with `Could not save phase model settings: …`.
 - Use `PI_VIRTUAL_MODEL_API` from `@underactive/pi-topping-primitives/contracts` to identify virtual models.

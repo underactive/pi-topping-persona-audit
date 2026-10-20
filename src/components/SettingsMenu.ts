@@ -13,7 +13,7 @@
 
 import type { ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey, type Component, type TUI } from "@earendil-works/pi-tui";
-import { getModelCatalogue, validateSavedChoice } from "../modelCatalogue.ts";
+import { getModelCatalogue, validateSavedChoice } from "@underactive/pi-topping-primitives/models";
 import { MenuComponent, showOverlayPrompt, type MenuItem } from "./menuChrome.ts";
 import { RetryModelSubView } from "./ModelPicker.ts";
 import {
