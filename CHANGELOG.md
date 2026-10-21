@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- Depend on `@underactive/pi-topping-primitives` `^0.10.0` (was `^0.8.0`). Nothing it imports changed in between: 0.9.0 added `./env` and `./abort`, which it does not use, and 0.10.0 removed only the `pi-topping-compact` entry names from `./contracts`, which it never referenced. Every topping now asks for the same range, so an install of several shares one copy of the library. No visible change.
 - The agent file loader, the upward `.pi/agents` walk and the concurrency map now come from `@underactive/pi-topping-primitives` 0.8.0 (`./process`). The bundled, user and project layering and the rule that a project-local `persona-audit-*` file cannot shadow a bundled agent stay local, and each now has a test.
 - A malformed project or user agent file (bad YAML, or a non-string `name`, `description`, `tools` or `model`) is now skipped instead of aborting `/persona-audit`, and a non-string `name` can no longer crash discovery. A YAML `null` for `tools` or `model` counts as absent.
 - A non-integer or `NaN` concurrency limit now works instead of throwing.
