@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-21
+
 ### Changed
 
 - Starting an audit takes one screen fewer. **Continue** on the phase-models screen now starts the audit instead of opening the guidance screen. A new **Add Guidance** button, between Continue and Cancel, opens the guidance screen. Its Back button returns to phase models and keeps the draft, so a later Continue still sends that guidance to reviewers. Handoff resumes do not show the button.
