@@ -2,9 +2,10 @@
  * Per-phase model + thinking picker, shown after the ExpertPicker confirms
  * reviewers. One overview screen lists the four audit phases (Review,
  * Triage, Implement, Verify); opening a row shows a two-pane model/thinking
- * selector scoped to that phase. Esc on the overview steps back to the
- * reviewer picker and Cancel aborts the audit; Esc in a slot view returns to
- * the overview without discarding the other slots.
+ * selector scoped to that phase. Continue starts the audit, Add Guidance (when
+ * offered) opens the reviewer-guidance screen, Esc on the overview steps back
+ * to the reviewer picker and Cancel aborts the audit; Esc in a slot view
+ * returns to the overview without discarding the other slots.
  *
  * Ported from pi-moa-plan's `src/moaModelPicker.ts` (`TwoPaneModelThinking`)
  * and `src/moaSetupOverlay.ts` (overview/slot navigation shape). Models and
@@ -50,6 +51,7 @@ export type { TwoPaneModelThinking } from "@underactive/pi-topping-primitives/mo
 
 export type PhaseModelPickerResult =
   | { action: "start"; selections: PhaseModelSelection }
+  | { action: "guidance"; selections: PhaseModelSelection }
   | { action: "back"; selections: PhaseModelSelection }
   | { action: "cancel" };
 
@@ -312,6 +314,7 @@ class PhaseModelPickerComponent implements Component {
     currentThinking: ThinkingLevel,
     ctx: ExtensionCommandContext,
     selections: PhaseModelSelection,
+    offerGuidance: boolean,
     done: (result: PhaseModelPickerResult) => void,
   ) {
     this.tui = tui;
@@ -342,6 +345,13 @@ class PhaseModelPickerComponent implements Component {
             primary: true,
             onSelect: () => this.done({ action: "start", selections: { ...this.selections } }),
           },
+          ...(offerGuidance
+            ? [{
+                id: "guidance",
+                label: "Add Guidance",
+                onSelect: () => this.done({ action: "guidance", selections: { ...this.selections } }),
+              }]
+            : []),
           { id: "cancel", label: "Cancel", onSelect: () => this.done({ action: "cancel" }) },
         ],
       },
@@ -405,7 +415,8 @@ class PhaseModelPickerComponent implements Component {
 
 /**
  * Show the per-phase model + thinking picker. Returns `back` when the user
- * escapes out to the reviewer picker, and `cancel` when they abort or no
+ * escapes out to the reviewer picker, `guidance` when they choose Add Guidance
+ * (only offered with `offerGuidance`), and `cancel` when they abort or no
  * models are available. `initial` seeds the phases over the saved config, so
  * a `back` result handed straight back preserves the unsaved choices.
  */
@@ -413,6 +424,7 @@ export async function showPhaseModelPicker(
   ctx: ExtensionCommandContext,
   currentThinking: ThinkingLevel,
   initial?: PhaseModelSelection,
+  offerGuidance = false,
 ): Promise<PhaseModelPickerResult> {
   if (ctx.mode !== "tui") return { action: "cancel" };
 
@@ -448,9 +460,9 @@ export async function showPhaseModelPicker(
   }
 
   const result = await showOverlayPrompt<PhaseModelPickerResult>(ctx, (tui, theme, finish) =>
-    new PhaseModelPickerComponent(tui, theme, available, thinkingOverrides, currentThinking, ctx, selections, finish));
+    new PhaseModelPickerComponent(tui, theme, available, thinkingOverrides, currentThinking, ctx, selections, offerGuidance, finish));
 
-  if (result.action !== "start") return result;
+  if (result.action !== "start" && result.action !== "guidance") return result;
 
   const selectedThinking: Record<string, ThinkingLevel> = {};
   for (const slot of PHASE_SLOTS) {

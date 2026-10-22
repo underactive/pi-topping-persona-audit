@@ -48,7 +48,7 @@ import {
   type Temperament,
 } from "./modelConfig.ts";
 import { getModelCatalogue, validateSavedChoice } from "@underactive/pi-topping-primitives/models";
-import { additionalContextFingerprint, describeAdditionalContext, hasAdditionalContext, type AdditionalContext } from "./additionalContext.ts";
+import { additionalContextFingerprint, describeAdditionalContext, hasAdditionalContext, parseAdditionalContext, type AdditionalContext } from "./additionalContext.ts";
 import { parsePersonaAuditArgs, type AuditExclusions } from "./args.ts";
 import type { AuditMode, Finding, ReviewerSelection } from "./types.ts";
 
@@ -716,6 +716,9 @@ export default function (pi: ExtensionAPI): void {
       //    pickers return to the source menu, and the model picker reopens
       //    whichever picker produced the selection — the dispatcher never
       //    re-runs on back, and its recommendation is cached for this command.
+      //    The model picker's Continue starts the audit; its Add Guidance
+      //    button opens the optional reviewer-guidance screen, whose Back
+      //    returns to the model picker with the draft kept.
       //    A handoff resume skips reviewer selection — reviewers are the
       //    original run's historical labels — but still needs the model
       //    picker (the Implement/Verify and Fix Now models matter).
@@ -845,7 +848,7 @@ export default function (pi: ExtensionAPI): void {
             reviewers = picked;
           }
           for (;;) {
-            const models = await showPhaseModelPicker(ctx, pi.getThinkingLevel(), restoredModels);
+            const models = await showPhaseModelPicker(ctx, pi.getThinkingLevel(), restoredModels, true);
             if (models.action === "cancel") {
               ctx.ui.notify("Audit cancelled.", "info");
               return;
@@ -859,9 +862,27 @@ export default function (pi: ExtensionAPI): void {
             restoredModels = models.selections;
             const reviewRef = models.selections.review.ref;
             const reviewModel = ctx.modelRegistry.find(reviewRef.provider, reviewRef.id);
+            const reviewModelSupportsImages = reviewModel?.input.includes("image") === true;
+            if (models.action === "start") {
+              // Continue starts the audit directly, carrying any guidance drafted
+              // on an earlier visit to the guidance screen.
+              const parsed = await parseAdditionalContext(contextDraft, ctx.cwd);
+              if (parsed.context.images.length > 0 && !reviewModelSupportsImages) {
+                ctx.ui.notify(
+                  "The selected review model does not declare image input support; choose an image-capable model or remove the attachments via Add Guidance.",
+                  "warning",
+                );
+                continue;
+              }
+              selection = reviewers;
+              phaseModels = models.selections;
+              additionalContext = parsed.context;
+              break selectionLoop;
+            }
+
             const summary = await showAuditSummary(ctx, {
               draft: contextDraft,
-              reviewModelSupportsImages: reviewModel?.input.includes("image") === true,
+              reviewModelSupportsImages,
             });
             contextDraft = summary.draft;
             if (summary.action === "cancel") {

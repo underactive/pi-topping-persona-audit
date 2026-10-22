@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import type { ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
 import { visibleWidth, type Component, type TUI } from "@earendil-works/pi-tui";
@@ -43,7 +46,7 @@ const RIGHT = "\x1b[C";
 const ENTER = "\r";
 
 /** Drive the overview through a focused-overlay fake: Pi dispatches input straight to the component. */
-function runOverview(keys: string[]): { result: Promise<PhaseModelPickerResult>; options: () => unknown } {
+function runOverview(keys: string[], offerGuidance = false): { result: Promise<PhaseModelPickerResult>; options: () => unknown } {
   let component: Component | undefined;
   let capturedOptions: unknown;
   const ctx = {
@@ -64,7 +67,7 @@ function runOverview(keys: string[]): { result: Promise<PhaseModelPickerResult>;
     },
   } as unknown as ExtensionCommandContext;
 
-  const result = showPhaseModelPicker(ctx, currentThinking);
+  const result = showPhaseModelPicker(ctx, currentThinking, undefined, offerGuidance);
   for (const key of keys) component?.handleInput?.(key);
   return { result, options: () => capturedOptions };
 }
@@ -107,6 +110,25 @@ test("TwoPaneModelThinking treats ctrl+c as back", () => {
 
 test("the phase overview's Cancel button still aborts the audit", async () => {
   assert.deepEqual(await runOverview([TAB, RIGHT, ENTER]).result, { action: "cancel" });
+});
+
+test("Add Guidance sits between Continue and Cancel when guidance is offered", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "persona-audit-picker-"));
+  const previous = process.env.PI_CODING_AGENT_DIR;
+  process.env.PI_CODING_AGENT_DIR = dir;
+  try {
+    const guidance = await runOverview([TAB, RIGHT, ENTER], true).result;
+    assert.equal(guidance.action, "guidance");
+    assert.deepEqual(
+      guidance.action === "guidance" ? Object.keys(guidance.selections).sort() : [],
+      [...PHASE_SLOTS].sort(),
+    );
+    assert.deepEqual(await runOverview([TAB, RIGHT, RIGHT, ENTER], true).result, { action: "cancel" });
+  } finally {
+    if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previous;
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("model picker normalizes SelectList rows to the persona-audit marker and highlight", () => {
