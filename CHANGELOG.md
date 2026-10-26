@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Update `@underactive/pi-topping-primitives` from `^0.10.0` to `^0.11.0`. No imports changed; only primitives 0.11.0 glyphs were added, with no visible behavior change.
+
 ## [0.4.0] - 2026-10-21
 
 ### Changed
