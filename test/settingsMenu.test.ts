@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
-import type { Component, TUI } from "@earendil-works/pi-tui";
+import { getKeybindings, type Component, type TUI } from "@earendil-works/pi-tui";
 import { showSettingsMenu, type SettingsMenuResult } from "../src/components/SettingsMenu.ts";
 import { PROMPT_OVERLAY_OPTIONS } from "../src/components/menuChrome.ts";
 import {
@@ -58,16 +58,27 @@ const config = (
   rosters: [],
 });
 
-function mount(initial: PersonaAuditConfig = config(DEFAULT_METER_SETTINGS)): Mounted {
+function mount(initial: PersonaAuditConfig = config(DEFAULT_METER_SETTINGS), nested: readonly string[] = []): Mounted {
   let component: Component | undefined;
   let settled = false;
   let capturedOptions: unknown;
+  let customCalls = 0;
   const warnings: string[] = [];
 
   // Focused-overlay fake: Pi dispatches input straight to the component and
   // settles the overlay when the component calls done.
   const ctx = {
-    modelRegistry: { getAvailable: () => [{ provider: "test", id: "model", reasoning: false }] },
+    mode: "tui",
+    modelRegistry: {
+      getAvailable: () => [{ provider: "test", id: "model", reasoning: false }],
+      getModelsOfType: () => [
+        { type: "classifier", provider: "typesafe", id: "jev-latest", api: "typesafe-system-one" },
+        { type: "classifier", provider: "openrouter", id: "typesafe/jev-1.13", api: "openai-completions" },
+      ],
+      getProviderAuthStatus: () => ({ configured: true, source: "environment" }),
+      findOfType: (_type: string, provider: string, id: string) =>
+        provider === "typesafe" && id === "jev-latest" ? { provider, id } : undefined,
+    },
     ui: {
       notify: (message: string, level: string) => {
         if (level === "warning") warnings.push(message);
@@ -76,6 +87,17 @@ function mount(initial: PersonaAuditConfig = config(DEFAULT_METER_SETTINGS)): Mo
         factory: (host: TUI, currentTheme: Theme, keybindings: unknown, done: (value: SettingsMenuResult) => void) => Component,
         options?: unknown,
       ) => {
+        customCalls += 1;
+        // A nested overlay (the classifier picker) is driven with the supplied
+        // keys and resolves with whatever it selected, like pi would.
+        if (customCalls > 1) {
+          let picked!: SettingsMenuResult;
+          const overlay = factory(tui, theme, getKeybindings(), (value) => {
+            picked = value;
+          });
+          for (const key of nested) overlay.handleInput?.(key);
+          return Promise.resolve(picked);
+        }
         capturedOptions = options;
         return new Promise<SettingsMenuResult>((resolve) => {
           component = factory(tui, theme, undefined, (value) => {
@@ -250,4 +272,100 @@ test("Cancel and Esc both discard the edits", async () => {
   escaped.send(RIGHT, ESCAPE);
   assert.deepEqual(await escaped.result, { action: "cancel" });
   assert.ok(escaped.settled());
+});
+
+// ── the decision-classifier section ──────────────────────────────────────────
+
+const DECISION_TOGGLE_ROW = 7;
+const DECISION_CLASSIFIER_ROW = 8;
+
+test("the decision section renders the classifier row and its three toggles", () => {
+  const menu = mount();
+  const rendered = menu.render();
+
+  assert.match(rendered, /Decision classifier/);
+  assert.match(rendered, /Use the decision classifier/);
+  assert.match(rendered, /Classifier names the reviewers/);
+  assert.match(rendered, /Classifier suggests triage/);
+  assert.match(rendered, /auto \(typesafe\/jev-latest\)/, "auto resolves to the first credentialed model");
+  // The dispatch row keeps its long-standing position, above the new section.
+  assert.match(rendered, /Dispatch model/);
+});
+
+test("the decision toggles change the draft and Save persists them", async () => {
+  const menu = mount();
+  menu.send(...Array.from({ length: DECISION_TOGGLE_ROW }, () => DOWN), " ", TAB, ENTER);
+
+  const saved = await menu.result;
+  assert.equal(saved.action, "save");
+  if (saved.action !== "save") return;
+  assert.deepEqual(saved.draft.decision, {
+    enabled: true,
+    provider: "auto",
+    model: "auto",
+    timeoutMs: 3000,
+    circuitBreakerEnabled: true,
+    circuitBreakerCooldownSeconds: 30,
+    useForDispatcher: true,
+    useForTriage: false,
+  });
+});
+
+test("the classifier row opens the picker, and a pick turns the feature on", async () => {
+  // Enter on the row opens the picker; Enter there selects the highlighted
+  // `auto` row, which is enough to opt in.
+  const menu = mount(config(DEFAULT_METER_SETTINGS), [ENTER]);
+  menu.send(...Array.from({ length: DECISION_CLASSIFIER_ROW }, () => DOWN), ENTER);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.match(menu.render(), /Decision classifier\s+auto \(typesafe\/jev-latest\)/);
+  assert.match(menu.render(), /\[■\] Use the decision classifier/, "picking a model turns the feature on");
+
+  menu.send(TAB, ENTER);
+  const saved = await menu.result;
+  assert.equal(saved.action, "save");
+  if (saved.action !== "save") return;
+  assert.equal(saved.draft.decision?.enabled, true);
+  assert.equal(saved.draft.decision?.provider, "auto");
+});
+
+test("the picker's second row pins that classifier and Save persists it", async () => {
+  // Down then Enter selects the first credentialed model after `auto`.
+  const menu = mount(config(DEFAULT_METER_SETTINGS), [DOWN, ENTER]);
+  menu.send(...Array.from({ length: DECISION_CLASSIFIER_ROW }, () => DOWN), ENTER);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.match(menu.render(), /Decision classifier\s+typesafe\/jev-latest/);
+
+  menu.send(TAB, ENTER);
+  const saved = await menu.result;
+  assert.equal(saved.action, "save");
+  if (saved.action !== "save") return;
+  assert.equal(saved.draft.decision?.provider, "typesafe");
+  assert.equal(saved.draft.decision?.model, "jev-latest");
+});
+
+test("Backspace on the classifier row returns the selection to auto", async () => {
+  const initial = config(DEFAULT_METER_SETTINGS);
+  initial.decision = {
+    enabled: true,
+    provider: "openrouter",
+    model: "typesafe/jev-1.13",
+    timeoutMs: 3000,
+    circuitBreakerEnabled: true,
+    circuitBreakerCooldownSeconds: 30,
+    useForDispatcher: true,
+    useForTriage: false,
+  };
+  const menu = mount(initial);
+  assert.match(menu.render(), /Decision classifier\s+openrouter\/typesafe\/jev-1\.13/);
+
+  menu.send(...Array.from({ length: DECISION_CLASSIFIER_ROW }, () => DOWN), BACKSPACE);
+  assert.match(menu.render(), /Decision classifier\s+auto/);
+
+  menu.send(TAB, ENTER);
+  const saved = await menu.result;
+  assert.equal(saved.action, "save");
+  if (saved.action !== "save") return;
+  assert.equal(saved.draft.decision?.provider, "auto");
+  assert.equal(saved.draft.decision?.model, "auto");
+  assert.equal(saved.draft.decision?.enabled, true, "the feature stays on; only the pin is cleared");
 });

@@ -104,12 +104,22 @@ Exactly one of `--diff` or `--full` is required.
 | Max fix + verify rounds | `1`–`10` | `3` |
 | Reviewer rosters | Up to 20 named reviewer combinations | None |
 | Dispatch model | Any available physical model plus a thinking level | Session model |
+| Use the decision classifier | on, off | off |
+| Decision classifier | `auto`, or any credentialed Jev classifier | `auto` |
+| Classifier names the reviewers | on, off | on |
+| Classifier suggests triage | on, off | off |
 
 Reviewer roster names are 1–24 alphanumeric characters and are unique without regard to case. Each roster contains 1–10 unique reviewers. Open **Reviewer rosters** to create, edit, rename, clear slots with `Backspace`/`Delete`, or delete with confirmation. The editor always shows ten slots and filters already-used reviewers out of later slot pickers. Roster and other setting changes are staged together: only the top-level **Save** writes them; **Cancel** or `Esc` discards the whole settings draft.
 
 In `/persona-audit`, choosing **Load reviewer roster** on the source menu opens a picker listing valid rosters alphabetically with their members. Filtering matches roster and member names. `Enter` expands a roster directly into its current valid reviewers at one pass each; rosters above the normal run threshold use the same second-`Enter` cost confirmation, and `Esc` returns to the source menu. Reviewer names that no longer exist remain in settings but are omitted at use time; a roster with no current reviewers is hidden.
 
 **Dispatch model** is the model behind **Inspect repo + recommend reviewers**. Open the row to pick any available model and thinking level with the same two-pane selector the phase picker uses; `Backspace` clears it. When unset, the dispatcher runs on the session's current model and thinking level and the audit warns you once. The dispatcher receives a deterministic repo fingerprint (languages by file count, root manifests such as `package.json`, `Cargo.toml`, `go.mod`, and `Dockerfile`, detected frameworks, and signals such as auth, database, containers, native code, or an AI surface) plus read-only tools to spot-check, and returns 3–10 reviewers with a one-line reason each. The recommendation is cached for the rest of that command, so backing out and choosing it again does not re-run the agent.
+
+**Decision classifier** is an optional Jev classifier (`@underactive/pi-topping-primitives/classifier`, the same one `/routesense settings` picks) that replaces or assists the two points where an agent session used to run. It is not agentic — no tools, no repository access — so it never replaces the repo fingerprint, and every phase behaves exactly as before when it is off, unconfigured, or unreachable.
+
+- **Use the decision classifier** is the master switch, off by default. Picking a model in the **Decision classifier** row turns it on; `Backspace` on that row returns the selection to `auto`, which means the first credentialed model among `typesafe/jev-latest`, `openrouter/typesafe/jev-1.13`, `cloudflare-workers-ai/typesafe/jev`, `vercel-ai-gateway/typesafe-ai/jev`, and `opencode/jev-1.13`. A pin whose provider lost its credentials is skipped in favour of the next one.
+- **Classifier names the reviewers** classifies the deterministic fingerprint into reviewer categories (architecture, security, auth, native, frontend, and so on) and expands them into exact catalogue names, instead of running the dispatcher agent session. The classification is bounded by a 3-second deadline and a 30-second circuit breaker: a timeout, an error, an open circuit, or a selection of fewer than three reviewers falls back to the agent session transparently, and the recommendation notification says which path ran. The fingerprint is unchanged either way.
+- **Classifier suggests triage** classifies each finding into a category, a verdict, and a change kind while the findings review renders, and shows them as a badge above the finding's Summary. A badge is advisory: it never pre-sets the Accept/Reject/Defer status. The suggested sort mode (`S` cycles file, priority, reviewer, blast radius, classifier suggestion) orders findings by the suggested verdict, then the suggested category, then the usual exploitability order.
 
 The first two control the progress table's MONITOR column (see [Progress table](#progress-table)).
 Cross-examination mode controls whether selected reviewers get a second pass over the other reviewers' deduped findings to file disputes or raise composite findings. **red team specialists** limits this pass to that tier; **all reviewers** runs one per selected reviewer; **off** disables it. Each enabled reviewer adds one extra Review-slot session and receives all other reviewers' findings. Disputes carry a verdict (`false-positive`, `unreachable`, `overstated`) and a reason of up to 500 characters; they are evidence for the adjudicator and never drop or downgrade a finding. Composite findings reference their source findings by `file:line:category` key. Failed or degraded cross-examination sessions are noted in the report rather than silently skipped.
@@ -608,6 +618,7 @@ pi-topping-persona-audit/
 │   ├── findingsTransport.ts  # Reviewer output parsing/collection (pure)
 │   ├── dedup.ts              # Deterministic finding dedup (pure)
 │   ├── skillContent.ts       # 53 personalities + agent-session prompt contracts
+│   ├── decision/             # Optional Jev classifier: dispatcher categories + triage suggestions
 │   ├── types.ts              # Shared types
 │   └── components/
 │       ├── AuditProgress.ts  # Live phased progress table (aboveEditor widget)

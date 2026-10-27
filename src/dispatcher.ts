@@ -1,18 +1,21 @@
 /**
- * Reviewer dispatcher: fingerprints the repository deterministically, asks a
- * cheap read-only agent to pick 3–10 reviewer personas from the catalogue,
- * and validates the pick against exact catalogue names.
+ * Reviewer dispatcher: fingerprints the repository deterministically, then names
+ * 3–10 reviewer personas from the catalogue — through the decision classifier
+ * when it is configured, and through a cheap read-only agent otherwise.
  *
- * Everything on either side of the agent call is pure, so the same manifest
- * and root files always produce the same fingerprint and the same prompt.
+ * Everything on either side of either call is pure, so the same manifest and
+ * root files always produce the same fingerprint, the same prompt, and the same
+ * expansion of the classifier's categories.
  */
 
 import { readFile as fsReadFile, stat } from "node:fs/promises";
 import * as path from "node:path";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { runAgentSession } from "./agentRunner.ts";
+import { classifyDispatch } from "./decision/dispatch.ts";
+import { DecisionClassifier } from "./decision/classifier.ts";
 import { TIERS } from "./components/ReviewerData.ts";
-import type { ThinkingLevel } from "./modelConfig.ts";
+import type { DecisionSettings, ThinkingLevel } from "./modelConfig.ts";
 import { AGENT_IDLE_TIMEOUT_MS, extractJsonArray, READ_ONLY_TOOLS } from "./orchestrator.ts";
 import type { HeadlessOptions, HeadlessResult } from "./types.ts";
 
@@ -50,6 +53,8 @@ export interface DispatcherRecommendation {
   entries: DispatcherEntry[];
   reviewers: string[];
   fingerprint: RepoFingerprint;
+  /** Which path named the reviewers; absent for a caller that did not ask. */
+  source?: "classifier" | "agent";
 }
 
 export type DispatcherOutcome =
@@ -62,6 +67,8 @@ export interface DispatcherDeps {
   projectTrusted: boolean;
   model?: string;
   thinking?: ThinkingLevel;
+  /** Decision-classifier settings from `/persona-audit-settings`; absent means the agent session runs. */
+  decision?: DecisionSettings;
   signal?: AbortSignal;
   /** Injectable for tests — defaults to runAgentSession. */
   runSession?: (options: HeadlessOptions) => Promise<HeadlessResult>;
@@ -498,6 +505,35 @@ export async function recommendReviewers(
   input: { fileManifest: string[]; mode: "diff" | "full"; scope: string },
 ): Promise<DispatcherOutcome> {
   const fingerprint = await fingerprintRepo(deps.cwd, input.fileManifest, deps.readFile);
+
+  // ── Classifier path ──────────────────────────────────────────────────
+  // The classifier cannot read the repository, so it judges the deterministic
+  // fingerprint and never replaces it. Any failure — no credentials, an open
+  // circuit, a timeout, an error, or too few reviewers — falls through to the
+  // agent session below, which is the behavior before this feature existed.
+  if (deps.decision?.enabled && deps.decision.useForDispatcher) {
+    const classifier = DecisionClassifier.open(deps.modelRegistry, deps.decision, { signal: deps.signal });
+    if (classifier) {
+      const classified = await classifyDispatch(
+        classifier,
+        fingerprint,
+        { mode: input.mode, scope: input.scope },
+        DISPATCHER_MIN,
+      );
+      if (classified) {
+        return {
+          ok: true,
+          recommendation: {
+            entries: classified.entries,
+            reviewers: classified.entries.map((entry) => entry.reviewer),
+            fingerprint,
+            source: "classifier",
+          },
+        };
+      }
+    }
+  }
+
   const runSession = deps.runSession ?? runAgentSession;
   const result = await runSession({
     agentName: DISPATCHER_AGENT_NAME,
@@ -532,6 +568,7 @@ export async function recommendReviewers(
           entries: parsed.entries,
           reviewers: parsed.entries.map((entry) => entry.reviewer),
           fingerprint,
+          source: "agent",
         },
       };
     }

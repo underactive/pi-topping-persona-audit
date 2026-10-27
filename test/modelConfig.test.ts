@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  DEFAULT_DECISION_SETTINGS,
   DEFAULT_METER_SETTINGS,
   DEFAULT_CROSS_EXAMINATION_MODE,
   DEFAULT_TEMPERAMENT,
@@ -180,4 +181,50 @@ test("parsePersonaAuditSettings defaults malformed roster collections", () => {
   assert.deepEqual(parsePersonaAuditSettings("{}").rosters, []);
   assert.deepEqual(parsePersonaAuditSettings(JSON.stringify({ rosters: {} })).rosters, []);
   assert.deepEqual(parsePersonaAuditSettings(JSON.stringify({ rosters: [null, "bad", { name: "Valid" }] })).rosters, []);
+});
+
+test("parsePersonaAuditSettings leaves the decision block absent unless it is a record", () => {
+  assert.equal(parsePersonaAuditSettings("{}").decision, undefined);
+  assert.equal(parsePersonaAuditSettings(JSON.stringify({ decision: "on" })).decision, undefined);
+  assert.equal(parsePersonaAuditSettings(JSON.stringify({ decision: [1, 2] })).decision, undefined);
+  assert.equal(parsePersonaAuditSettings(JSON.stringify({ decision: null })).decision, undefined);
+});
+
+test("a present decision block defaults to disabled with auto selection", () => {
+  const decision = parsePersonaAuditSettings(JSON.stringify({ decision: {} })).decision;
+  assert.deepEqual(decision, {
+    ...DEFAULT_DECISION_SETTINGS,
+    enabled: false,
+  });
+  assert.equal(decision?.provider, "auto");
+  assert.equal(decision?.model, "auto");
+  assert.equal(decision?.timeoutMs, 3000);
+  assert.equal(decision?.circuitBreakerEnabled, true);
+  assert.equal(decision?.circuitBreakerCooldownSeconds, 30);
+  assert.equal(decision?.useForDispatcher, true);
+  assert.equal(decision?.useForTriage, false);
+});
+
+test("a decision block keeps a usable pin and rejects a malformed one", () => {
+  const stored = (decision: unknown): ReturnType<typeof parsePersonaAuditSettings>["decision"] =>
+    parsePersonaAuditSettings(JSON.stringify({ decision })).decision;
+  assert.equal(stored({ enabled: true, provider: "openrouter", model: "typesafe/jev-1.13" })?.provider, "openrouter");
+  assert.equal(stored({ enabled: true, provider: "openrouter", model: "typesafe/jev-1.13" })?.model, "typesafe/jev-1.13");
+  // A provider id never carries a slash, and an empty model id resolves to nothing.
+  assert.equal(stored({ provider: "openrouter/jean", model: "jev" })?.provider, "auto");
+  assert.equal(stored({ provider: "", model: "jev" })?.provider, "auto");
+  assert.equal(stored({ provider: "openrouter", model: "" })?.model, "auto");
+  assert.equal(stored({ provider: 42, model: 7 })?.provider, "auto");
+  // Bounds clamp rather than trust the file.
+  assert.equal(stored({ timeoutMs: -5 })?.timeoutMs, 1);
+  assert.equal(stored({ timeoutMs: 2500.6 })?.timeoutMs, 2501);
+  assert.equal(stored({ timeoutMs: "soon" })?.timeoutMs, 3000);
+  assert.equal(stored({ circuitBreakerCooldownSeconds: -1 })?.circuitBreakerCooldownSeconds, 0);
+  assert.equal(stored({ circuitBreakerCooldownSeconds: 12.4 })?.circuitBreakerCooldownSeconds, 12);
+  // Booleans are read strictly: only a literal true enables anything.
+  assert.equal(stored({ enabled: "yes" })?.enabled, false);
+  assert.equal(stored({ enabled: true, useForTriage: 1 })?.useForTriage, false);
+  assert.equal(stored({ enabled: true, useForTriage: true })?.useForTriage, true);
+  assert.equal(stored({ enabled: true, useForDispatcher: false })?.useForDispatcher, false);
+  assert.equal(stored({ enabled: true, circuitBreakerEnabled: false })?.circuitBreakerEnabled, false);
 });

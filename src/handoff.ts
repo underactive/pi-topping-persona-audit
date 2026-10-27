@@ -46,7 +46,9 @@ export interface HandoffPayload {
  * `suggestedChange` can never close the fence.
  */
 export function renderHandoffResumeBlock(payload: HandoffPayload): string {
-  const findings = payload.findings.map(({ blastRadius: _blastRadius, ...finding }) => finding);
+  // Run-local annotations are dropped: a suggestion is only meaningful
+  // beside the session that produced it, and a stale one would read as advice.
+  const findings = payload.findings.map(({ blastRadius: _blastRadius, triageSuggestion: _triageSuggestion, ...finding }) => finding);
   const json = JSON.stringify({ ...payload, findings });
   const longestRun = json.match(/`+/g)?.reduce((max, run) => Math.max(max, run.length), 0) ?? 0;
   const fence = "`".repeat(Math.max(3, longestRun + 1));

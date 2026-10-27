@@ -3,9 +3,10 @@ import { Key, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from
 import type { ExtensionCommandContext, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { handoffRelPath, renderDeferredHandoff, writeReportFile } from "../report.ts";
 import { gitHeadCommit } from "../git.ts";
-import { compareFindingsByExploitability } from "../findingOrder.ts";
+import { compareFindingsByExploitability, compareFindingsBySuggestion } from "../findingOrder.ts";
 import { SEVERITY_ORDER } from "../types.ts";
 import type { Finding, FindingRecommendation, FindingsReviewOutcome, FindingsReviewResult, FindingStatus, FixedFinding, ReviewSessionState, ReviewSortMode } from "../types.ts";
+import { hasSuggestion, type TriageSuggestion, type TriageSuggestionFeed } from "../decision/triage.ts";
 import { sanitizeTerminalText } from "./AuditProgress.ts";
 import { styleDetailText } from "./detailText.ts";
 import { overlayViewportRows, renderFramedBottom, renderFramedRow, renderFramedTop, SELECTOR, showOverlayPrompt, type ViewportHost } from "./menuChrome.ts";
@@ -59,12 +60,13 @@ export interface ReviewTheme {
 }
 
 const STATUS_CYCLE: FindingStatus[] = ["apply", "reject", "defer"];
-const SORT_CYCLE: ReviewSortMode[] = ["file", "priority", "reviewer", "blast"];
+const SORT_CYCLE: ReviewSortMode[] = ["file", "priority", "reviewer", "blast", "suggested"];
 const SORT_LABELS: Record<ReviewSortMode, string> = {
   file: "file",
   priority: "priority",
   reviewer: "reviewer",
   blast: "blast radius",
+  suggested: "classifier suggestion",
 };
 const PAGE_OVERLAP = 2;
 
@@ -144,6 +146,10 @@ export class FindingsReview implements Component {
   private handoffWriting = false;
   private awaitingCancelConfirm = false;
   private pendingPageDelta = 0;
+  /** Live classifier suggestions, when the decision feature is on. Reads at render time so badges appear as they land. */
+  private readonly feed: TriageSuggestionFeed | undefined;
+  /** Unsubscribes the feed's repaint hook when the overlay closes. */
+  private unsubscribeFeed: (() => void) | undefined;
   private cachedWidth: number | undefined;
   private cachedHeight: number | undefined;
   private cachedLines: string[] | undefined;
@@ -156,6 +162,7 @@ export class FindingsReview implements Component {
     onWriteHandoff: (deferred: Finding[]) => Promise<string>,
     degradationNote?: string,
     restore?: ReviewSessionState,
+    feed?: TriageSuggestionFeed,
   ) {
     this.degradationNote = degradationNote;
     const expanded = new Set(restore?.expanded ?? []);
@@ -171,11 +178,28 @@ export class FindingsReview implements Component {
     this.done = done;
     this.tui = tui;
     this.onWriteHandoff = onWriteHandoff;
+    this.feed = feed;
+    // Classification runs beside the overlay, so a badge that lands after the
+    // last render has to ask for one. The host owns the actual repaint.
+    this.unsubscribeFeed = feed?.subscribe(() => {
+      this.invalidateRender();
+      this.tui.requestRender();
+    });
     this.populateGroups();
     if (restore) {
       this.selectedIndex = Math.max(0, Math.min(restore.selectedIndex, this.flatGroups.length - 1));
       this.lastHandoffPath = restore.handoffPath;
     }
+  }
+
+  /**
+   * Close the overlay: drop the feed subscription first, so a suggestion that
+   * lands during teardown cannot repaint a disposed component.
+   */
+  private close(outcome: FindingsReviewOutcome): void {
+    this.unsubscribeFeed?.();
+    this.unsubscribeFeed = undefined;
+    this.done(outcome);
   }
 
   /** Snapshot the mutable review state so a Fix Now round-trip can reopen the overlay unchanged. */
@@ -217,6 +241,8 @@ export class FindingsReview implements Component {
         const blast = (right.finding.blastRadius?.score ?? -1) - (left.finding.blastRadius?.score ?? -1);
         return blast || severity || file || line || original;
       }
+      case "suggested":
+        return compareFindingsBySuggestion(left.finding, right.finding) || original;
     }
   }
 
@@ -294,7 +320,7 @@ export class FindingsReview implements Component {
         this.invalidateRender();
         return;
       }
-      this.done({ kind: "cancelled" });
+      this.close({ kind: "cancelled" });
       return;
     }
     if (this.awaitingCancelConfirm) {
@@ -357,13 +383,13 @@ export class FindingsReview implements Component {
     if (data === "f" || data === "F") {
       const current = this.flatGroups[this.selectedIndex];
       if (current && current.item.status !== "fixed") {
-        this.done({ kind: "fixNow", index: current.item.originalIndex, state: this.captureState() });
+        this.close({ kind: "fixNow", index: current.item.originalIndex, state: this.captureState() });
       }
       return;
     }
 
     if (matchesKey(data, Key.enter)) {
-      this.done({ kind: "finalized", result: this.buildResult() });
+      this.close({ kind: "finalized", result: this.buildResult() });
       return;
     }
 
@@ -494,6 +520,30 @@ export class FindingsReview implements Component {
       { heading: "Suggested Change:", content: wrapped.suggestedChange },
       ...(wrapped.reason ? [wrapped.reason] : []),
     ];
+  }
+
+  /**
+   * One line describing what the decision classifier thought of a finding.
+   * Only the parts that cleared their confidence threshold appear, so a
+   * suggestion never implies more certainty than it earned.
+   */
+  private suggestionLine(suggestion: TriageSuggestion): string {
+    const parts: string[] = [];
+    if (suggestion.category !== undefined) parts.push(`${suggestion.category} ${suggestion.categoryConfidence.toFixed(2)}`);
+    if (suggestion.verdict !== undefined) parts.push(`${suggestion.verdict} ${suggestion.verdictConfidence.toFixed(2)}`);
+    if (suggestion.changeKind !== undefined) parts.push(`change: ${suggestion.changeKind} ${suggestion.changeKindConfidence.toFixed(2)}`);
+    return sanitizeTerminalText(parts.join(" · "));
+  }
+
+  /** The suggestion badge block for a finding, or nothing when there is none to show. */
+  private suggestionBlock(item: ReviewItem): WrappedDetailBlock | undefined {
+    const suggestion = this.feed?.get(item.originalIndex) ?? item.finding.triageSuggestion;
+    if (!suggestion || !hasSuggestion(suggestion)) return undefined;
+    return {
+      heading: "Classifier suggestion (advisory):",
+      content: [styleDetailText(this.suggestionLine(suggestion), this.theme)],
+      flag: "accent",
+    };
   }
 
   /**
@@ -646,7 +696,13 @@ export class FindingsReview implements Component {
       lines.push(this.renderFindingRow(item, selected, width));
 
       // Every finding shows its Summary; an open one adds the blocks beneath it.
-      const blocks: WrappedDetailBlock[] = [{ heading: "Summary:", content: this.wrapSummary(item, width) }];
+      // The classifier's badge sits above the Summary so it is visible without
+      // expanding, and it never touches the finding's own status.
+      const suggestion = this.suggestionBlock(item);
+      const blocks: WrappedDetailBlock[] = [
+        ...(suggestion ? [suggestion] : []),
+        { heading: "Summary:", content: this.wrapSummary(item, width) },
+      ];
       if (item.expanded) blocks.push(...this.detailBlocks(item, width));
       for (const [blockIndex, block] of blocks.entries()) {
         if (blockIndex > 0) lines.push("");
@@ -768,6 +824,8 @@ export async function showFindingsReview(
   handoff: { slug: string; isoDate: string; scope: string; reviewers: string[] },
   degradationNote?: string,
   restore?: ReviewSessionState,
+  /** Live classifier suggestions; badges repaint as they arrive. */
+  feed?: TriageSuggestionFeed,
 ): Promise<FindingsReviewOutcome> {
   const onWriteHandoff = async (deferred: Finding[]): Promise<string> => {
     const relPath = handoffRelPath(handoff.slug);
@@ -790,6 +848,6 @@ export async function showFindingsReview(
 
   return showOverlayPrompt<FindingsReviewOutcome>(
     ctx,
-    (tui, theme, done) => new FindingsReview(findings, theme, done, tui, onWriteHandoff, degradationNote, restore),
+    (tui, theme, done) => new FindingsReview(findings, theme, done, tui, onWriteHandoff, degradationNote, restore, feed),
   );
 }

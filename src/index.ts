@@ -29,6 +29,7 @@ import { showExpertPicker } from "./components/ExpertPicker.ts";
 import { showReviewerSourceMenu, type ReviewerSource } from "./components/ReviewerSource.ts";
 import { showRosterPicker } from "./components/RosterPicker.ts";
 import { formatRecommendation, recommendReviewers, type DispatcherOutcome, type DispatcherRecommendation } from "./dispatcher.ts";
+import { DecisionClassifier } from "./decision/classifier.ts";
 import { showPhaseModelPicker } from "./components/ModelPicker.ts";
 import { showAuditSummary } from "./components/AuditSummary.ts";
 import { showReviewerRetryPrompt } from "./components/ReviewerRetry.ts";
@@ -736,6 +737,7 @@ export default function (pi: ExtensionAPI): void {
       } else {
         const pickerConfig = loadPersonaAuditConfig();
         const rosters = pickerConfig.rosters;
+        const decision = pickerConfig.decision;
         const savedDispatch = validateSavedChoice(
           pickerConfig.dispatch,
           getModelCatalogue(ctx.modelRegistry).availableRefs(),
@@ -744,9 +746,18 @@ export default function (pi: ExtensionAPI): void {
         // The session model must be passed explicitly: an undefined model
         // hands the headless session the SDK default, not the session's model.
         const sessionModel = ctx.model ? modelRefLabel({ provider: ctx.model.provider, id: ctx.model.id }) : undefined;
-        const dispatcherLabel = dispatchChoice
-          ? phaseModelChoiceLabel(dispatchChoice)
-          : `${sessionModel ?? "session model"} (session)`;
+        // A credentialed decision classifier names the reviewers itself, so the
+        // spinner says what is actually running; the agent session is the
+        // fallback it degrades to, not the plan.
+        const dispatchClassifier =
+          decision?.enabled && decision.useForDispatcher
+            ? DecisionClassifier.open(ctx.modelRegistry, decision)
+            : undefined;
+        const dispatcherLabel = dispatchClassifier
+          ? `decision classifier ${dispatchClassifier.label}`
+          : dispatchChoice
+            ? phaseModelChoiceLabel(dispatchChoice)
+            : `${sessionModel ?? "session model"} (session)`;
 
         /** Picker that owns the current selection; undefined means the source menu opens next. */
         let screen: "roster" | "manual" | undefined;
@@ -799,6 +810,7 @@ export default function (pi: ExtensionAPI): void {
                       modelRegistry: ctx.modelRegistry,
                       projectTrusted: hostProjectTrust(ctx),
                       signal: dispatchController.signal,
+                      ...(decision ? { decision } : {}),
                       ...(dispatchChoice
                         ? { model: modelRefLabel(dispatchChoice.ref), thinking: dispatchChoice.thinking }
                         : { ...(sessionModel ? { model: sessionModel } : {}), thinking: pi.getThinkingLevel() }),
@@ -822,7 +834,8 @@ export default function (pi: ExtensionAPI): void {
                 }
                 cachedRecommendation = outcome.recommendation;
               }
-              ctx.ui.notify(formatRecommendation(cachedRecommendation), "info");
+              const source = cachedRecommendation.source === "classifier" ? " (decision classifier)" : "";
+              ctx.ui.notify(formatRecommendation(cachedRecommendation) + source, "info");
               restoredReviewers = { reviewers: [...cachedRecommendation.reviewers], passes: 1 };
               screen = "manual";
             } else {
@@ -970,6 +983,7 @@ export default function (pi: ExtensionAPI): void {
           temperament: settings.temperament,
           crossExamination: settings.crossExamination,
           maxVerifyRounds: settings.maxVerifyRounds,
+          ...(settings.decision ? { decision: settings.decision } : {}),
           signal: auditController.signal,
           resume,
           onReviewFailures: (failures, current) =>

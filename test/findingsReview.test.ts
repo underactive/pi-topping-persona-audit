@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { type TuiMode, visibleWidth } from "@earendil-works/pi-tui";
 import { FindingsReview, type ReviewHost, type ReviewTheme } from "../src/components/FindingsReview.ts";
+import { TriageSuggestionFeed, type TriageSuggestion } from "../src/decision/triage.ts";
 import type { Finding, FindingsReviewOutcome, FindingsReviewResult, ReviewSessionState } from "../src/types.ts";
 
 const strip = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
@@ -822,4 +823,90 @@ test("finding details render the complete long dispute reason", () => {
   const text = ui.text().replace(/║/g, " ").replace(/\s+/g, " ");
 
   assert.ok(text.includes(reason), "the dispute reason is not cut off in the review overlay");
+});
+
+// ── decision-classifier suggestions ──────────────────────────────────────────
+
+function suggestion(overrides: Partial<TriageSuggestion> = {}) {
+  return {
+    category: "security",
+    categoryConfidence: 0.91,
+    verdict: "apply",
+    verdictConfidence: 0.72,
+    changeKind: "behavior",
+    changeKindConfidence: 0.65,
+    model: "typesafe/jev-latest",
+    latencyMs: 120,
+    ...overrides,
+  } as const;
+}
+
+test("a finding's suggestion renders as an advisory badge above its summary", () => {
+  const ui = harness([finding(1, { triageSuggestion: suggestion() })], 40);
+  const text = ui.text();
+
+  assert.match(text, /Classifier suggestion \(advisory\):/);
+  assert.match(text, /security 0\.91 · apply 0\.72 · change: behavior 0\.65/);
+  // The badge never sets the status: the row still reads APPLY from the
+  // adjudicator's recommendation, not from the suggestion.
+  assert.match(ui.selected() ?? "", /\[APPLY\]/);
+});
+
+test("only the parts of a suggestion that cleared their threshold are shown", () => {
+  const ui = harness([finding(1, { triageSuggestion: suggestion({ category: undefined, changeKind: undefined }) })], 40);
+  assert.match(ui.text(), /apply 0\.72/);
+  assert.doesNotMatch(ui.text(), /security 0\.91/);
+  assert.doesNotMatch(ui.text(), /change: behavior/);
+
+  const empty = harness([finding(1, { triageSuggestion: suggestion({ category: undefined, verdict: undefined, changeKind: undefined }) })], 40);
+  assert.doesNotMatch(empty.text(), /Classifier suggestion/);
+});
+
+test("a live feed paints badges as they arrive and repaints the overlay", () => {
+  const feed = new TriageSuggestionFeed();
+  const findings = [finding(1), finding(2)];
+  let renders = 0;
+  const host: ReviewHost = { requestRender: () => { renders += 1; }, terminal: { rows: 40 } };
+  const settled: FindingsReviewOutcome[] = [];
+  const component = new FindingsReview(findings, theme, (outcome) => settled.push(outcome), host, async () => "handoff.md", undefined, undefined, feed);
+
+  assert.doesNotMatch(strip(component.render(WIDTH).join("\n")), /Classifier suggestion/);
+  feed.set(0, suggestion());
+  assert.ok(renders > 0, "an arriving suggestion asks the host to repaint");
+  assert.match(strip(component.render(WIDTH).join("\n")), /security 0\.91/);
+
+  // Closing the overlay drops the subscription, so a late arrival cannot repaint
+  // a disposed component.
+  component.handleInput(ENTER);
+  const before = renders;
+  feed.set(1, suggestion({ verdict: "reject" }));
+  assert.equal(renders, before);
+  assert.equal(settled[0]?.kind, "finalized");
+});
+
+test("the suggested sort orders by the classifier's verdict, then its category", () => {
+  const findings = [
+    finding(1, { file: "a.ts", triageSuggestion: suggestion({ verdict: "reject", verdictConfidence: 0.9, category: "style", categoryConfidence: 0.8 }) }),
+    finding(2, { file: "b.ts", triageSuggestion: suggestion({ verdict: "apply", verdictConfidence: 0.7, category: "security", categoryConfidence: 0.9 }) }),
+    finding(3, { file: "c.ts", triageSuggestion: suggestion({ verdict: "defer", verdictConfidence: 0.8, category: "bug", categoryConfidence: 0.9 }) }),
+    finding(4, { file: "d.ts" }),
+  ];
+  const ui = harness(findings, 80);
+  // file → priority → reviewer → blast → suggested
+  for (let index = 0; index < 4; index += 1) ui.press("S");
+  // The hint wraps on a narrow overlay, so only its first fragment is matched.
+  assert.match(ui.text().replace(/\s+/g, " "), /S sort: classifier/);
+  const rows = ui.rendered().map(strip).filter((line) => /a\.ts|b\.ts|c\.ts|d\.ts/.test(line));
+  assert.deepEqual(rows.map((row) => row.match(/[abcd]\.ts/)?.[0]), ["b.ts", "c.ts", "a.ts", "d.ts"]);
+});
+
+test("the suggested sort degrades to the exploitability order without suggestions", () => {
+  const findings = [
+    finding(1, { file: "a.ts", severity: "low" }),
+    finding(2, { file: "b.ts", severity: "critical" }),
+  ];
+  const ui = harness(findings, 40);
+  for (let index = 0; index < 4; index += 1) ui.press("S");
+  const rows = ui.rendered().map(strip).filter((line) => /a\.ts|b\.ts/.test(line));
+  assert.deepEqual(rows.map((row) => row.match(/[ab]\.ts/)?.[0]), ["b.ts", "a.ts"]);
 });

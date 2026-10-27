@@ -402,3 +402,134 @@ test("recommendReviewers fails on empty or unparsable output", async () => {
   const tooFew = await recommendReviewers(harness(okResult(pick(["Principal Engineer", "Nobody"]))).deps, INPUT);
   assert.deepEqual(tooFew, { ok: false, aborted: false, error: "dispatcher returned 1 valid reviewers; need at least 3" });
 });
+
+// ── the decision-classifier path ─────────────────────────────────────────────
+
+/** A registry that answers every classification with the given bool answers. */
+function classifierRegistry(
+  answers: Record<string, number>,
+  overrides: { stopReason?: string; errorMessage?: string } = {},
+): ModelRegistry {
+  return {
+    findOfType: (_type: string, provider: string, id: string) => (provider === "typesafe" ? { provider, id } : undefined),
+    getProviderAuthStatus: () => ({ configured: true, source: "environment" }),
+    async classify() {
+      return {
+        api: "typesafe-system-one",
+        provider: "typesafe",
+        model: "jev-latest",
+        answers: Object.fromEntries(
+          Object.entries(answers).map(([key, probability]) => [key, { type: "bool", probability }]),
+        ),
+        stopReason: overrides.stopReason ?? "stop",
+        ...(overrides.errorMessage ? { errorMessage: overrides.errorMessage } : {}),
+        timestamp: 1,
+      };
+    },
+  } as unknown as ModelRegistry;
+}
+
+function classifierHarness(registry: ModelRegistry, decision: DispatcherDeps["decision"]) {
+  const calls: HeadlessOptions[] = [];
+  const deps: DispatcherDeps = {
+    cwd: path.join(tmpdir(), "pa-dispatcher-does-not-exist"),
+    modelRegistry: registry,
+    projectTrusted: false,
+    signal: new AbortController().signal,
+    readFile: fakeReadFile({}),
+    decision,
+    runSession: async (options) => {
+      calls.push(options);
+      return okResult(pick(["Principal Engineer", "Security Engineer", "Kent Beck"]));
+    },
+  };
+  return { deps, calls };
+}
+
+const DECISION: NonNullable<DispatcherDeps["decision"]> = {
+  enabled: true,
+  provider: "auto",
+  model: "auto",
+  timeoutMs: 3000,
+  circuitBreakerEnabled: true,
+  circuitBreakerCooldownSeconds: 30,
+  useForDispatcher: true,
+  useForTriage: false,
+};
+
+test("recommendReviewers names reviewers from the classifier and never spawns a session", async () => {
+  const { deps, calls } = classifierHarness(
+    classifierRegistry({ architecture: 0.9, auth: 0.8, docs: 0.1 }),
+    DECISION,
+  );
+
+  const rec = expectOk(await recommendReviewers(deps, INPUT));
+
+  assert.equal(calls.length, 0, "no agent session runs on the classifier path");
+  assert.equal(rec.source, "classifier");
+  assert.ok(rec.reviewers.includes("Principal Engineer"), "the holistic category expands first");
+  assert.ok(rec.reviewers.includes("Authorization & Tenancy Specialist"), "the auth category expands next");
+  assert.ok(!rec.reviewers.includes("Documentation Writer"), "a 0.1 answer is a no");
+  assert.equal(rec.reviewers.length, 6, "four architecture reviewers plus two auth reviewers");
+  assert.ok(rec.reviewers.length >= DISPATCHER_MIN && rec.reviewers.length <= DISPATCHER_MAX);
+  assert.equal(rec.fingerprint.totalFiles, MANIFEST.length);
+  assert.match(rec.entries[0]!.reason, /classifier matched/);
+});
+
+test("recommendReviewers ignores the classifier when the feature or the phase is off", async () => {
+  const registry = classifierRegistry({ architecture: 0.9 });
+  for (const decision of [
+    { ...DECISION, enabled: false },
+    { ...DECISION, useForDispatcher: false },
+    undefined,
+  ]) {
+    const { deps, calls } = classifierHarness(registry, decision);
+    const rec = expectOk(await recommendReviewers(deps, INPUT));
+    assert.equal(calls.length, 1, "the agent session runs as before");
+    assert.equal(rec.source, "agent");
+  }
+});
+
+test("recommendReviewers falls back to the agent session when the classifier times out", async () => {
+  const { deps, calls } = classifierHarness(
+    classifierRegistry({ architecture: 0.9 }, { stopReason: "error", errorMessage: "request timed out after 3000ms" }),
+    DECISION,
+  );
+
+  const rec = expectOk(await recommendReviewers(deps, INPUT));
+
+  assert.equal(calls.length, 1, "a timeout degrades to the agent session");
+  assert.equal(rec.source, "agent");
+  assert.deepEqual(rec.reviewers, ["Principal Engineer", "Security Engineer", "Kent Beck"]);
+});
+
+test("recommendReviewers falls back when the classifier names too few reviewers", async () => {
+  const { deps, calls } = classifierHarness(classifierRegistry({ cryptography: 0.9 }), DECISION);
+
+  const rec = expectOk(await recommendReviewers(deps, INPUT));
+
+  assert.equal(calls.length, 1, "too few reviewers is a classification failure, not a short roster");
+  assert.equal(rec.source, "agent");
+});
+
+test("recommendReviewers falls back when no classifier has credentials", async () => {
+  const uncredentialed = {
+    ...classifierRegistry({ architecture: 0.9 }),
+    getProviderAuthStatus: () => ({ configured: false }),
+  } as unknown as ModelRegistry;
+  const { deps, calls } = classifierHarness(uncredentialed, DECISION);
+
+  const rec = expectOk(await recommendReviewers(deps, INPUT));
+
+  assert.equal(calls.length, 1);
+  assert.equal(rec.source, "agent");
+});
+
+test("an aborted signal still cancels the classifier path", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  const { deps } = classifierHarness(classifierRegistry({ architecture: 0.9 }), DECISION);
+  deps.signal = controller.signal;
+
+  assert.deepEqual(await recommendReviewers(deps, INPUT), { ok: false, aborted: true, error: "aborted" });
+});

@@ -19,6 +19,7 @@ import { createHash } from "node:crypto";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir, withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { collectReviewerFindings } from "./findingsTransport.ts";
+import { DecisionClassifier, classifyFindings, TriageSuggestionFeed } from "./decision/index.ts";
 import { computeBlastRadius, hasCorrespondingTest, sensitivityTags } from "./blastRadius.ts";
 import { coerceFinding, dedupFindings, isRecord, normalizeFindingText } from "./dedup.ts";
 import { fallbackSteSummary, MAX_FINDING_SUMMARY_LENGTH } from "./findingSummary.ts";
@@ -92,6 +93,7 @@ import {
   DEFAULT_VERIFY_ROUNDS,
   modelRefLabel,
   phaseModelChoiceLabel,
+  type DecisionSettings,
   type PhaseModelChoice,
   type PhaseSlot,
   type CrossExaminationMode,
@@ -208,6 +210,11 @@ export interface AuditInput {
    * `/persona-audit-settings`. Omitted (as in tests) uses DEFAULT_VERIFY_ROUNDS.
    */
   maxVerifyRounds?: number;
+  /**
+   * Decision-classifier settings from `/persona-audit-settings`. Omitted (as in
+   * tests) leaves both classifier paths off and the audit behaves as before.
+   */
+  decision?: DecisionSettings;
   /** Owned by the command handler (index.ts), not ctx.signal — see cancellation note above. */
   signal?: AbortSignal;
   /**
@@ -2317,6 +2324,20 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
     const { showFindingsReview } = await import("./components/FindingsReview.ts");
     const { runFixNow } = await import("./fixNow.ts");
     const { openFixProgress } = await import("./components/FixProgress.ts");
+
+    // Decision-classifier triage suggestions run beside the overlay rather than
+    // before it: the review opens immediately and each badge repaints when its
+    // answer lands. Nothing waits on this, and a classifier that is absent,
+    // blocked, or slow simply leaves findings unbadged.
+    const triageClassifier =
+      input.decision?.enabled && input.decision.useForTriage
+        ? DecisionClassifier.open(ctx.modelRegistry, input.decision, { signal: input.signal })
+        : undefined;
+    const triageFeed = triageClassifier ? new TriageSuggestionFeed() : undefined;
+    const triageRun = triageClassifier && triageFeed
+      ? classifyFindings(triageClassifier, annotatedFindings, triageFeed)
+      : undefined;
+
     // The overlay resolves early with a fixNow outcome, the interactive fix
     // flow runs, and the overlay reopens with its state restored — looping
     // until the user finalizes or cancels.
@@ -2335,6 +2356,7 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
         },
         diagnostics.annotationNote,
         sessionState,
+        triageFeed,
       );
 
       if (outcome.kind === "cancelled") {
@@ -2407,6 +2429,16 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
           { findings: annotatedFindings.length, fixed: sessionState.fixed.size },
           skippedVerification(),
         );
+      }
+    }
+
+    // The overlay has closed, so no badge can be painted any more: collect the
+    // stragglers rather than leaving requests in flight when the run returns.
+    if (triageRun) {
+      try {
+        await triageRun;
+      } catch {
+        // A triage suggestion is advisory; a failure here changes nothing.
       }
     }
 

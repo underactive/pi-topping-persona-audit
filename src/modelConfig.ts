@@ -1,12 +1,20 @@
 /**
  * Persisted /persona-audit settings: per-phase model + thinking (ported from
  * pi-moa-plan's `src/moaConfig.ts`), the progress table's activity-meter
- * appearance, and the Linus Torvalds reviewer's register.
+ * appearance, the Linus Torvalds reviewer's register, and the optional Jev
+ * decision classifier.
  */
 
 import { join } from "node:path";
 import { getAgentDir, type ThemeColor } from "@earendil-works/pi-coding-agent";
 import { thinkingLevelThemeColor } from "@underactive/pi-topping-primitives/activity-tui";
+import {
+  AUTO_CLASSIFIER,
+  clampCooldownSeconds,
+  clampTimeoutMs,
+  DEFAULT_CIRCUIT_BREAKER_COOLDOWN_SECONDS,
+  DEFAULT_CLASSIFIER_TIMEOUT_MS,
+} from "@underactive/pi-topping-primitives/classifier";
 import {
   createSettingsStore,
   sanitize,
@@ -125,7 +133,53 @@ export interface PersonaAuditConfig {
   rosters: Roster[];
   /** Model that inspects the repo and recommends reviewers; unset means the session's current model. */
   dispatch?: PhaseModelChoice;
+  /**
+   * Optional Jev decision classifier. Absent means the feature is off and both
+   * phases behave exactly as they did before it existed.
+   */
+  decision?: DecisionSettings;
 }
+
+/**
+ * The Jev decision classifier: a cheap, fast, non-agentic classifier that can
+ * replace or assist two points where an agent session used to run.
+ *
+ * `useForDispatcher` classifies the deterministic repo fingerprint into reviewer
+ * categories instead of spawning a dispatcher agent session; `useForTriage`
+ * suggests a category and a verdict per finding while the review renders. The
+ * user still confirms every triage decision — a suggestion is a badge, never a
+ * pre-set status.
+ */
+export interface DecisionSettings {
+  /** Master switch. Off by default: the classifier is opt-in. */
+  enabled: boolean;
+  /** Classifier provider; `"auto"` picks the first configured known Jev model. */
+  provider: string;
+  /** Classifier model id; `"auto"` picks the first configured known Jev model. */
+  model: string;
+  /** Per-call deadline in milliseconds. A call that outlives it is a timeout, not an error. */
+  timeoutMs: number;
+  /** Whether a recognized timeout opens the circuit for the cooldown. */
+  circuitBreakerEnabled: boolean;
+  /** How long a recognized timeout keeps the circuit open before one probe is admitted. */
+  circuitBreakerCooldownSeconds: number;
+  /** Replace the dispatcher agent session with a fingerprint classification. */
+  useForDispatcher: boolean;
+  /** Suggest a category and a verdict per finding during the findings review. */
+  useForTriage: boolean;
+}
+
+/** The opt-in defaults: the feature is off until a user turns it on. */
+export const DEFAULT_DECISION_SETTINGS: DecisionSettings = {
+  enabled: false,
+  provider: AUTO_CLASSIFIER,
+  model: AUTO_CLASSIFIER,
+  timeoutMs: DEFAULT_CLASSIFIER_TIMEOUT_MS,
+  circuitBreakerEnabled: true,
+  circuitBreakerCooldownSeconds: DEFAULT_CIRCUIT_BREAKER_COOLDOWN_SECONDS,
+  useForDispatcher: true,
+  useForTriage: false,
+};
 
 function emptyConfig(): PersonaAuditConfig {
   return {
@@ -172,6 +226,31 @@ function isPhaseModelChoice(value: unknown): value is PhaseModelChoice {
     && isModelRef((value as PhaseModelChoice).ref)
     && typeof (value as PhaseModelChoice).thinking === "string"
     && isThinkingLevel((value as PhaseModelChoice).thinking);
+}
+
+/** A stored classifier selection, or undefined when it is absent or malformed. */
+function sanitizeDecision(value: unknown): DecisionSettings | undefined {
+  if (!sanitize.isRecord(value)) return undefined;
+  const raw = value as Partial<DecisionSettings>;
+  const provider = typeof raw.provider === "string" ? raw.provider.trim() : "";
+  const model = typeof raw.model === "string" ? raw.model.trim() : "";
+  return {
+    // A malformed block reads as disabled rather than as defaults: a half-typed
+    // pin must not silently switch the dispatcher to a classifier.
+    enabled: raw.enabled === true,
+    // A provider id never carries a slash, and an empty model id resolves to
+    // nothing, so both fall back to auto instead of failing the phase later.
+    provider: provider && !provider.includes("/") ? provider : DEFAULT_DECISION_SETTINGS.provider,
+    model: model ? model : DEFAULT_DECISION_SETTINGS.model,
+    timeoutMs: clampTimeoutMs(raw.timeoutMs, DEFAULT_DECISION_SETTINGS.timeoutMs),
+    circuitBreakerEnabled: raw.circuitBreakerEnabled !== false,
+    circuitBreakerCooldownSeconds: clampCooldownSeconds(
+      raw.circuitBreakerCooldownSeconds,
+      DEFAULT_DECISION_SETTINGS.circuitBreakerCooldownSeconds,
+    ),
+    useForDispatcher: raw.useForDispatcher !== false,
+    useForTriage: raw.useForTriage === true,
+  };
 }
 
 /** Pure validator over parsed JSON — no I/O. `undefined` (a missing file) and non-objects give the defaults. */
@@ -241,7 +320,18 @@ export function sanitizePersonaAuditSettings(raw: unknown): PersonaAuditConfig {
 
     // Conditional spread: an absent slot must stay absent, not become `dispatch: undefined`.
     const dispatch = isPhaseModelChoice(parsed.dispatch) ? parsed.dispatch : undefined;
-    return { phases, thinkingOverrides, meter, temperament, crossExamination, maxVerifyRounds, rosters, ...(dispatch ? { dispatch } : {}) };
+    const decision = sanitizeDecision(parsed.decision);
+    return {
+      phases,
+      thinkingOverrides,
+      meter,
+      temperament,
+      crossExamination,
+      maxVerifyRounds,
+      rosters,
+      ...(dispatch ? { dispatch } : {}),
+      ...(decision ? { decision } : {}),
+    };
   } catch {
     return emptyConfig();
   }

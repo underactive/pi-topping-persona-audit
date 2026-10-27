@@ -4,7 +4,8 @@
  * Covers the progress table's activity meter — the MONITOR column — the Linus
  * Torvalds reviewer's register, reviewer cross-examinations, the fix→verify round cap,
  * reviewer rosters, and the dispatch model that inspects the repo to recommend
- * reviewers. Values are chosen inline with the left/right keys and committed
+ * reviewers, and the optional Jev decision classifier (dispatcher categories and
+ * triage suggestions). Values are chosen inline with the left/right keys and committed
  * with the Save
  * button; Esc closes without writing, since this is the only screen and has
  * nowhere to step back to. The dispatch row opens the same two-pane
@@ -14,9 +15,19 @@
 import type { ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey, type Component, type TUI } from "@earendil-works/pi-tui";
 import { getModelCatalogue, validateSavedChoice } from "@underactive/pi-topping-primitives/models";
+import {
+  AUTO_CLASSIFIER,
+  availableClassifiers,
+  classifierPickerOptions,
+  modelName,
+  selectJevModel,
+  showClassifierPicker,
+  type JevModel,
+} from "@underactive/pi-topping-primitives/classifier";
 import { MenuComponent, showOverlayPrompt, type MenuItem } from "./menuChrome.ts";
 import { RetryModelSubView } from "./ModelPicker.ts";
 import {
+  DEFAULT_DECISION_SETTINGS,
   MAX_VERIFY_ROUNDS,
   METER_COLORS,
   METER_DIRECTIONS,
@@ -24,6 +35,7 @@ import {
   phaseModelChoiceLabel,
   CROSS_EXAMINATION_MODES,
   TEMPERAMENTS,
+  type DecisionSettings,
   type MeterDirection,
   type ModelRef,
   type PersonaAuditConfig,
@@ -60,20 +72,85 @@ const VERIFY_ROUND_VALUES: string[] = Array.from(
 
 const DISPATCH_ROW = "dispatch";
 const DISPATCH_UNSET_LABEL = "Session model (not set)";
+const DECISION_ROW = "decisionClassifier";
+const DECISION_SECTION = "Decision classifier";
 
 export type SettingsMenuResult =
   | { action: "save"; draft: PersonaAuditConfig }
   | { action: "rosters"; draft: PersonaAuditConfig }
   | { action: "cancel" };
 
+/**
+ * Every classifier the registry can offer, plus the auto choice's model.
+ * A registry without the classifier API (a test stub, an older pi) simply has
+ * no classifiers, which reads as "the feature is unavailable", never an error.
+ */
+function classifierChoices(registry: ExtensionCommandContext["modelRegistry"]): {
+  available: JevModel[];
+  autoModel: string | undefined;
+} {
+  try {
+    const available = availableClassifiers(registry);
+    const auto = selectJevModel(registry);
+    return { available, autoModel: auto ? modelName(auto) : undefined };
+  } catch {
+    return { available: [], autoModel: undefined };
+  }
+}
+
+/** The stored selection as the picker writes it: `auto`, or `provider/model`. */
+function classifierSelection(decision: DecisionSettings): string {
+  const { provider, model } = decision;
+  if (!provider || !model || provider === AUTO_CLASSIFIER || model === AUTO_CLASSIFIER) return AUTO_CLASSIFIER;
+  return `${provider}/${model}`;
+}
+
+/** What the row shows for the current selection, including an unavailable pin. */
+function decisionDisplayValue(
+  decision: DecisionSettings | undefined,
+  available: readonly JevModel[],
+  autoModel: string | undefined,
+): string {
+  // An absent block still has a selection — auto — so the row shows what would
+  // run, not whether the feature is switched on. That is the toggle's job.
+  const selection = decision ?? DEFAULT_DECISION_SETTINGS;
+  const selected = classifierSelection(selection);
+  if (selected === AUTO_CLASSIFIER) {
+    return autoModel ? `auto (${autoModel})` : "auto (no Jev model has credentials)";
+  }
+  return available.some((model) => modelName(model) === selected) ? selected : `${selected} (unavailable)`;
+}
+
+/** Apply a picked classifier value, turning the feature on for a first pick. */
+function applyClassifierSelection(draft: PersonaAuditConfig, picked: string): void {
+  const base = draft.decision ?? DEFAULT_DECISION_SETTINGS;
+  if (picked === AUTO_CLASSIFIER) {
+    draft.decision = { ...base, enabled: true, provider: AUTO_CLASSIFIER, model: AUTO_CLASSIFIER };
+    return;
+  }
+  // A model id can itself contain slashes (`typesafe/jev-1.13`), so only the
+  // first one separates the provider.
+  const slash = picked.indexOf("/");
+  const provider = slash > 0 ? picked.slice(0, slash) : picked;
+  const model = slash > 0 ? picked.slice(slash + 1) : "";
+  draft.decision = { ...base, enabled: true, provider, model: model || AUTO_CLASSIFIER };
+}
+
+/** The decision block, created from the defaults when a row is touched first. */
+function decisionDraft(draft: PersonaAuditConfig): DecisionSettings {
+  draft.decision ??= { ...DEFAULT_DECISION_SETTINGS };
+  return draft.decision;
+}
+
 function cloneConfig(config: PersonaAuditConfig): PersonaAuditConfig {
-  // Conditional spread: an unset dispatch slot must stay absent, not become `dispatch: undefined`.
-  const { dispatch, ...rest } = config;
+  // Conditional spread: an unset slot must stay absent, not become `dispatch: undefined`.
+  const { dispatch, decision, ...rest } = config;
   return {
     ...rest,
     meter: { ...config.meter },
     rosters: config.rosters.map((roster) => ({ ...roster, reviewers: [...roster.reviewers] })),
     ...(dispatch ? { dispatch: { ref: { ...dispatch.ref }, thinking: dispatch.thinking } } : {}),
+    ...(decision ? { decision: { ...decision } } : {}),
   };
 }
 
@@ -186,16 +263,84 @@ class SettingsMenuComponent implements Component {
       },
     ];
 
+    // The decision rows come after the dispatch row, so the phase and audit
+    // settings keep their long-standing order and their muscle memory.
+    const { available, autoModel } = classifierChoices(ctx.modelRegistry);
+    const decisionItems: MenuItem[] = [
+      {
+        id: "decisionEnabled",
+        label: "Use the decision classifier",
+        value: draft.decision?.enabled === true,
+        onChange: (value: boolean) => {
+          decisionDraft(draft).enabled = value;
+        },
+      },
+      {
+        id: DECISION_ROW,
+        label: "Decision classifier",
+        displayValue: decisionDisplayValue(draft.decision, available, autoModel),
+        description:
+          "Cheap classifier that replaces the dispatcher agent session and badges findings with a suggested category and verdict. "
+          + "Picking a model turns the feature on; Backspace returns to auto.",
+        onSelect: () => {
+          const selected = classifierSelection(draft.decision ?? DEFAULT_DECISION_SETTINGS);
+          void showClassifierPicker(ctx, {
+            title: "Decision classifier",
+            options: classifierPickerOptions(available, autoModel, selected),
+            selected,
+          }).then((picked) => {
+            if (picked === undefined) return;
+            applyClassifierSelection(draft, picked);
+            this.menu.setItemValue(DECISION_ROW, decisionDisplayValue(draft.decision, available, autoModel));
+            this.menu.setToggleValue("decisionEnabled", draft.decision?.enabled === true);
+          });
+        },
+      },
+      {
+        id: "decisionDispatcher",
+        label: "Classifier names the reviewers",
+        value: draft.decision?.useForDispatcher !== false,
+        description: "Classify the repo fingerprint instead of running the dispatcher agent. Falls back to it on a timeout.",
+        onChange: (value: boolean) => {
+          decisionDraft(draft).useForDispatcher = value;
+        },
+      },
+      {
+        id: "decisionTriage",
+        label: "Classifier suggests triage",
+        value: draft.decision?.useForTriage === true,
+        description: "Badge each finding with a suggested category, verdict, and change kind. Suggestions never set a status.",
+        onChange: (value: boolean) => {
+          decisionDraft(draft).useForTriage = value;
+        },
+      },
+    ];
+
     this.menu = new MenuComponent(
       {
         title: "Persona-audit: Settings",
         fullWidth: true,
-        sections: [{ title: "", items }],
+        sections: [
+          { title: "", items },
+          {
+            title: DECISION_SECTION,
+            description: "A fast non-agentic classifier. It never reads the repository, and every phase still works without it.",
+            items: decisionItems,
+          },
+        ],
         onItemKey: (item, data) => {
-          if (item.id !== DISPATCH_ROW) return false;
+          if (item.id !== DISPATCH_ROW && item.id !== DECISION_ROW) return false;
           if (data !== "\x7f" && data !== "\b" && !matchesKey(data, Key.delete)) return false;
-          delete draft.dispatch;
-          this.menu.setItemValue(DISPATCH_ROW, dispatchDisplayValue(draft));
+          if (item.id === DISPATCH_ROW) {
+            delete draft.dispatch;
+            this.menu.setItemValue(DISPATCH_ROW, dispatchDisplayValue(draft));
+            return true;
+          }
+          // Backspace on the classifier row returns it to auto rather than
+          // clearing it, because "no classifier" and "auto" behave alike.
+          if (!draft.decision) return true;
+          applyClassifierSelection(draft, AUTO_CLASSIFIER);
+          this.menu.setItemValue(DECISION_ROW, decisionDisplayValue(draft.decision, available, autoModel));
           return true;
         },
         buttons: [

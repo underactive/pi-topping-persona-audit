@@ -1,5 +1,6 @@
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
+import type { TriageSuggestion } from "./decision/triage.ts";
 import type { ThinkingLevel } from "./modelConfig.ts";
 
 // ── Core audit types ───────────────────────────────────────────────────────
@@ -82,6 +83,11 @@ export interface Finding {
   exploitability?: Exploitability;
   /** Why the adjudicator graded exploitability as it did (max 120 chars). */
   exploitabilityReason?: string;
+  /**
+   * Decision classifier's read on this finding. Advisory only: it never sets the
+   * triage status, and it is absent whenever no classifier is configured.
+   */
+  triageSuggestion?: TriageSuggestion;
 }
 
 /**
@@ -139,7 +145,7 @@ export type AuditMode = "diff" | "full" | "handoff";
 // ── Findings review types ───────────────────────────────────────────────────
 
 /** Active ordering inside each recommendation section. */
-export type ReviewSortMode = "file" | "priority" | "reviewer" | "blast";
+export type ReviewSortMode = "file" | "priority" | "reviewer" | "blast" | "suggested";
 
 /** A finding fixed interactively via the Fix Now flow. */
 export interface FixedFinding {

@@ -341,6 +341,19 @@ export class MenuComponent implements Component {
     this.tui?.requestRender();
   }
 
+  /**
+   * Update a toggle row in place without rebuilding the menu, for a row another
+   * screen changed on the user's behalf (a picker that turns a feature on).
+   */
+  setToggleValue(id: string, value: boolean): void {
+    const item = this.items.find((i) => i.id === id);
+    if (!item || !isToggleItem(item)) return;
+    this.values[id] = value;
+    item.value = value;
+    this.invalidate();
+    this.tui?.requestRender();
+  }
+
   handleInput(data: string): void {
     if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"))) {
       this.done({ applied: false, values: { ...this.initialValues } });
