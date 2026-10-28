@@ -13,7 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
-- Update `@underactive/pi-topping-primitives` from `^0.11.0` to `^0.12.0`, which adds the shared `./classifier` subpath the decision feature and `/routesense settings` both use. The classifier picker and its `KeybindingsManager` plumbing come from there, so no picker is vendored here.
+- Update `@underactive/pi-topping-primitives` from `^0.12.0` to `^0.12.1`, which adds the shared `./classifier` subpath the decision feature and `/routesense settings` both use. The classifier picker and its `KeybindingsManager` plumbing come from there, so no picker is vendored here.
 - The findings review overlay takes an optional suggestion feed and renders a `Classifier suggestion (advisory):` block above each finding's Summary when one has landed; its sort cycle gains `classifier suggestion` after `blast radius`.
 
 ## [0.4.0] - 2026-10-21
