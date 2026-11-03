@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-03
+
 ### Added
 
 - Optional Jev decision classifier (`src/decision/`, settings rows in `/persona-audit-settings`), off by default. **Classifier names the reviewers** classifies the deterministic repo fingerprint into reviewer categories and expands them into exact catalogue names instead of running the dispatcher agent session; **Classifier suggests triage** badges each finding with a suggested category, verdict, and change kind while the findings review renders. Both are bounded by a 3-second deadline and a 30-second circuit breaker and fail soft: no credentials, an open circuit, a timeout, an error, or a selection under the dispatcher's minimum falls back to the previous behavior, and the recommendation notification says which path ran. Triage badges are advisory — they never pre-set a status — and a new `S` sort mode orders findings by the suggested verdict, then the suggested category, then the usual exploitability order.
