@@ -40,6 +40,8 @@ interface Mounted {
   result: Promise<SettingsMenuResult>;
   settled(): boolean;
   overlayOptions(): unknown;
+  /** The options the nested classifier-picker overlay was opened with, once it has opened. */
+  pickerOptions(): unknown;
   warnings(): string[];
 }
 
@@ -62,6 +64,7 @@ function mount(initial: PersonaAuditConfig = config(DEFAULT_METER_SETTINGS), nes
   let component: Component | undefined;
   let settled = false;
   let capturedOptions: unknown;
+  let nestedOptions: unknown;
   let customCalls = 0;
   const warnings: string[] = [];
 
@@ -89,8 +92,10 @@ function mount(initial: PersonaAuditConfig = config(DEFAULT_METER_SETTINGS), nes
       ) => {
         customCalls += 1;
         // A nested overlay (the classifier picker) is driven with the supplied
-        // keys and resolves with whatever it selected, like pi would.
+        // keys and resolves with whatever it selected, like pi would. Its
+        // options are kept so a test can see how the picker asked to be shown.
         if (customCalls > 1) {
+          nestedOptions = options;
           let picked!: SettingsMenuResult;
           const overlay = factory(tui, theme, getKeybindings(), (value) => {
             picked = value;
@@ -118,6 +123,7 @@ function mount(initial: PersonaAuditConfig = config(DEFAULT_METER_SETTINGS), nes
     result,
     settled: () => settled,
     overlayOptions: () => capturedOptions,
+    pickerOptions: () => nestedOptions,
     warnings: () => [...warnings],
   };
 }
@@ -317,6 +323,12 @@ test("the classifier row opens the picker, and a pick turns the feature on", asy
   const menu = mount(config(DEFAULT_METER_SETTINGS), [ENTER]);
   menu.send(...Array.from({ length: DECISION_CLASSIFIER_ROW }, () => DOWN), ENTER);
   await new Promise((resolve) => setImmediate(resolve));
+  // The picker is the shared primitives overlay. From primitives 0.13.0 it
+  // reports the title this menu gives it as blocked status (OSC 7501) while it
+  // waits, so a terminal can show that pi needs an answer.
+  const { overlay, blocked } = (menu.pickerOptions() ?? {}) as { overlay?: unknown; blocked?: unknown };
+  assert.equal(overlay, true, "the picker opens as an overlay");
+  assert.deepEqual(blocked, { kind: "question", message: "Decision classifier" }, "the picker reports its title as blocked status");
   assert.match(menu.render(), /Decision classifier\s+auto \(typesafe\/jev-latest\)/);
   assert.match(menu.render(), /\[■\] Use the decision classifier/, "picking a model turns the feature on");
 
