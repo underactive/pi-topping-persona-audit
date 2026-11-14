@@ -426,39 +426,48 @@ summary reflect only the last round.
 ### Progress table
 
 The nine steps above are the audit's internal state machine. On screen they are
-grouped into four phases in a single `aboveEditor` widget, which stays mounted
-for the whole run and is torn down on completion, cancellation, `/reload`, and
-`/new`:
+grouped into four phases in a single `aboveEditor` widget. The extension owns
+the run clock, row telemetry, meter sampling, and frozen snapshot; an adapter
+feeds that state to the generated OpenTUI table. The widget stays mounted for
+the whole run and is torn down on completion, cancellation, `/reload`, and
+`/new`. A settled run looks like this:
 
 ```
-══ Persona-audit ═══════════════════════════════════════════════ src/ ══
-       Review          Triage        Implement         Verify     
-   claude-opus-4   claude-opus-4       gpt-5      claude-haiku-4-5
-───────────────────────────────────────────────────────────
-  AGENT                                CTX  MONITOR   ACTIVITY                 TURNS  TOOLS      COST    TIME
-  Review
-  ✓ Security Engineer  21.2%/200.0K  ⣿⣶⣤⣀⣀⢀⢀⢀  1.2K tokens                2      4    $0.018    0:42
-  ◐ Slop Auditor        8.4%/200.0K  ⣴⣤⣤⣀⢀⢀⢀⢀  reviewing…                 1      2    $0.006    0:19
-    ↳ grep  "handleRequest"
-  ○ Perf Engineer                 —  ⢀⢀⢀⢀⢀⢀⢀⢀  queued                     0      0         —    0:00
-  Triage
-  ✓ collection                    —  ⢀⢀⢀⢀⢀⢀⢀⢀  84 raw → 31 unique         0      0         —    0:01
-  ◐ adjudicator · reconcile  59.5%/200.0K  ⣶⣤⣀⢀⢀⢀⢀⢀  annotating…          1      3    $0.009    0:27
-───────────────────────────────────────────────────────────────────────
-  2/3 reviewer passes · 31 findings · verify 1/2
+▌
+▌ PERSONA-AUDIT · SRC/ · @A1B2C3D
+▌
+▌  ✓ Review                     ✓ Triage                     ✓ Implement                  ✓ Verify
+▌  ■ claude-opus-4              ■ claude-sonnet-4            ■ gpt-5                      ■ claude-haiku-5
+▌ ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+▌   AGENT                                  CTX  MONITOR   ACTIVITY                        TURNS  TOOLS     COST   TIME
+▌ REVIEW
+▌ ✓ Security Engineer             21.0%/200.0K  ⢀⢀⣀⣠⣤⣴⣶⣾  812 tokens · 1 finding              7      4   $0.123   1:04
+▌ ✓ Slop Auditor                             —  ⢀⢀⢀⣀⢀⢀⢀⢀  no findings                         2      1   $0.045   0:22
+▌
+▌ TRIAGE
+▌ ✓ adjudicator · reconcile       12.0%/200.0K  ⢀⣀⣠⣤⣴⣤⣠⣀  3 findings annotated                3      2   $0.012   0:31
+▌
+▌ IMPLEMENT
+▌ ✓ fix now · src/session.ts:42    5.0%/200.0K  ⢀⣠⣴⣾⣿⣶⣤⣀  accepted                            5      6   $0.058   0:42
+▌
+▌ VERIFY
+▌ ✗ npm run test                   4.0%/200.0K  ⢀⢀⢀⢀⢀⢀⢀⢀  1 test failed                       1      1   $0.005   0:12
+▌
+▌ ▌ 4/4 reviewer passes · 3 findings · 1 fix
+▌
+▌ ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+▌ total cost $0.243 · total 2:39 (+0:02 waiting)
+▌
 ```
 
-- **PHASE / model band** — two rows above the `AGENT` header show which model
-  is assigned to each phase, centered under that phase's own column. Between
-  adjacent columns stands a two-row powerline chevron — a `\` (U+E0B9) on the
-  name row stacked over a `/` (U+E0BB) on the model row so the halves read as
-  one tall right-chevron — tracing the Review→Triage→Implement→Verify flow
-  (needs a Powerline/Nerd Font to render). The phase currently in progress
-  (`Triage`, above) renders at normal brightness, and the chevrons touching it
-  brighten with it; the rest stay dim. Sourced from the per-phase model + thinking picker shown
-  after ExpertPicker; the band is omitted entirely when no phase has an
-  assigned model, or when the terminal is too narrow to keep all four columns
-  readable.
+- **PHASE / model band** — two tab rows above the `AGENT` header show each
+  phase and its assigned model. A check marks a settled phase, a spinner marks
+  the active phase, and an open circle marks a pending phase; the model row
+  includes a swatch in that phase's thinking-level color. The active tab uses
+  the selection background and shimmers while live; frozen snapshots have no
+  active highlight. Values come from the per-phase model + thinking picker; the
+  band is omitted when no phase has an assigned model or the terminal is too
+  narrow to keep all four columns readable.
 - **AGENT** — each non-empty phase group starts with a dim phase heading, then
   its rows (`Review` has one row per reviewer×pass plus one `cross-examination` row per
   cross-examining reviewer, `Triage` has deterministic collection and adjudication, `Implement` has adjudicator fix application, and
@@ -532,7 +541,7 @@ adjudicator implement, the per-finding verifier, and regression-test authoring:
 - **Orchestrator** (`src/orchestrator.ts`) — the audit state machine: cache load/merge, reviewer agent-session batches, deterministic collection, optional cross-examination pass, adjudicator agent sessions (including exploitability grading), FindingsReview TUI, verification (including the automatic gate-repair round loop, see [Fix + verify rounds](#fix--verify-rounds)), and report writing. Writes a durable partial report after every reviewer pass and on cancellation/failure.
 - **Agent runner** (`src/agentRunner.ts`) — runs each LLM task as an isolated in-process agent session via `createAgentSession()`, with model resolution, extension-provider replay, idle-timeout abort, and live telemetry.
 - **Agent discovery & telemetry** (`src/subprocess.ts`) — agent-config discovery from `*.md` frontmatter (`tools`/`model`), concurrency helper, and shared output-activity tracking used by agentRunner.ts.
-- **Progress surface** (`src/components/AuditProgress.ts`, `src/components/ReportViewer.ts`, `src/components/SettingsMenu.ts`) — the phased `aboveEditor` table, post-audit report overlay, the activity monitor's settings menu, and output-rate meter. The table is ported from pi-moa-plan's fan-out widget; the meter, shimmer, run clock and tool-activity label come from `@underactive/pi-topping-primitives` (`./activity`, `./activity-tui`), so the two extensions render the same way.
+- **Progress surface** (`src/components/AuditProgress.ts`, `src/components/AuditProgressOpenTui.ts`, `src/components/ReportViewer.ts`, `src/components/SettingsMenu.ts`) — the phased `aboveEditor` table, post-audit report overlay, the activity monitor's settings menu, and output-rate meter. The table presentation is generated from the OpenTUI mockup; `AuditProgressOpenTui.ts` adapts the real view and meter snapshots into its data model, while the extension retains the clock, telemetry, sampling, and frozen-transcript lifecycle. The shared meter, shimmer, run clock and tool-activity label come from `@underactive/pi-topping-primitives` (`./activity`, `./activity-tui`).
 - **Reviewer retry checkpoint** (`src/components/ReviewerRetry.ts`) — shown after a review batch settles with failures; lets the user retry failed passes (optionally on a different model) or skip them before triage.
 - **Verifier retry checkpoint** (`src/components/VerifierRetry.ts`) — shown only when the verifier *agent process itself* fails to run (a provider error, not a fix verdict); lets the user re-run it on a different model (which then also authors the regression tests) or skip verification. Ordinary `not-fixed`/`partial` verdicts and failed scripts do not reach this checkpoint — they trigger the orchestrator's automatic gate-repair round instead, with no user action needed.
 - **Report & verification** (`src/report.ts`, `src/verify.ts`) — pure report templates (full/compact/partial + chat summary), the `check`/`lint`/`test` verification gate, and the rule that folds per-finding verdicts and script results into one status.

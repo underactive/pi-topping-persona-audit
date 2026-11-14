@@ -34,7 +34,10 @@
   ],
   "scripts": {
     "test": "node -C compiled --test test/*.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "port:ui": "pi-topping-opentui port",
+    "port:check": "pi-topping-opentui port --check",
+    "parity:ui": "pi-topping-opentui parity"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
@@ -46,6 +49,8 @@
     "@earendil-works/pi-coding-agent": "1.5.2",
     "@earendil-works/pi-tui": "1.5.2",
     "@types/node": "^24.0.0",
+    "@types/react": "^19.3.0",
+    "@underactive/pi-topping-opentui-tools": "^0.14.1",
     "typescript": "^5.9.3"
   },
   "pi": {
@@ -55,6 +60,7 @@
     "image": "https://raw.githubusercontent.com/underactive/pi-topping-persona-audit/main/media/persona_audit_demo.png"
   },
   "dependencies": {
+    "@underactive/pi-topping-opentui": "^0.14.1",
     "@underactive/pi-topping-primitives": "0.13.0"
   }
 }

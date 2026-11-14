@@ -9,7 +9,7 @@ import { lstat, readdir, readFile, realpath } from "node:fs/promises";
 import { promisify } from "node:util";
 import { hostProjectTrust } from "./agentRunner.ts";
 import { runAudit } from "./orchestrator.ts";
-import { collectArtifacts, deleteArtifacts, formatBytes, isOlderThan } from "./artifacts.ts";
+import { collectArtifacts, deleteArtifacts, formatBytes, isOlderThan, type ArtifactEntry } from "./artifacts.ts";
 import { filterExistingFindings, parseHandoffPayload, type HandoffPayload } from "./handoff.ts";
 import { gitHeadCommit } from "./git.ts";
 import { resolveTargetPath } from "./snapshot.ts";
@@ -39,11 +39,23 @@ import { showArtifactViewer, showReportViewer } from "./components/ReportViewer.
 import { showSettingsMenu } from "./components/SettingsMenu.ts";
 import { showRosterManager } from "./components/RosterEditor.ts";
 import { showPurgeMenu } from "./components/PurgeMenu.ts";
+import { dialogFits, PURGE_DIALOG_SIZE, readTerminalSize, SETTINGS_DIALOG_SIZE } from "./ui/dialog-fit.ts";
+import { openPurgeDialog } from "./ui/purge-dialog.ts";
+import { openSettingsDialog } from "./ui/settings-dialog.ts";
+import {
+  dialogPhaseChoiceLabel,
+  openExpertPickerDialog,
+  openGuidanceDialog,
+  openPhaseModelDialog,
+  openReviewerSourceDialog,
+  openRosterPickerDialog,
+  PICKER_DIALOG_SIZE,
+} from "./ui/picker-dialogs.ts";
 import {
   loadPersonaAuditConfig,
   modelRefLabel,
-  phaseModelChoiceLabel,
   savePersonaAuditConfig,
+  type PersonaAuditConfig,
   type PhaseModelChoice,
   type PhaseModelSelection,
   type Temperament,
@@ -723,11 +735,47 @@ export default function (pi: ExtensionAPI): void {
       //    A handoff resume skips reviewer selection — reviewers are the
       //    original run's historical labels — but still needs the model
       //    picker (the Implement/Verify and Fix Now models matter).
+      const pickerTerminal = ctx.mode === "tui" ? await readTerminalSize(ctx) : undefined;
+      const phasePicker = async (initial?: PhaseModelSelection, offerGuidance = false) => {
+        if (pickerTerminal && dialogFits(pickerTerminal, PICKER_DIALOG_SIZE.phases)) {
+          const result = await openPhaseModelDialog(ctx, pi.getThinkingLevel(), initial, offerGuidance);
+          if (result !== undefined) return result;
+        }
+        return showPhaseModelPicker(ctx, pi.getThinkingLevel(), initial, offerGuidance);
+      };
+      const sourcePicker = async (options: { rosterCount: number; dispatcherLabel: string; initial?: ReviewerSource }) => {
+        if (pickerTerminal && dialogFits(pickerTerminal, PICKER_DIALOG_SIZE.source)) {
+          const result = await openReviewerSourceDialog(ctx, options);
+          if (result !== undefined) return result;
+        }
+        return showReviewerSourceMenu(ctx, options);
+      };
+      const expertPicker = async (fileCount: number, initial?: ReviewerSelection) => {
+        if (pickerTerminal && dialogFits(pickerTerminal, PICKER_DIALOG_SIZE.experts)) {
+          const result = await openExpertPickerDialog(ctx, fileCount, initial, pickerTerminal);
+          if (result !== undefined) return result;
+        }
+        return showExpertPicker(ctx, fileCount, initial);
+      };
+      const rosterPicker = async (rosters: PersonaAuditConfig["rosters"], fileCount: number, initialName?: string) => {
+        if (pickerTerminal && dialogFits(pickerTerminal, PICKER_DIALOG_SIZE.rosters)) {
+          const result = await openRosterPickerDialog(ctx, rosters, fileCount, initialName, pickerTerminal);
+          if (result !== undefined) return result;
+        }
+        return showRosterPicker(ctx, [...rosters], fileCount, initialName);
+      };
+      const guidancePicker = async (draft: string, reviewModelSupportsImages: boolean) => {
+        if (pickerTerminal && dialogFits(pickerTerminal, PICKER_DIALOG_SIZE.guidance)) {
+          const result = await openGuidanceDialog(ctx, draft, reviewModelSupportsImages);
+          if (result !== undefined) return result;
+        }
+        return showAuditSummary(ctx, { draft, reviewModelSupportsImages });
+      };
       let selection: ReviewerSelection;
       let phaseModels: PhaseModelSelection;
       let additionalContext: AdditionalContext | undefined;
       if (mode === "handoff") {
-        const models = await showPhaseModelPicker(ctx, pi.getThinkingLevel());
+        const models = await phasePicker();
         if (models.action !== "start") {
           ctx.ui.notify("Audit cancelled.", "info");
           return;
@@ -756,7 +804,7 @@ export default function (pi: ExtensionAPI): void {
         const dispatcherLabel = dispatchClassifier
           ? `decision classifier ${dispatchClassifier.label}`
           : dispatchChoice
-            ? phaseModelChoiceLabel(dispatchChoice)
+            ? dialogPhaseChoiceLabel(dispatchChoice)
             : `${sessionModel ?? "session model"} (session)`;
 
         /** Picker that owns the current selection; undefined means the source menu opens next. */
@@ -769,9 +817,13 @@ export default function (pi: ExtensionAPI): void {
         let cachedRecommendation: DispatcherRecommendation | undefined;
         selectionLoop: for (;;) {
           if (screen === undefined) {
-            const source = await showReviewerSourceMenu(ctx, {
+            const source = await sourcePicker({
               rosterCount: rosters.length,
-              dispatcherLabel,
+              dispatcherLabel: dispatchChoice
+                ? dispatcherLabel
+                : sessionModel
+                  ? `${sessionModel} · ${pi.getThinkingLevel()}`
+                  : "session model",
               ...(lastSource ? { initial: lastSource } : {}),
             });
             if (!source) {
@@ -845,7 +897,7 @@ export default function (pi: ExtensionAPI): void {
 
           let reviewers: ReviewerSelection;
           if (screen === "roster") {
-            const picked = await showRosterPicker(ctx, rosters, fileCount, lastRosterName);
+            const picked = await rosterPicker(rosters, fileCount, lastRosterName);
             if (!picked) {
               screen = undefined;
               continue selectionLoop;
@@ -853,7 +905,7 @@ export default function (pi: ExtensionAPI): void {
             lastRosterName = picked.rosterName;
             reviewers = picked.selection;
           } else {
-            const picked = await showExpertPicker(ctx, fileCount, restoredReviewers);
+            const picked = await expertPicker(fileCount, restoredReviewers);
             if (!picked) {
               screen = undefined;
               continue selectionLoop;
@@ -861,7 +913,7 @@ export default function (pi: ExtensionAPI): void {
             reviewers = picked;
           }
           for (;;) {
-            const models = await showPhaseModelPicker(ctx, pi.getThinkingLevel(), restoredModels, true);
+            const models = await phasePicker(restoredModels, true);
             if (models.action === "cancel") {
               ctx.ui.notify("Audit cancelled.", "info");
               return;
@@ -893,16 +945,14 @@ export default function (pi: ExtensionAPI): void {
               break selectionLoop;
             }
 
-            const summary = await showAuditSummary(ctx, {
-              draft: contextDraft,
-              reviewModelSupportsImages,
-            });
+            const summary = await guidancePicker(contextDraft, reviewModelSupportsImages);
             contextDraft = summary.draft;
             if (summary.action === "cancel") {
               ctx.ui.notify("Audit cancelled.", "info");
               return;
             }
             if (summary.action === "back") continue;
+            if (summary.action !== "start") continue;
 
             selection = reviewers;
             phaseModels = models.selections;
@@ -937,8 +987,8 @@ export default function (pi: ExtensionAPI): void {
 
       const modelsNote =
         mode === "handoff"
-          ? ` · Implement ${modelRefLabel(phaseModels.implement.ref)}/${phaseModels.implement.thinking} · Verify ${modelRefLabel(phaseModels.verify.ref)}/${phaseModels.verify.thinking}`
-          : ` · Review ${modelRefLabel(phaseModels.review.ref)}/${phaseModels.review.thinking} · Triage ${modelRefLabel(phaseModels.triage.ref)}/${phaseModels.triage.thinking} · Implement ${modelRefLabel(phaseModels.implement.ref)}/${phaseModels.implement.thinking}`;
+          ? ` · Implement ${modelRefLabel(phaseModels.implement.ref)} · ${phaseModels.implement.thinking} · Verify ${modelRefLabel(phaseModels.verify.ref)} · ${phaseModels.verify.thinking}`
+          : ` · Review ${modelRefLabel(phaseModels.review.ref)} · ${phaseModels.review.thinking} · Triage ${modelRefLabel(phaseModels.triage.ref)} · ${phaseModels.triage.thinking} · Implement ${modelRefLabel(phaseModels.implement.ref)} · ${phaseModels.implement.thinking}`;
       ctx.ui.notify(
         (mode === "handoff"
           ? `Resuming ${resume!.findings.length} deferred finding${resume!.findings.length === 1 ? "" : "s"} across ${fileCount} file${fileCount === 1 ? "" : "s"} from ${handoffPath}`
@@ -1123,6 +1173,24 @@ export default function (pi: ExtensionAPI): void {
         return;
       }
       let draft = loadPersonaAuditConfig();
+      const persist = (config: PersonaAuditConfig): void => {
+        const saved = savePersonaAuditConfig(config);
+        if (!saved.ok) {
+          ctx.ui.notify(`Could not save persona-audit settings: ${saved.message}`, "error");
+          return;
+        }
+        ctx.ui.notify("Persona-audit settings saved", "info");
+      };
+      // The generated dialog needs a fixed amount of room. Where there is less, or it fails to
+      // open (it has said why), the pi-tui menus below take over.
+      if (dialogFits(await readTerminalSize(ctx), SETTINGS_DIALOG_SIZE)) {
+        const applied = await openSettingsDialog(ctx, draft);
+        if (applied === null) return;
+        if (applied !== undefined) {
+          persist(applied);
+          return;
+        }
+      }
       for (;;) {
         const result = await showSettingsMenu(ctx, draft, pi.getThinkingLevel());
         if (result.action === "cancel") return;
@@ -1133,12 +1201,7 @@ export default function (pi: ExtensionAPI): void {
         }
         break;
       }
-      const saved = savePersonaAuditConfig(draft);
-      if (!saved.ok) {
-        ctx.ui.notify(`Could not save persona-audit settings: ${saved.message}`, "error");
-        return;
-      }
-      ctx.ui.notify("Persona-audit settings saved", "info");
+      persist(draft);
     },
   });
 
@@ -1180,6 +1243,39 @@ export default function (pi: ExtensionAPI): void {
         return;
       }
       const preTagged = new Set(olderThan === undefined ? [] : entries.filter((entry) => isOlderThan(entry, olderThan)).map((entry) => entry.id));
+      const deleteSelected = async (selected: ArtifactEntry[]): Promise<void> => {
+        const counts = new Map<string, number>();
+        for (const entry of selected) counts.set(entry.kind, (counts.get(entry.kind) ?? 0) + 1);
+        const totalSize = selected.reduce((total, entry) => total + entry.sizeBytes, 0);
+        const countText = [...counts.entries()].map(([kind, count]) => `${count} ${kind}`).join(" · ");
+        const ok = await ctx.ui.confirm(
+          `Delete ${selected.length} persona-audit artifacts?`,
+          `${countText} · total ${formatBytes(totalSize)}. Snapshot dirs are removed recursively; deleting a resumable handoff makes its deferred findings non-resumable; deleting cache entries forces fresh reviewer passes.`,
+        );
+        if (!ok) return;
+        await removeSelected(selected);
+      };
+      const removeSelected = async (selected: ArtifactEntry[]): Promise<void> => {
+        const result = await deleteArtifacts(ctx.cwd, selected);
+        ctx.ui.notify(`Deleted ${result.deleted} artifacts (freed ${formatBytes(result.freedBytes)})`, "info");
+        if (result.failed.length > 0) {
+          ctx.ui.notify(`Could not delete ${result.failed.length} artifact(s): ${result.failed.map(({ entry, error }) => `${entry.displayPath}: ${error}`).join("; ")}`, "warning");
+        }
+      };
+      // The generated dialog needs a fixed amount of room and confirms inside itself. Where there is
+      // less, or it fails to open (it has said why), the pi-tui menu and ctx.ui.confirm take over.
+      const terminal = await readTerminalSize(ctx);
+      if (terminal && dialogFits(terminal, PURGE_DIALOG_SIZE)) {
+        const confirmed = await openPurgeDialog(ctx, entries, preTagged, terminal);
+        if (confirmed === null) {
+          ctx.ui.notify("Nothing tagged — no files deleted.", "info");
+          return;
+        }
+        if (confirmed) {
+          await removeSelected(confirmed);
+          return;
+        }
+      }
       let menuResult = await showPurgeMenu(ctx, entries, preTagged);
       while (menuResult?.action === "preview") {
         if (menuResult.entry.isDirectory) {
@@ -1201,21 +1297,7 @@ export default function (pi: ExtensionAPI): void {
         ctx.ui.notify("Nothing tagged — no files deleted.", "info");
         return;
       }
-      const selected = entries.filter((entry) => menuResult.tagged.has(entry.id));
-      const counts = new Map<string, number>();
-      for (const entry of selected) counts.set(entry.kind, (counts.get(entry.kind) ?? 0) + 1);
-      const totalSize = selected.reduce((total, entry) => total + entry.sizeBytes, 0);
-      const countText = [...counts.entries()].map(([kind, count]) => `${count} ${kind}`).join(" · ");
-      const ok = await ctx.ui.confirm(
-        `Delete ${selected.length} persona-audit artifacts?`,
-        `${countText} · total ${formatBytes(totalSize)}. Snapshot dirs are removed recursively; deleting a resumable handoff makes its deferred findings non-resumable; deleting cache entries forces fresh reviewer passes.`,
-      );
-      if (!ok) return;
-      const result = await deleteArtifacts(ctx.cwd, selected);
-      ctx.ui.notify(`Deleted ${result.deleted} artifacts (freed ${formatBytes(result.freedBytes)})`, "info");
-      if (result.failed.length > 0) {
-        ctx.ui.notify(`Could not delete ${result.failed.length} artifact(s): ${result.failed.map(({ entry, error }) => `${entry.displayPath}: ${error}`).join("; ")}`, "warning");
-      }
+      await deleteSelected(entries.filter((entry) => menuResult.tagged.has(entry.id)));
     },
   });
 

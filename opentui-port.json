@@ -1,0 +1,42 @@
+{
+  "source": "../opentui-dialogs/src",
+  "out": "src/ui/generated",
+  "files": [
+    "ui.tsx",
+    "dialogs.tsx",
+    "topping/pi.ts",
+    "splash/data.ts",
+    "splash/model-picker.tsx",
+    "persona-audit/reviewers.ts",
+    "persona-audit/data.ts",
+    "persona-audit/menu.tsx",
+    "persona-audit/pickers.tsx",
+    "persona-audit/prompts.tsx",
+    "persona-audit/findings-review.tsx",
+    "persona-audit/viewers.tsx",
+    "persona-audit/admin.tsx",
+    "persona-audit/run.ts",
+    "persona-audit/progress.tsx"
+  ],
+  "theme": "./theme",
+  "dataModules": ["persona-audit/data", "persona-audit/reviewers", "persona-audit/run", "splash/data"],
+  "entries": [],
+  "parity": "../opentui-dialogs/parity",
+  "cases": [
+    "persona-audit-settings",
+    "persona-audit-rosters",
+    "persona-audit-purge",
+    "persona-audit-source",
+    "persona-audit-experts",
+    "persona-audit-roster-picker",
+    "persona-audit-phase-models",
+    "persona-audit-guidance",
+    "persona-audit-retry-reviewers",
+    "persona-audit-retry-adjudicator",
+    "persona-audit-retry-verifier",
+    "persona-audit-findings-review",
+    "persona-audit-fix-gate",
+    "persona-audit-report-viewer",
+    "persona-audit-progress"
+  ]
+}

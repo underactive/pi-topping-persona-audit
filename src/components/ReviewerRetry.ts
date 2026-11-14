@@ -13,6 +13,8 @@ import type { ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-a
 import { truncateToWidth, type Component, type TUI } from "@earendil-works/pi-tui";
 import { normalizeFindingText } from "../dedup.ts";
 import { getModelCatalogue } from "@underactive/pi-topping-primitives/models";
+import { dialogFits, readTerminalSize, RETRY_DIALOG_SIZE } from "../ui/dialog-fit.ts";
+import { dialogRetryModelToPhaseChoice, openRetryCheckpointDialog } from "../ui/review-dialogs.ts";
 import {
   loadPersonaAuditConfig,
   type ModelRef,
@@ -175,9 +177,19 @@ export async function showReviewerRetryPrompt(
   if (available.length === 0) return skipAll;
 
   const thinkingOverrides = { ...loadPersonaAuditConfig().thinkingOverrides };
+  const terminal = await readTerminalSize(ctx);
+  if (dialogFits(terminal, RETRY_DIALOG_SIZE)) {
+    const generated = await openRetryCheckpointDialog(ctx, "reviewer", current, currentThinking, available, { failures });
+    if (generated?.kind === "reviewer") {
+      const model = generated.model ? dialogRetryModelToPhaseChoice(generated.model, available) : undefined;
+      return {
+        cancelled: generated.cancelled,
+        retries: generated.retries,
+        ...(model ? { model } : {}),
+      };
+    }
+  }
 
-  const result = await showOverlayPrompt<ReviewerRetryDecision>(ctx, (tui, theme, finish) =>
+  return showOverlayPrompt<ReviewerRetryDecision>(ctx, (tui, theme, finish) =>
     new ReviewerRetryComponent(tui, theme, ctx, failures, current, available, thinkingOverrides, currentThinking, finish));
-
-  return result;
 }

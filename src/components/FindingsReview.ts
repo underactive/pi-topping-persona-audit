@@ -1,6 +1,8 @@
 import type { Component } from "@earendil-works/pi-tui";
 import { Key, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { ExtensionCommandContext, ThemeColor } from "@earendil-works/pi-coding-agent";
+import { dialogFits, FINDINGS_REVIEW_DIALOG_SIZE, readTerminalSize } from "../ui/dialog-fit.ts";
+import { openFindingsReviewDialog } from "../ui/review-dialogs.ts";
 import { handoffRelPath, renderDeferredHandoff, writeReportFile } from "../report.ts";
 import { gitHeadCommit } from "../git.ts";
 import { compareFindingsByExploitability, compareFindingsBySuggestion } from "../findingOrder.ts";
@@ -819,7 +821,7 @@ export class FindingsReview implements Component {
 
 /** Show the findings review TUI overlay. */
 export async function showFindingsReview(
-  ctx: Pick<ExtensionCommandContext, "cwd" | "ui">,
+  ctx: ExtensionCommandContext,
   findings: Finding[],
   handoff: { slug: string; isoDate: string; scope: string; reviewers: string[] },
   degradationNote?: string,
@@ -845,6 +847,14 @@ export async function showFindingsReview(
     );
     return relPath;
   };
+
+  if (ctx.mode === "tui") {
+    const terminal = await readTerminalSize(ctx);
+    if (terminal && dialogFits(terminal, FINDINGS_REVIEW_DIALOG_SIZE)) {
+      const generated = await openFindingsReviewDialog(ctx, findings, terminal.rows, degradationNote, restore, feed, onWriteHandoff);
+      if (generated) return generated;
+    }
+  }
 
   return showOverlayPrompt<FindingsReviewOutcome>(
     ctx,

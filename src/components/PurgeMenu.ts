@@ -9,7 +9,7 @@ export type PurgeMenuResult =
   | { action: "preview"; entry: ArtifactEntry; tagged: Set<string> }
   | undefined;
 
-const SECTION_INFO: Record<ArtifactKind, { title: string; description: string }> = {
+export const SECTION_INFO: Record<ArtifactKind, { title: string; description: string }> = {
   report: {
     title: "Audit reports",
     description: "Final audit results. Keep these if you need a permanent record of findings, fixes, and verification.",

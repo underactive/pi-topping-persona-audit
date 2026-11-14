@@ -18,6 +18,8 @@ import type { ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-a
 import type { TUI } from "@earendil-works/pi-tui";
 import { normalizeFindingText } from "../dedup.ts";
 import { getModelCatalogue } from "@underactive/pi-topping-primitives/models";
+import { dialogFits, readTerminalSize, RETRY_DIALOG_SIZE } from "../ui/dialog-fit.ts";
+import { dialogRetryModelToPhaseChoice, openRetryCheckpointDialog } from "../ui/review-dialogs.ts";
 import {
   loadPersonaAuditConfig,
   type ModelRef,
@@ -102,9 +104,15 @@ export async function showVerifierRetryPrompt(
   if (available.length === 0) return skip;
 
   const thinkingOverrides = { ...loadPersonaAuditConfig().thinkingOverrides };
+  const terminal = await readTerminalSize(ctx);
+  if (dialogFits(terminal, RETRY_DIALOG_SIZE)) {
+    const generated = await openRetryCheckpointDialog(ctx, "verifier", current, currentThinking, available, { detail });
+    if (generated?.kind === "verifier") {
+      const model = generated.model ? dialogRetryModelToPhaseChoice(generated.model, available) : undefined;
+      return { retry: generated.retry, ...(generated.retry && model ? { model } : {}) };
+    }
+  }
 
-  const result = await showOverlayPrompt<VerifierRetryDecision>(ctx, (tui, theme, finish) =>
+  return showOverlayPrompt<VerifierRetryDecision>(ctx, (tui, theme, finish) =>
     new VerifierRetryComponent(tui, theme, ctx, detail, current, available, thinkingOverrides, currentThinking, finish));
-
-  return result;
 }

@@ -29,6 +29,7 @@ import { normalizeFindingText } from "../dedup.ts";
 import { DEFAULT_METER_SETTINGS, resolveMeterColor, type MeterSettings, type ThinkingLevel } from "../modelConfig.ts";
 import type { Finding, HeadlessProgress } from "../types.ts";
 import { FULLSCREEN_WIDGET_RESERVE_ROWS, usableTerminalRows, type ViewportHost, wrapText } from "./menuChrome.ts";
+import { isThemeSource, renderOpenTuiProgress } from "./AuditProgressOpenTui.ts";
 
 export const AUDIT_PROGRESS_WIDGET_KEY = "persona-audit-progress";
 const SPINNER_INTERVAL_MS = 100;
@@ -200,6 +201,8 @@ export interface AuditProgressView {
   totalMs(): number;
   /** Time the run sat blocked on a user decision. */
   waitingMs(): number;
+  /** Whether a blocking user prompt is currently open. */
+  isWaiting(): boolean;
   /** Aggregate model cost across every row, including whether the total is partial. */
   totalCost(): TotalCost;
   /** Audit scope, shown right-aligned in the title bar. */
@@ -283,10 +286,28 @@ interface RowRecord {
   fixNowDetail?: FixNowDetail;
 }
 
+class AuditProgressClock extends RunClock {
+  private waiting = false;
+
+  override pause(): void {
+    super.pause();
+    this.waiting = true;
+  }
+
+  override resume(): void {
+    super.resume();
+    this.waiting = false;
+  }
+
+  isWaiting(): boolean {
+    return this.waiting;
+  }
+}
+
 export class AuditProgressWidget implements AuditProgressView {
   readonly scope: string | undefined;
   readonly baseHash: string | undefined;
-  readonly clock = new RunClock();
+  readonly clock = new AuditProgressClock();
 
   private readonly ctx: AuditProgressContext;
   private readonly resolveContextWindow: ContextWindowResolver;
@@ -502,6 +523,10 @@ export class AuditProgressWidget implements AuditProgressView {
 
   waitingMs(): number {
     return this.clock.waitingMs();
+  }
+
+  isWaiting(): boolean {
+    return this.clock.isWaiting();
   }
 
   totalCost(): TotalCost {
@@ -849,6 +874,18 @@ export class AuditProgressTable implements Component {
   }
 
   render(width: number): string[] {
+    if (isThemeSource(this.theme)) {
+      return renderOpenTuiProgress({
+        view: this.view,
+        width,
+        maxRows: this.rowBudget(),
+        frozen: this.frozen,
+        spin: this.spinFrame,
+        meterDirection: this.meterSettings.direction,
+        meterLevels: this.meterLevels(),
+        theme: this.theme,
+      });
+    }
     const th = this.theme;
     const innerWidth = Math.max(20, width);
     const bodyWidth = Math.max(10, innerWidth - 4);
@@ -1118,6 +1155,7 @@ export function renderAuditSnapshot(
     footerSummary: () => snapshot.summary,
     totalMs: () => snapshot.totalMs ?? 0,
     waitingMs: () => snapshot.waitingMs ?? 0,
+    isWaiting: () => false,
     totalCost: () => totalCost(snapshot.rows),
     scope: snapshot.scope,
     baseHash: snapshot.baseHash,

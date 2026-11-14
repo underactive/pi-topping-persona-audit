@@ -11,9 +11,11 @@
 
 import type { Component, Focusable, KeybindingsManager, OverlayOptions, TUI } from "@earendil-works/pi-tui";
 import { Input, isKeyRelease, Key, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
-import type { TerminalInputHandler, Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
+import type { ExtensionCommandContext, TerminalInputHandler, Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import type { AuditProgressWidget } from "./AuditProgress.ts";
 import type { Finding, HeadlessProgress } from "../types.ts";
+import { dialogFits, FIX_GATE_DIALOG_SIZE, readTerminalSize } from "../ui/dialog-fit.ts";
+import { openFixGateDialog } from "../ui/review-dialogs.ts";
 import { sanitizeDiffLine, sanitizeTerminalText } from "./AuditProgress.ts";
 import { overlayViewportRows, renderFramedBottom, renderFramedRow, renderFramedTop, showOverlayPrompt, type ViewportHost, wrapText } from "./menuChrome.ts";
 
@@ -361,6 +363,7 @@ export interface FixProgressController {
  */
 export interface FixProgressUi {
   onTerminalInput(handler: TerminalInputHandler): () => void;
+  notify?(message: string, type?: "info" | "warning" | "error"): void;
   custom<T>(
     factory: (tui: TUI, theme: Theme, keybindings: KeybindingsManager, done: (result: T) => void) => Component,
     options?: { overlay?: boolean; overlayOptions?: OverlayOptions },
@@ -383,7 +386,7 @@ export interface FixProgressSink {
  * unfocused, so it keeps its own release guard.
  */
 export function openFixProgress(
-  ctx: { ui: FixProgressUi },
+  ctx: ExtensionCommandContext | { ui: FixProgressUi },
   finding: Finding,
   onCancelRequest: () => void,
   sink?: FixProgressSink,
@@ -446,13 +449,31 @@ export function openFixProgress(
       if (closed) return;
       sink?.progress.applyProgress(sink.key, progress);
     },
-    gate: (input) => {
-      if (closed) return Promise.resolve("discard" as const);
+    gate: async (input) => {
+      if (closed) return "discard";
       gateActive = true;
-      const shown = showOverlayPrompt<FixGateDecision>(ctx, (tui, theme, done) => {
+      const extensionContext = "modelRegistry" in ctx ? ctx : undefined;
+      const terminal = extensionContext?.mode === "tui" ? await readTerminalSize(extensionContext) : undefined;
+      const legacyGate = (): Promise<FixGateDecision> => showOverlayPrompt<FixGateDecision>(ctx, (tui, theme, done) => {
         settleGate = done;
         return new FixGate(finding, input, theme, tui, done);
       });
+      let shown: Promise<FixGateDecision>;
+      if (closed) {
+        shown = Promise.resolve("discard");
+      } else if (extensionContext?.mode === "tui" && terminal && dialogFits(terminal, FIX_GATE_DIALOG_SIZE)) {
+        const generated = await openFixGateDialog(
+          { mode: extensionContext.mode, ui: extensionContext.ui },
+          finding,
+          input,
+          terminal.rows,
+          (settle) => { settleGate = settle; },
+          (error) => ctx.ui.notify?.(`Persona-audit Fix Now gate dialog failed: ${error instanceof Error ? error.message : String(error)}`, "error"),
+        );
+        shown = generated === undefined ? legacyGate() : Promise.resolve(generated);
+      } else {
+        shown = legacyGate();
+      }
       return shown
         .then((decision) => {
           if (!closed) {

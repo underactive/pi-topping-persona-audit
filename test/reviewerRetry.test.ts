@@ -125,9 +125,11 @@ test("choosing a retry model records it and shows it on the overview", () => {  
 const CTRL_C = "\u0003";
 
 /** Focused-overlay fake: Pi dispatches input straight to the component and settles on done. */
-function mountPrompt(): { send(...keys: string[]): void; result: Promise<ReviewerRetryDecision>; options(): unknown } {
+function mountPrompt(): { ready: Promise<void>; send(...keys: string[]): void; result: Promise<ReviewerRetryDecision>; options(): unknown } {
   let component: Component | undefined;
   let capturedOptions: unknown;
+  let markReady: () => void = () => {};
+  const ready = new Promise<void>((resolve) => { markReady = resolve; });
   const ctx = {
     mode: "tui",
     modelRegistry: { getAvailable: () => [{ provider: "test", id: "model", reasoning: false }] },
@@ -139,6 +141,7 @@ function mountPrompt(): { send(...keys: string[]): void; result: Promise<Reviewe
         capturedOptions = options;
         return new Promise<ReviewerRetryDecision>((resolve) => {
           component = factory(tui, theme, undefined, resolve);
+          if (options === PROMPT_OVERLAY_OPTIONS) markReady();
         });
       },
     },
@@ -151,6 +154,7 @@ function mountPrompt(): { send(...keys: string[]): void; result: Promise<Reviewe
     currentThinking,
   );
   return {
+    ready,
     send: (...keys: string[]) => keys.forEach((key) => component?.handleInput?.(key)),
     result,
     options: () => capturedOptions,
@@ -159,6 +163,7 @@ function mountPrompt(): { send(...keys: string[]): void; result: Promise<Reviewe
 
 test("the checkpoint opens as a focused overlay with the shared prompt geometry", async () => {
   const prompt = mountPrompt();
+  await prompt.ready;
   assert.deepEqual(prompt.options(), PROMPT_OVERLAY_OPTIONS);
   prompt.send(ESCAPE);
   assert.deepEqual(await prompt.result, { cancelled: false, retries: [] });
@@ -166,6 +171,7 @@ test("the checkpoint opens as a focused overlay with the shared prompt geometry"
 
 test("Ctrl+C settles the checkpoint like Escape", async () => {
   const prompt = mountPrompt();
+  await prompt.ready;
   prompt.send(CTRL_C);
   assert.deepEqual(await prompt.result, { cancelled: false, retries: [] });
 });

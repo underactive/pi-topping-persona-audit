@@ -2,6 +2,8 @@ import type { ExtensionCommandContext, ThemeColor } from "@earendil-works/pi-cod
 import { getMarkdownTheme } from "@earendil-works/pi-coding-agent";
 import type { Component, MarkdownTheme } from "@earendil-works/pi-tui";
 import { Key, Markdown, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { dialogFits, readTerminalSize, REPORT_VIEWER_DIALOG_SIZE } from "../ui/dialog-fit.ts";
+import { openReportViewerDialog } from "../ui/review-dialogs.ts";
 import { overlayViewportRows, renderFramedBottom, renderFramedRow, renderFramedTop, showOverlayPrompt, type ViewportHost } from "./menuChrome.ts";
 
 /** The slice of the TUI host required by the viewer; structural for unit tests. */
@@ -164,19 +166,25 @@ export class ReportViewer implements Component {
 }
 
 /** Show the scrollable report overlay after a completed audit. */
-export function showReportViewer(
-  ctx: Pick<ExtensionCommandContext, "ui">,
+export async function showReportViewer(
+  ctx: ExtensionCommandContext,
   reportText: string,
   header: ReportViewerHeader,
 ): Promise<void> {
-  return showOverlayPrompt<void>(
+  if (ctx.mode === "tui") {
+    const terminal = await readTerminalSize(ctx);
+    if (dialogFits(terminal, REPORT_VIEWER_DIALOG_SIZE) && terminal) {
+      if (await openReportViewerDialog(ctx, reportText, header, terminal.rows)) return;
+    }
+  }
+  await showOverlayPrompt<void>(
     ctx,
     (tui, theme, done) => new ReportViewer(reportText, header, theme, getMarkdownTheme(), done, tui),
   );
 }
 
 /** Show a read-only Markdown or JSON artifact using the standard scrolling overlay. */
-export function showArtifactViewer(ctx: Pick<ExtensionCommandContext, "ui">, content: string, artifactPath: string): Promise<void> {
+export function showArtifactViewer(ctx: ExtensionCommandContext, content: string, artifactPath: string): Promise<void> {
   return showReportViewer(ctx, content, {
     title: `Artifact preview — ${artifactPath.split(/[\\/]/).pop() ?? artifactPath}`,
     status: "read-only",

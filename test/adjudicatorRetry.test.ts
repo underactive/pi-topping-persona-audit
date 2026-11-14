@@ -91,9 +91,11 @@ test("choosing a retry model records it and shows it on the overview", () => {
   assert.deepEqual(result()?.model?.ref, { provider: "test", id: "model" });
 });
 
-function mountPrompt(): { send(...keys: string[]): void; result: Promise<AdjudicatorRetryDecision>; options(): unknown } {
+function mountPrompt(): { ready: Promise<void>; send(...keys: string[]): void; result: Promise<AdjudicatorRetryDecision>; options(): unknown } {
   let component: Component | undefined;
   let capturedOptions: unknown;
+  let markReady: () => void = () => {};
+  const ready = new Promise<void>((resolve) => { markReady = resolve; });
   const ctx = {
     mode: "tui",
     modelRegistry: { getAvailable: () => [{ provider: "test", id: "model", reasoning: false }] },
@@ -105,6 +107,7 @@ function mountPrompt(): { send(...keys: string[]): void; result: Promise<Adjudic
         capturedOptions = options;
         return new Promise<AdjudicatorRetryDecision>((resolve) => {
           component = factory(tui, theme, undefined, resolve);
+          if (options === PROMPT_OVERLAY_OPTIONS) markReady();
         });
       },
     },
@@ -116,6 +119,7 @@ function mountPrompt(): { send(...keys: string[]): void; result: Promise<Adjudic
     currentThinking,
   );
   return {
+    ready,
     send: (...keys: string[]) => keys.forEach((key) => component?.handleInput?.(key)),
     result,
     options: () => capturedOptions,
@@ -124,6 +128,7 @@ function mountPrompt(): { send(...keys: string[]): void; result: Promise<Adjudic
 
 test("the checkpoint opens with the shared prompt geometry and settles on cancellation", async () => {
   const prompt = mountPrompt();
+  await prompt.ready;
   assert.deepEqual(prompt.options(), PROMPT_OVERLAY_OPTIONS);
   prompt.send(ESCAPE);
   assert.deepEqual(await prompt.result, { retry: false });
