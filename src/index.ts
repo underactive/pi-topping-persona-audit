@@ -9,6 +9,7 @@ import { lstat, readdir, readFile, realpath } from "node:fs/promises";
 import { promisify } from "node:util";
 import { hostProjectTrust } from "./agentRunner.ts";
 import { runAudit } from "./orchestrator.ts";
+import { createHerdrReporter, sessionFileOf } from "./herdr.ts";
 import { collectArtifacts, deleteArtifacts, formatBytes, isOlderThan, type ArtifactEntry } from "./artifacts.ts";
 import { filterExistingFindings, parseHandoffPayload, type HandoffPayload } from "./handoff.ts";
 import { gitHeadCommit } from "./git.ts";
@@ -1009,6 +1010,12 @@ export default function (pi: ExtensionAPI): void {
       activeProgress = progress;
       progress.mount();
 
+      // herdr derives working/idle from the root agent loop, which never runs
+      // during an audit (all work is in subprocess sessions). Tell it directly;
+      // no-op outside herdr. See src/herdr.ts.
+      const herdr = createHerdrReporter({ sessionFile: sessionFileOf(ctx) });
+      void herdr.report("working");
+
       // ── Step 3: Deterministic orchestration (no child LLM session) ───
       const auditController = new AbortController();
       activeAuditController = auditController;
@@ -1129,6 +1136,7 @@ export default function (pi: ExtensionAPI): void {
         // Unmount here rather than leaving the table up: its ticker must not
         // outlive the run, and a later /reload would otherwise find it stale.
         progress.stop();
+        void herdr.report("idle");
         if (activeProgress === progress) {
           activeProgress = null;
         }
