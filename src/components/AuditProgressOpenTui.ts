@@ -1,7 +1,8 @@
 import { createElement } from "react";
 import { mountOpenTui } from "@underactive/pi-topping-opentui/host";
-import { resolveTheme, type ResolvedTheme, type ThemeSource } from "@underactive/pi-topping-opentui/theme";
+import { resolveTheme, theme as palette, type ResolvedTheme } from "@underactive/pi-topping-opentui/theme";
 import { sanitizeTerminalBytes } from "@underactive/pi-topping-primitives/text";
+import { resolveMeterColor, type MeterColor, type ThinkingLevel } from "../modelConfig.ts";
 import { type AuditProgressRow, type AuditProgressView, type ProgressTheme } from "./AuditProgress.ts";
 import { METER_WIDTH, Meter } from "../ui/generated/topping/pi.ts";
 import { ProgressTable } from "../ui/generated/persona-audit/progress.ts";
@@ -13,14 +14,22 @@ interface OpenTuiProgressOptions {
   maxRows: number;
   frozen: boolean;
   spin: number;
+  /** The Token activity monitor color setting. */
+  meterColor: MeterColor;
   meterDirection: "ltr" | "rtl";
   meterLevels: Record<string, readonly number[]>;
-  theme: ProgressTheme & ThemeSource;
+  theme: ProgressTheme;
 }
 
-export function isThemeSource(theme: ProgressTheme): theme is ProgressTheme & ThemeSource {
-  const candidate = theme as ProgressTheme & Partial<ThemeSource>;
-  return candidate.colors !== undefined && typeof candidate.getColorMode === "function";
+/**
+ * The colour the table paints a phase's meters in: the Token activity monitor color setting,
+ * resolved as pi's own table always resolved it (a fixed token, or with `thinkingLevel` the
+ * phase's thinking-level token), and drawn as that pi token so it follows the user's pi theme.
+ * pi's `border` is the palette's border, which is pi's `borderMuted`.
+ */
+export function meterPaletteColor(color: MeterColor, thinking: ThinkingLevel | undefined): string {
+  const token = resolveMeterColor(color, thinking);
+  return (palette as Readonly<Record<string, string>>)[token] ?? palette.accent;
 }
 
 function toRunRow(row: AuditProgressRow, meterLevels: Record<string, readonly number[]>, meterDirection: "ltr" | "rtl"): Row {
@@ -84,6 +93,7 @@ export function renderOpenTuiProgress(options: OpenTuiProgressOptions): string[]
     : Math.max(40, rows.length * 2 + 32);
   const height = Math.max(40, rows.length * 8 + 40, maxRows);
   const theme: ResolvedTheme = resolveTheme(options.theme);
+  const phaseThinking = options.view.phaseThinking();
   const mounted = mountOpenTui(
     createElement(ProgressTable, {
       run,
@@ -92,6 +102,7 @@ export function renderOpenTuiProgress(options: OpenTuiProgressOptions): string[]
       ...(options.view.scope ? { scope: sanitizeTerminalBytes(options.view.scope) } : {}),
       ...(options.view.baseHash ? { baseHash: sanitizeTerminalBytes(options.view.baseHash) } : {}),
       frozen: options.frozen,
+      meterColor: (phase: AuditPhase) => meterPaletteColor(options.meterColor, phaseThinking[phase]),
     }),
     { width, height, theme, fitContent: true },
   );

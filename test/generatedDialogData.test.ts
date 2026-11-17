@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { SECTION_INFO } from "../src/components/PurgeMenu.ts";
 import {
   CROSS_EXAMINATION_MODES,
   DEFAULT_DECISION_SETTINGS,
@@ -18,7 +17,6 @@ import { dialogReviewers } from "../src/ui/dialog-models.ts";
 import { rosterNameError } from "../src/ui/generated/persona-audit/admin.ts";
 import {
   ALL_REVIEWERS,
-  ARTIFACT_SECTIONS,
   COST_CONFIRM_RUN_THRESHOLD,
   CROSS_EXAMINATION,
   DEFAULT_SETTINGS,
@@ -58,11 +56,6 @@ test("the roster limits and the name rule are the extension's", () => {
     const extensionAccepts = name.length >= 1 && name.length <= MAX_ROSTER_NAME_LENGTH && ROSTER_NAME_PATTERN.test(name);
     assert.equal(rosterNameError(name, []) === undefined, extensionAccepts, JSON.stringify(name));
   }
-});
-
-test("the purge sections say what the extension's own purge menu says", () => {
-  assert.deepEqual(ARTIFACT_SECTIONS, SECTION_INFO);
-  assert.deepEqual(Object.keys(ARTIFACT_SECTIONS), Object.keys(SECTION_INFO), "in the same order");
 });
 
 test("the sample reviewer catalogue is the extension's, so the mockup's copy cannot drift", () => {

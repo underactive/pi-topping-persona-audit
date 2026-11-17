@@ -12,44 +12,29 @@ import {
   type ThinkingLevel,
 } from "@underactive/pi-topping-primitives/models";
 import { createElement } from "react";
-import { parseAdditionalContext, type AdditionalContext } from "../additionalContext.ts";
+import { describeAdditionalContext, parseAdditionalContext, type AdditionalContext } from "../additionalContext.ts";
 import {
   loadPersonaAuditConfig,
   modelRefLabel,
+  seedPhaseSelections,
   updatePersonaAuditConfig,
   type ModelRef,
   type PhaseModelChoice,
   type PhaseModelSelection,
   type PhaseSlot,
 } from "../modelConfig.ts";
-import { seedPhaseSelections } from "../components/ModelPicker.ts";
 import type { ReviewerSelection } from "../types.ts";
-import { DIALOG_MAX_HEIGHT, type TerminalSize } from "./dialog-fit.ts";
+import { DIALOG_MAX_HEIGHT, DIALOG_WIDTH, FILL_ROOM } from "./dialog-fit.ts";
 import { dialogReviewers, modelKey, readDialogModels } from "./dialog-models.ts";
-import { FRAME_ROWS } from "./generated/ui.ts";
 import { ExpertPicker, RosterPicker, type Selection } from "./generated/persona-audit/pickers.ts";
 import { GuidanceSummary, PhaseModelPicker, ReviewerSourceMenu, type GuidanceResult, type PhaseModelsResult, type ReviewerSource } from "./generated/persona-audit/prompts.ts";
 import type { ModelChoice, Phase } from "./generated/persona-audit/data.ts";
 import type { Model as DialogModel } from "./generated/splash/data.ts";
 
-const WIDTH = 104;
+const WIDTH = DIALOG_WIDTH;
 
-export interface PickerDialogSizes {
-  source: TerminalSize;
-  experts: TerminalSize;
-  rosters: TerminalSize;
-  phases: TerminalSize;
-  guidance: TerminalSize;
-}
-
-/** Room reserved by the widest / tallest of the screens for each pre-run picker. */
-export const PICKER_DIALOG_SIZE: PickerDialogSizes = {
-  source: { columns: WIDTH, rows: 15 },
-  experts: { columns: WIDTH, rows: 34 },
-  rosters: { columns: WIDTH, rows: 34 },
-  phases: { columns: WIDTH, rows: 34 },
-  guidance: { columns: WIDTH, rows: 34 },
-};
+/** Where the audit's reviewers come from: the dispatcher's recommendation, a saved roster, or a manual pick. */
+export type { ReviewerSource };
 
 function sizeOptions(title: string) {
   return { title, width: WIDTH, maxHeight: DIALOG_MAX_HEIGHT };
@@ -82,16 +67,14 @@ export async function openExpertPickerDialog(
   ctx: ExtensionCommandContext,
   fileCount: number,
   initial?: ReviewerSelection,
-  terminal?: TerminalSize,
 ): Promise<ReviewerSelection | null | undefined> {
   const reviewers = dialogReviewers();
-  const budget = terminal ? Math.max(1, terminal.rows - FRAME_ROWS - 14) : 17;
   try {
     const result = await showOpenTuiDialog<Selection | null>(
       ctx,
       (done) => createElement(ExpertPicker, {
         width: WIDTH,
-        budget,
+        budget: FILL_ROOM,
         fileCount,
         reviewers,
         ...(initial ? { initial } : {}),
@@ -111,16 +94,14 @@ export async function openRosterPickerDialog(
   rosters: readonly { name: string; reviewers: string[] }[],
   fileCount: number,
   initialName?: string,
-  terminal?: TerminalSize,
 ): Promise<{ rosterName: string; selection: ReviewerSelection } | null | undefined> {
   const reviewers = dialogReviewers();
-  const budget = terminal ? Math.max(1, terminal.rows - FRAME_ROWS - 14) : 17;
   try {
     const result = await showOpenTuiDialog<RosterPickerResult>(
       ctx,
       (done) => createElement(RosterPicker, {
         width: WIDTH,
-        budget,
+        budget: FILL_ROOM,
         rosters: rosters.map((roster) => ({ name: roster.name, reviewers: [...roster.reviewers] })),
         reviewers,
         fileCount,
@@ -241,7 +222,22 @@ export async function openGuidanceDialog(
   try {
     const result = await showOpenTuiDialog<GuidanceResult>(
       ctx,
-      (done) => createElement(GuidanceSummary, { width: WIDTH, initialDraft: draft, supportsImages: reviewModelSupportsImages, onDone: done }),
+      (done) => createElement(GuidanceSummary, {
+        width: WIDTH,
+        initialDraft: draft,
+        supportsImages: reviewModelSupportsImages,
+        // The summary's value, its warnings and the image-support block come from the real parse.
+        inspect: async (text: string) => {
+          const parsed = await parseAdditionalContext(text, ctx.cwd);
+          return {
+            text: parsed.context.text,
+            images: parsed.attached,
+            value: describeAdditionalContext(parsed.context),
+            warnings: parsed.warnings,
+          };
+        },
+        onDone: done,
+      }),
       { ...sizeOptions("Persona-audit - guidance"), fallback: { action: "cancel", draft } },
     );
     if (result.action === "back" || result.action === "cancel") return { action: result.action, draft: result.draft };

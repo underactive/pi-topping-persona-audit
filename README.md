@@ -137,6 +137,7 @@ picker uses, leaving that picker's saved choices untouched.
 
 ## Requirements
 
+- **Terminal** 80×24 or larger. The dialogs are 104 columns wide where there is room and lay themselves out down to 80×24; a smaller terminal cuts them.
 - **Pi** 1.5.2 or later recommended — that is the version the development dependencies (`@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent`, `@earendil-works/pi-tui`) are pinned to and tested against. Focused `ctx.ui.custom()` overlays in 0.84.4 and later emit the `ui_prompt_start`/`ui_prompt_end` lifecycle events this extension's prompts rely on for accurate user-wait reporting. The published peer dependencies stay `*`, so older hosts still install and run, but hosts before 0.84.4 cannot emit those lifecycle events. Agent tasks run in-process via the public `createAgentSession()` SDK; no `pi` CLI on PATH is required. Headless audit sessions honor the user's global settings. They apply the audited project's pi settings, packages, skills, prompt templates, and `.pi/SYSTEM.md`/`APPEND_SYSTEM.md` only when pi trusts that project; hosts too old to report trust count as untrusted. They force cache warming off without modifying `settings.json`, because these short sessions do not benefit from warming and its spend is not represented in the progress table's COST column.
 - **Node.js** ≥ 22.19.0 (uses `--experimental-strip-types` or erasable syntax)
 - A configured physical Pi model (providers registered by extensions are replayed onto a fresh runtime by `buildRuntimeWithExtensionProviders`). Virtual (router) models such as `litellm-auto/*` appear in the Dispatch model selector and the per-phase picker, but audit sessions never load the router, so they cannot run one and fail with an error naming the model. Choose a physical Dispatch model in `/persona-audit-settings`, a physical model for each phase in the `/persona-audit` phase picker, and switch a virtual session model with `/model`.
@@ -488,13 +489,13 @@ the whole run and is torn down on completion, cancellation, `/reload`, and
   each row by the thinking level assigned to its phase, falling back to
   `accent` when the level is unknown.
 - **ACTIVITY** — the row's status, with the tool call currently executing rendered
-  on an indented `↳` sub-row beneath it with a dim gutter, bold `toolTitle` tool
-  name, and `accent` argument.
+  on an indented `↳` sub-row beneath it: a dim gutter, the tool name in bold, and
+  its argument in `accent`.
 - **TURNS / TOOLS / COST / TIME** — assistant turns completed, cumulative tool
   calls, cumulative model cost at `$0.000` precision (`—` when the model cannot be
   resolved), and elapsed time. All four freeze when the row settles and are
-  dropped together when the table body is narrower than 96 columns (roughly a
-  100-column terminal). The footer's `total` is work time only — it excludes
+  dropped together on a terminal narrower than 95 columns, so an 80-column
+  terminal shows the agent, CTX, MONITOR and ACTIVITY columns. The footer's `total` is work time only — it excludes
   time spent on user-decision spans (checkpoints, findings review, the
   pre-audit summary) — and any excluded wait is shown separately as
   `(+M:SS waiting)`.
@@ -537,13 +538,14 @@ instructions" prose has been replaced by code, and LLM reasoning is confined to
 isolated in-process agent sessions: reviewer passes, adjudicator reconcile,
 adjudicator implement, the per-finding verifier, and regression-test authoring:
 
-- **Command shell** (`src/index.ts`) — `/persona-audit` and `/persona-audit-settings` arg parsing, git diff scan + importer scan (`--diff`) or deterministic whole-tree scan (`--full`, no git required), cache-key computation, ExpertPicker TUI, progress-widget mounting and context-window resolution, and the final chat summary.
-- **Orchestrator** (`src/orchestrator.ts`) — the audit state machine: cache load/merge, reviewer agent-session batches, deterministic collection, optional cross-examination pass, adjudicator agent sessions (including exploitability grading), FindingsReview TUI, verification (including the automatic gate-repair round loop, see [Fix + verify rounds](#fix--verify-rounds)), and report writing. Writes a durable partial report after every reviewer pass and on cancellation/failure.
+- **Command shell** (`src/index.ts`) — `/persona-audit` and `/persona-audit-settings` arg parsing, git diff scan + importer scan (`--diff`) or deterministic whole-tree scan (`--full`, no git required), cache-key computation, the pre-run pickers, progress-widget mounting and context-window resolution, and the final chat summary.
+- **Orchestrator** (`src/orchestrator.ts`) — the audit state machine: cache load/merge, reviewer agent-session batches, deterministic collection, optional cross-examination pass, adjudicator agent sessions (including exploitability grading), the findings review, verification (including the automatic gate-repair round loop, see [Fix + verify rounds](#fix--verify-rounds)), and report writing. Writes a durable partial report after every reviewer pass and on cancellation/failure.
 - **Agent runner** (`src/agentRunner.ts`) — runs each LLM task as an isolated in-process agent session via `createAgentSession()`, with model resolution, extension-provider replay, idle-timeout abort, and live telemetry.
 - **Agent discovery & telemetry** (`src/subprocess.ts`) — agent-config discovery from `*.md` frontmatter (`tools`/`model`), concurrency helper, and shared output-activity tracking used by agentRunner.ts.
-- **Progress surface** (`src/components/AuditProgress.ts`, `src/components/AuditProgressOpenTui.ts`, `src/components/ReportViewer.ts`, `src/components/SettingsMenu.ts`) — the phased `aboveEditor` table, post-audit report overlay, the activity monitor's settings menu, and output-rate meter. The table presentation is generated from the OpenTUI mockup; `AuditProgressOpenTui.ts` adapts the real view and meter snapshots into its data model, while the extension retains the clock, telemetry, sampling, and frozen-transcript lifecycle. The shared meter, shimmer, run clock and tool-activity label come from `@underactive/pi-topping-primitives` (`./activity`, `./activity-tui`).
-- **Reviewer retry checkpoint** (`src/components/ReviewerRetry.ts`) — shown after a review batch settles with failures; lets the user retry failed passes (optionally on a different model) or skip them before triage.
-- **Verifier retry checkpoint** (`src/components/VerifierRetry.ts`) — shown only when the verifier *agent process itself* fails to run (a provider error, not a fix verdict); lets the user re-run it on a different model (which then also authors the regression tests) or skip verification. Ordinary `not-fixed`/`partial` verdicts and failed scripts do not reach this checkpoint — they trigger the orchestrator's automatic gate-repair round instead, with no user action needed.
+- **Progress surface** (`src/components/AuditProgress.ts`, `src/components/AuditProgressOpenTui.ts`) — the phased `aboveEditor` table and its output-rate meter. The table presentation is generated from the OpenTUI mockup; `AuditProgressOpenTui.ts` adapts the real view and meter snapshots into its data model, while the extension retains the clock, telemetry, sampling, and frozen-transcript lifecycle. The shared meter, shimmer, run clock and tool-activity label come from `@underactive/pi-topping-primitives` (`./activity`, `./activity-tui`).
+- **Dialogs** (`src/ui/`) — every prompt, picker and overlay the extension opens is a dialog generated from the OpenTUI mockups (`src/ui/generated/`), with a hand-written adapter per group that translates the extension's data in and the user's answer out. Each dialog takes its full size, 104 columns, where the terminal has room, and lays itself out again in a smaller one, down to 80×24; it follows a resize while it is open. A terminal smaller than 80×24 cuts the dialog's right-hand columns or bottom rows.
+- **Reviewer retry checkpoint** (`src/ui/retry-prompts.ts`) — shown after a review batch settles with failures; lets the user retry failed passes (optionally on a different model) or skip them before triage.
+- **Verifier retry checkpoint** (`src/ui/retry-prompts.ts`) — shown only when the verifier *agent process itself* fails to run (a provider error, not a fix verdict); lets the user re-run it on a different model (which then also authors the regression tests) or skip verification. Ordinary `not-fixed`/`partial` verdicts and failed scripts do not reach this checkpoint — they trigger the orchestrator's automatic gate-repair round instead, with no user action needed.
 - **Report & verification** (`src/report.ts`, `src/verify.ts`) — pure report templates (full/compact/partial + chat summary), the `check`/`lint`/`test` verification gate, and the rule that folds per-finding verdicts and script results into one status.
 - **Fix verification** (`src/snapshot.ts`, `src/regression.ts`) — pre/post file hashing with pre-fix snapshots and apply-report parsing, and the red/green regression harness that runs authored tests against a throwaway `git worktree`.
 - **Prompt data** (`src/skillContent.ts`) — the 53 reviewer personalities plus the reviewer output contract and adjudicator directives composed into agent-session prompts.
@@ -629,23 +631,22 @@ pi-topping-persona-audit/
 │   ├── skillContent.ts       # 53 personalities + agent-session prompt contracts
 │   ├── decision/             # Optional Jev classifier: dispatcher categories + triage suggestions
 │   ├── types.ts              # Shared types
-│   └── components/
-│       ├── AuditProgress.ts  # Live phased progress table (aboveEditor widget)
-│       ├── AuditSummary.ts   # Pre-audit summary and embedded reviewer-context editor
-│       ├── ExpertPicker.ts   # TUI overlay for manual reviewer selection
-│       ├── ReviewerSource.ts # First screen: recommend, roster, or manual selection
-│       ├── RosterPicker.ts   # TUI overlay listing saved rosters
-│       ├── FindingsReview.ts # TUI overlay for findings triage
-│       ├── FixProgress.ts    # Fix Now controller (nested table detail + Escape listener) + per-attempt gate overlay
-│       ├── ModelPicker.ts    # Per-phase model + thinking picker
-│       ├── PurgeMenu.ts      # /persona-audit-purge tag-and-confirm overlay
-│       ├── ReviewerRetry.ts  # TUI checkpoint to retry or skip failed reviewer passes
-│       ├── ReportViewer.ts   # Scrollable report overlay opened after a completed audit
-│       ├── ReviewerData.ts   # Condensed reviewer data for the picker
-│       ├── RosterEditor.ts   # Sequential reusable-reviewer roster manager
-│       ├── SettingsMenu.ts   # /persona-audit-settings menu and staged roster entry point
-│       ├── VerifierRetry.ts  # TUI checkpoint to re-model or skip a failed verifier run
-│       └── menuChrome.ts     # Box-drawing chrome, settings-menu component, shared overlay prompt helper
+│   ├── components/
+│   │   ├── AuditProgress.ts  # Live phased progress table (aboveEditor widget): clock, telemetry, meters, row budget
+│   │   ├── AuditProgressOpenTui.ts # Feeds the widget's state to the generated table
+│   │   ├── FixProgress.ts    # Fix Now controller (nested table detail + Escape listener) + per-attempt gate
+│   │   ├── InspectionSpinner.ts # One-line spinner while the dispatcher inspects the repo
+│   │   ├── ReviewerData.ts   # Condensed reviewer data for the pickers
+│   │   └── viewport.ts       # Terminal rows the docked table may budget against
+│   └── ui/
+│       ├── generated/        # Dialogs and table converted from the OpenTUI mockups (never edited by hand)
+│       ├── dialog-fit.ts     # Dialog width (104) and the 80×24 minimum the dialogs lay out for
+│       ├── dialog-models.ts  # Registry models and reviewers in the dialogs' shapes
+│       ├── picker-dialogs.ts # Reviewer source, expert and roster pickers, phase models, guidance
+│       ├── retry-prompts.ts  # Reviewer, adjudicator and verifier retry checkpoints
+│       ├── review-dialogs.ts # Findings review (and its sort order), Fix Now gate, report viewer
+│       ├── settings-dialog.ts # /persona-audit-settings
+│       └── purge-dialog.ts   # /persona-audit-purge
 ├── agents/                   # Bundled agent definitions — tools/model frontmatter + base prompts
 │   ├── persona-audit-reviewer.md
 │   ├── persona-audit-adjudicator.md

@@ -34,7 +34,7 @@ interface PhaseModel {
 }
 
 export interface FixNowDeps {
-  ctx: Pick<ExtensionCommandContext, "cwd" | "ui" | "modelRegistry">;
+  ctx: Pick<ExtensionCommandContext, "cwd" | "mode" | "ui" | "modelRegistry">;
   adjudicatorSystemPrompt: string;
   verifierSystemPrompt: string;
   /** Adjudicator tools resolved from its frontmatter; bash is kept out here, matching the batch implement phase. */
@@ -53,7 +53,7 @@ export interface FixNowDeps {
   promptDirtyChoice?: (files: string[]) => Promise<DirtyFileChoice>;
   /** Injectable for tests — defaults to openFixProgress. */
   openProgress?: (
-    ctx: Pick<ExtensionCommandContext, "ui">,
+    ctx: Pick<ExtensionCommandContext, "mode" | "ui">,
     finding: Finding,
     onCancelRequest: () => void,
   ) => FixProgressController;

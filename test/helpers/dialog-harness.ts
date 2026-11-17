@@ -30,7 +30,7 @@ export const KEY = {
   ctrlS: "\x13",
 } as const;
 
-/** A terminal with room for both generated dialogs. */
+/** A terminal with room for every dialog at its full 104-column size. */
 export const ROOMY_TERMINAL: TerminalSize = { columns: 120, rows: 40 };
 
 const turn = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
@@ -113,7 +113,7 @@ export interface DialogHost {
  * A command context whose `ui.custom` behaves like pi's `showExtensionCustom()`: the factory
  * gets a TUI with the given terminal, a component whose factory already finished the dialog is
  * dropped without being shown, and `done()` disposes the component that was shown.
- * Without `terminal` the TUI reports no size, as the older test doubles do.
+ * Without `terminal` the TUI reports no size; the dialog runtime then assumes 24 rows.
  */
 export function createDialogHost(options: {
   terminal?: TerminalSize;

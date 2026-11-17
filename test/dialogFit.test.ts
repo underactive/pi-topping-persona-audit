@@ -1,168 +1,203 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createElement } from "react";
-import { dialogFits, DIALOG_MAX_HEIGHT, FIX_GATE_DIALOG_SIZE, FINDINGS_REVIEW_DIALOG_SIZE, MIN_SIZE_PROBE_HOST_VERSION, PURGE_DIALOG_SIZE, readTerminalSize, REPORT_VIEWER_DIALOG_SIZE, RETRY_DIALOG_SIZE, SETTINGS_DIALOG_SIZE } from "../src/ui/dialog-fit.ts";
+import { createElement, type ReactNode } from "react";
+import { DIALOG_MAX_HEIGHT, DIALOG_WIDTH, FILL_ROOM, MIN_DIALOG_SIZE, type TerminalSize } from "../src/ui/dialog-fit.ts";
 import { PurgeMenu, SettingsMenu } from "../src/ui/generated/persona-audit/admin.ts";
-import { ARTIFACTS, DEFAULT_PHASE_MODELS, DEFAULT_SETTINGS as SAMPLE_SETTINGS, ROSTERS } from "../src/ui/generated/persona-audit/data.ts";
+import {
+  ARTIFACTS,
+  DEFAULT_PHASE_MODELS,
+  DEFAULT_SETTINGS as SAMPLE_SETTINGS,
+  FINDINGS,
+  FIX_DIFF,
+  FIX_FINDING,
+  FIX_VERDICT,
+  REPORT,
+  REPORT_PATH,
+  REVIEWER_FAILURES,
+  ROSTERS,
+  SESSION_MODEL,
+} from "../src/ui/generated/persona-audit/data.ts";
+import { FindingsReview } from "../src/ui/generated/persona-audit/findings-review.ts";
 import { ExpertPicker, RosterPicker } from "../src/ui/generated/persona-audit/pickers.ts";
-import { GuidanceSummary, PhaseModelPicker, ReviewerSourceMenu, RetryCheckpoint } from "../src/ui/generated/persona-audit/prompts.ts";
-import { FindingsReview as OpenTuiFindingsReview } from "../src/ui/generated/persona-audit/findings-review.ts";
-import { FixGate as OpenTuiFixGate, ReportViewer as OpenTuiReportViewer } from "../src/ui/generated/persona-audit/viewers.ts";
-import { FINDINGS, FIX_DIFF, FIX_FINDING, FIX_VERDICT, REPORT, REPORT_PATH, REVIEWER_FAILURES, SESSION_MODEL } from "../src/ui/generated/persona-audit/data.ts";
-import { PICKER_DIALOG_SIZE } from "../src/ui/picker-dialogs.ts";
+import { GuidanceSummary, PhaseModelPicker, RetryCheckpoint, ReviewerSourceMenu } from "../src/ui/generated/persona-audit/prompts.ts";
+import { FixGate, ReportViewer } from "../src/ui/generated/persona-audit/viewers.ts";
 import { dialogReviewers } from "../src/ui/dialog-models.ts";
-import { FRAME_ROWS } from "../src/ui/generated/ui.ts";
-import { createDialogHost } from "./helpers/dialog-harness.ts";
-import { largest, measureSteps } from "./helpers/measure.ts";
+import { largest, measureSteps, type Screen } from "./helpers/measure.ts";
 
 const DOWN = "\x1b[B";
+const RIGHT = "\x1b[C";
 const ENTER = "\r";
+const ESC = "\x1b";
+const TAB = "\t";
 const repeat = (key: string, times: number): string[] => Array.from({ length: times }, () => key);
 
-test("dialogFits needs every column and every row of the dialog", () => {
-  for (const dialog of [SETTINGS_DIALOG_SIZE, PURGE_DIALOG_SIZE, RETRY_DIALOG_SIZE, FINDINGS_REVIEW_DIALOG_SIZE, FIX_GATE_DIALOG_SIZE, REPORT_VIEWER_DIALOG_SIZE, ...Object.values(PICKER_DIALOG_SIZE)]) {
-    assert.equal(dialogFits(dialog, dialog), true, "a terminal exactly the dialog's size fits it");
-    assert.equal(dialogFits({ columns: dialog.columns + 60, rows: dialog.rows + 30 }, dialog), true);
-    assert.equal(dialogFits({ columns: dialog.columns - 1, rows: dialog.rows + 30 }, dialog), false, "one column short");
-    assert.equal(dialogFits({ columns: dialog.columns + 60, rows: dialog.rows - 1 }, dialog), false, "one row short");
-    assert.equal(dialogFits(undefined, dialog), false, "an unknown size counts as too small");
-  }
+/** A terminal with room to spare: every dialog takes its full size in it. */
+const ROOMY: TerminalSize = { columns: 160, rows: 80 };
+
+/**
+ * Every generated dialog, with a key script that walks it through each screen it can show, and
+ * a fragment of the key legend its last screen ends with. The legend is the dialog's bottom row,
+ * so finding it on a screen proves that screen was not cut off at the bottom.
+ */
+interface DialogScript {
+  name: string;
+  element: () => ReactNode;
+  steps: string[][];
+  /** Rows the dialog's tallest screen took at the full size, when pi still measured it against a threshold. */
+  fullRows: number;
+  legend: RegExp;
+}
+
+const many = Array.from({ length: 5 }, (_, k) => ARTIFACTS.map((artifact) => ({ ...artifact, id: `${artifact.id}-${k}` }))).flat();
+const longChat = Array.from({ length: 6 }, (_, k) => ({
+  role: k % 2 ? ("assistant" as const) : ("user" as const),
+  text: `Message ${k + 1}: keep the cookie scope unchanged, and explain why the flags matter for session fixation before you change anything else.`,
+}));
+
+const DIALOGS: DialogScript[] = [
+  {
+    name: "settings: menu, rosters, a roster's slots, the reviewer picker over a slot",
+    element: () => createElement(SettingsMenu, { width: DIALOG_WIDTH, initial: structuredClone(SAMPLE_SETTINGS), onDone: () => {} }),
+    steps: [[""], [...repeat(DOWN, 5), ENTER], [ENTER], [ENTER]],
+    fullRows: 33,
+    legend: /esc cancel/,
+  },
+  {
+    name: "settings: the dispatch model's two-pane picker",
+    element: () => createElement(SettingsMenu, { width: DIALOG_WIDTH, initial: structuredClone(SAMPLE_SETTINGS), onDone: () => {} }),
+    steps: [[""], [...repeat(DOWN, 6), ENTER]],
+    fullRows: 33,
+    legend: /esc back/,
+  },
+  {
+    name: "purge: a long list, a preview and the confirmation",
+    element: () => createElement(PurgeMenu, { width: DIALOG_WIDTH, artifacts: many, onDone: () => {} }),
+    steps: [[""], ["p"], [ESC], [TAB, ENTER]],
+    fullRows: Number.POSITIVE_INFINITY,
+    legend: /enter|esc/,
+  },
+  {
+    name: "reviewer source",
+    element: () => createElement(ReviewerSourceMenu, { width: DIALOG_WIDTH, rosterCount: 4, dispatcherLabel: "anthropic/claude-haiku-5-5 · off", onDone: () => {} }),
+    steps: [[""]],
+    fullRows: 15,
+    legend: /esc cancel audit/,
+  },
+  {
+    name: "expert picker, filling the room as it does in pi",
+    element: () => createElement(ExpertPicker, {
+      width: DIALOG_WIDTH, budget: FILL_ROOM, fileCount: 23, reviewers: dialogReviewers(),
+      initial: { reviewers: ["Principal Engineer", "Security Engineer"], passes: 1 }, onDone: () => {},
+    }),
+    steps: [[""], [" "], [DOWN], [" "], [RIGHT], [RIGHT], [RIGHT], [ENTER], [ENTER], ...Array.from("security", (key) => [key])],
+    fullRows: Number.POSITIVE_INFINITY,
+    legend: /esc back/,
+  },
+  {
+    name: "roster picker, filling the room as it does in pi",
+    element: () => createElement(RosterPicker, { width: DIALOG_WIDTH, budget: FILL_ROOM, fileCount: 23, rosters: ROSTERS, reviewers: dialogReviewers(), onDone: () => {} }),
+    steps: [[""], [DOWN], [ENTER], ...Array.from("backend", (key) => [key])],
+    fullRows: Number.POSITIVE_INFINITY,
+    legend: /esc back/,
+  },
+  {
+    name: "phase models and a phase's model picker",
+    element: () => createElement(PhaseModelPicker, { width: DIALOG_WIDTH, initial: DEFAULT_PHASE_MODELS, offerGuidance: true, onDone: () => {} }),
+    steps: [[""], [ENTER], [DOWN], [ENTER]],
+    fullRows: 34,
+    legend: /esc/,
+  },
+  {
+    name: "guidance summary and editor",
+    element: () => createElement(GuidanceSummary, {
+      width: DIALOG_WIDTH, initialDraft: "Focus on session and billing changes.\ndocs/screens/login.png\ndocs/missing.png", supportsImages: false, onDone: () => {},
+    }),
+    steps: [[""], [ENTER], ["x"], ["\x13"]],
+    fullRows: 34,
+    legend: /esc/,
+  },
+  {
+    name: "reviewer retry and its model picker",
+    element: () => createElement(RetryCheckpoint, { width: DIALOG_WIDTH, kind: "reviewer", current: SESSION_MODEL, failures: REVIEWER_FAILURES, onDone: () => {} }),
+    steps: [[""], [RIGHT], [DOWN], [DOWN], [ENTER]],
+    fullRows: 29,
+    legend: /esc back/,
+  },
+  {
+    name: "findings review, expanded",
+    element: () => createElement(FindingsReview, { width: DIALOG_WIDTH, findings: FINDINGS, onDone: () => {} }),
+    steps: [[""], [RIGHT], [DOWN], [TAB]],
+    fullRows: Number.POSITIVE_INFINITY,
+    legend: /esc cancel/,
+  },
+  {
+    name: "Fix Now gate with notes and a long chat",
+    element: () => createElement(FixGate, {
+      width: DIALOG_WIDTH, finding: FIX_FINDING, diff: FIX_DIFF, verdict: FIX_VERDICT,
+      warnings: ["Auto-commit is off for this fix.", "src/server/session.ts had uncommitted changes before the fix; they are kept and excluded from the commit."],
+      commitPlanned: false, attempt: 2, chat: longChat, onDone: () => {},
+    }),
+    steps: [[""], ["c"], [ESC], [TAB]],
+    fullRows: Number.POSITIVE_INFINITY,
+    legend: /discard/,
+  },
+  {
+    name: "report viewer",
+    element: () => createElement(ReportViewer, { width: DIALOG_WIDTH, title: "Audit Report", path: REPORT_PATH, markdown: REPORT, onDone: () => {} }),
+    steps: [[""], [DOWN]],
+    fullRows: Number.POSITIVE_INFINITY,
+    legend: /g\/G top\/bottom/,
+  },
+];
+
+/** The visible columns a dialog of `width` leaves: its panel keeps two blank columns on the right. */
+const visible = (width: number): number => width - 2;
+
+test("the dialogs ask pi for the whole height and lay out their own rows", () => {
+  assert.equal(DIALOG_MAX_HEIGHT, 1);
+  assert.deepEqual(MIN_DIALOG_SIZE, { columns: 80, rows: 24 });
 });
 
-test("the settings threshold holds its widest and tallest screen", async () => {
-  const settings = (): ReturnType<typeof createElement> => createElement(SettingsMenu, { width: SETTINGS_DIALOG_SIZE.columns, initial: structuredClone(SAMPLE_SETTINGS), onDone: () => {} });
-  const screens = await measureSteps(settings(), [
-    [""],
-    // The roster list, a roster's slots and the reviewer picker over a slot.
-    [...repeat(DOWN, 5), ENTER],
-    [ENTER],
-    [ENTER],
-  ]);
-  const screensOfPickers = await measureSteps(settings(), [
-    [...repeat(DOWN, 6), ENTER], // the dispatch model's two-pane picker
-  ]);
-  const classifier = await measureSteps(settings(), [[...repeat(DOWN, 8), ENTER]]);
-  const measured = largest([...screens, ...screensOfPickers, ...classifier]);
-  // The panel reserves two columns to the right of its contents.
-  assert.deepEqual(measured, { columns: SETTINGS_DIALOG_SIZE.columns - 2, rows: SETTINGS_DIALOG_SIZE.rows });
-  assert.equal(DIALOG_MAX_HEIGHT, 1, "the fit rule compares rows directly, which holds only while a dialog may use every row");
+for (const dialog of DIALOGS) {
+  test(`full size: ${dialog.name} keeps its ${DIALOG_WIDTH}-column layout where there is room`, async () => {
+    const screens = await measureSteps(dialog.element(), dialog.steps, ROOMY);
+    const size = largest(screens);
+    assert.equal(size.columns, visible(DIALOG_WIDTH));
+    if (Number.isFinite(dialog.fullRows)) assert.ok(size.rows <= dialog.fullRows, `${size.rows} rows, up from ${dialog.fullRows}`);
+  });
+
+  test(`80×24: ${dialog.name} fits every screen with its controls on screen`, async () => {
+    const screens: Screen[] = await measureSteps(dialog.element(), dialog.steps, MIN_DIALOG_SIZE);
+    screens.forEach((screen, index) => {
+      assert.ok(screen.size.columns <= visible(MIN_DIALOG_SIZE.columns), `screen ${index} reaches column ${screen.size.columns}: it is wider than the room\n${screen.text}`);
+      assert.ok(screen.size.rows <= MIN_DIALOG_SIZE.rows, `screen ${index} has ${screen.size.rows} rows`);
+    });
+    const last = screens.at(-1)!;
+    assert.match(last.text, dialog.legend, `the key legend is cut off the last screen\n${last.text}`);
+    for (const [index, screen] of screens.entries()) {
+      assert.match(screen.text, /─{20,}/, `screen ${index} lost its footer rules\n${screen.text}`);
+    }
+  });
+}
+
+test("80×24: the Fix Now gate gives up its rationale, gaps and old chat before the diff", async () => {
+  const [screen] = await measureSteps(createElement(FixGate, {
+    width: DIALOG_WIDTH, finding: { ...FIX_FINDING, rationale: FIX_FINDING.rationale.repeat(4) }, diff: FIX_DIFF, verdict: FIX_VERDICT,
+    warnings: ["Auto-commit is off for this fix."], commitPlanned: true, attempt: 1, chat: longChat, onDone: () => {},
+  }), [[""]], MIN_DIALOG_SIZE);
+  const text = screen!.text;
+  assert.match(text, /^.*…\s*$/m, "the rationale is cut to a row ending in …");
+  assert.match(text, /Message 6/, "the newest chat line stays");
+  assert.doesNotMatch(text, /Message 1:/, "the oldest chat lines give way");
+  const diffRows = text.split("\n").filter((line) => /^\s*▌\s+(diff --git|index |--- |\+\+\+ |@@|[+-])/.test(line));
+  assert.ok(diffRows.length >= 3, `the diff keeps three rows (${diffRows.length})\n${text}`);
+  assert.match(text, /esc esc discard/, "the legend is on screen");
 });
 
-test("each pre-run dialog threshold matches the widest and tallest screen it can draw", async () => {
-  const { source, experts, rosters, phases, guidance } = PICKER_DIALOG_SIZE;
-  const sourceScreen = await measureSteps(createElement(ReviewerSourceMenu, {
-    width: source.columns, rosterCount: 4, dispatcherLabel: "anthropic/claude-haiku-5-5 · off", onDone: () => {},
-  }), [[""]]);
-  const expertSteps = [
-    [""], [" "], [DOWN], [" "], ["\x1b[C"], ["\x1b[C"], ["\x1b[C"], [ENTER], [ENTER],
-    ...Array.from("security", (key) => [key]),
-  ];
-  const expertScreens = await measureSteps(createElement(ExpertPicker, {
-    width: experts.columns, budget: Math.max(1, experts.rows - FRAME_ROWS - 14), fileCount: 23,
-    initial: { reviewers: ["Principal Engineer", "Security Engineer"], passes: 1 }, reviewers: dialogReviewers(), onDone: () => {},
-  }), expertSteps);
-  const rosterScreens = await measureSteps(createElement(RosterPicker, {
-    width: rosters.columns, budget: Math.max(1, rosters.rows - FRAME_ROWS - 14), fileCount: 23,
-    rosters: ROSTERS, reviewers: dialogReviewers(), onDone: () => {},
-  }), [[""], [DOWN], [ENTER], ...Array.from("backend", (key) => [key])]);
-  const phaseScreens = await measureSteps(createElement(PhaseModelPicker, {
-    width: phases.columns, initial: DEFAULT_PHASE_MODELS, offerGuidance: true, onDone: () => {},
-  }), [[""], [ENTER], [DOWN], [ENTER]]);
-  const guidanceScreens = await measureSteps(createElement(GuidanceSummary, {
-    width: guidance.columns, initialDraft: "Focus on session and billing changes.\ndocs/screens/login.png\ndocs/missing.png", supportsImages: false, onDone: () => {},
-  }), [[""], [ENTER], ["x"], ["\x13"]]);
-  const cases = [
-    ["source", source, largest(sourceScreen)],
-    ["experts", experts, largest(expertScreens)],
-    ["rosters", rosters, largest(rosterScreens)],
-    ["phases", phases, largest(phaseScreens)],
-    ["guidance", guidance, largest(guidanceScreens)],
-  ] as const;
-  for (const [name, threshold, measured] of cases) {
-    assert.deepEqual(measured.columns, threshold.columns - 2, `${name} columns`);
-    assert.ok(measured.rows <= threshold.rows, `${name}: ${measured.rows} rows do not fit ${threshold.rows}`);
-  }
-  assert.match(expertScreens.at(-1)!.text, /esc back/, "expert picker keeps the key hints");
-  assert.match(rosterScreens.at(-1)!.text, /esc back/, "roster picker keeps the key hints");
-  assert.match(phaseScreens.at(-1)!.text, /esc models/, "phase model sub-picker keeps the key hints");
-  assert.ok(guidanceScreens[1]!.text.includes("esc/ctrl+s"), "guidance editor keeps its key hints");
+test("below 80×24 a dialog keeps its 80×24 layout, and pi cuts what does not fit", async () => {
+  const [small] = await measureSteps(createElement(ReviewerSourceMenu, {
+    width: DIALOG_WIDTH, rosterCount: 1, dispatcherLabel: "session model", onDone: () => {},
+  }), [[""]], { columns: 60, rows: 20 });
+  // Laid out for 80 columns, it reaches the edge of a 60-column room instead of keeping two blank columns.
+  assert.equal(small!.size.columns, 60);
 });
-
-test("the purge threshold keeps its buttons and key hints on screen however long the list", async () => {
-  const many = Array.from({ length: 5 }, (_, k) => ARTIFACTS.map((artifact) => ({ ...artifact, id: `${artifact.id}-${k}` }))).flat();
-  const { columns, rows } = PURGE_DIALOG_SIZE;
-  const purge = (): ReturnType<typeof createElement> => createElement(PurgeMenu, { width: columns, height: Math.max(rows - 6, 20), artifacts: many, onDone: () => {} });
-  // The list, a preview, and the confirmation, each in a terminal of exactly the threshold's rows.
-  const screens = await measureSteps(purge(), [[""], ["p"], ["\x1b"], ["\t", ENTER]], { columns, rows });
-  for (const screen of screens) {
-    assert.ok(screen.size.rows <= rows, `a screen of ${screen.size.rows} rows does not fit ${rows}`);
-    assert.ok(screen.size.columns <= columns - 2, `a screen of ${screen.size.columns} columns does not fit ${columns}`);
-  }
-  assert.match(screens[0]!.text, /esc cancel/, "the list keeps its key hints");
-  assert.match(screens[0]!.text, /Purge tagged/, "the list keeps its buttons");
-});
-
-test("readTerminalSize reads the TUI's terminal and shows nothing", async () => {
-  const host = createDialogHost({ terminal: { columns: 132, rows: 43 } });
-  assert.deepEqual(await readTerminalSize(host.ctx, MIN_SIZE_PROBE_HOST_VERSION), { columns: 132, rows: 43 });
-  assert.equal(host.shown.length, 0, "the probe dialog is dropped, not shown");
-});
-
-test("readTerminalSize does not probe a pi older than 1.3.0, and reports an unreadable terminal as unknown", async () => {
-  const old = createDialogHost({ terminal: { columns: 132, rows: 43 } });
-  assert.equal(await readTerminalSize(old.ctx, "1.2.0"), undefined);
-  assert.equal(old.customOptions.length, 0);
-  assert.equal(await readTerminalSize(createDialogHost().ctx, MIN_SIZE_PROBE_HOST_VERSION), undefined, "a TUI with no terminal size");
-  assert.equal(await readTerminalSize(createDialogHost({ failCustom: new Error("no overlay") }).ctx, MIN_SIZE_PROBE_HOST_VERSION), undefined);
-});
-
-test("review dialog thresholds cover their tallest nested screens and retain controls", async () => {
-  const reviewerRetry = await measureSteps(createElement(RetryCheckpoint, {
-    width: RETRY_DIALOG_SIZE.columns,
-    kind: "reviewer",
-    current: SESSION_MODEL,
-    failures: REVIEWER_FAILURES,
-    onDone: () => {},
-  }), [[""], ["\u001b[C"], [DOWN], [DOWN], [ENTER]], RETRY_DIALOG_SIZE);
-  const findings = await measureSteps(createElement(OpenTuiFindingsReview, {
-    width: FINDINGS_REVIEW_DIALOG_SIZE.columns,
-    height: FINDINGS_REVIEW_DIALOG_SIZE.rows,
-    findings: FINDINGS,
-    onDone: () => {},
-  }), [[""], ["\u001b[C"], [DOWN]], FINDINGS_REVIEW_DIALOG_SIZE);
-  const fixGate = await measureSteps(createElement(OpenTuiFixGate, {
-    width: FIX_GATE_DIALOG_SIZE.columns,
-    height: FIX_GATE_DIALOG_SIZE.rows,
-    finding: FIX_FINDING,
-    diff: FIX_DIFF,
-    verdict: FIX_VERDICT,
-    warnings: ["Auto-commit is off for this fix."],
-    commitPlanned: false,
-    attempt: 2,
-    onDone: () => {},
-  }), [[""]], FIX_GATE_DIALOG_SIZE);
-  const report = await measureSteps(createElement(OpenTuiReportViewer, {
-    width: REPORT_VIEWER_DIALOG_SIZE.columns,
-    height: REPORT_VIEWER_DIALOG_SIZE.rows,
-    title: "Audit Report",
-    path: REPORT_PATH,
-    markdown: REPORT,
-    onDone: () => {},
-  }), [[""]], REPORT_VIEWER_DIALOG_SIZE);
-
-  const measured = [
-    ["retry model picker", RETRY_DIALOG_SIZE, largest(reviewerRetry)],
-    ["findings review", FINDINGS_REVIEW_DIALOG_SIZE, largest(findings)],
-    ["Fix Now gate", FIX_GATE_DIALOG_SIZE, largest(fixGate)],
-    ["report viewer", REPORT_VIEWER_DIALOG_SIZE, largest(report)],
-  ] as const;
-  for (const [name, threshold, actual] of measured) {
-    assert.equal(actual.columns, threshold.columns - 2, `${name} content width`);
-    assert.ok(actual.rows <= threshold.rows, `${name}: ${actual.rows} rows do not fit ${threshold.rows}`);
-  }
-  assert.match(reviewerRetry.at(-1)!.text, /esc back/, "retry model picker keeps its back hint");
-  assert.match(findings[0]!.text, /enter.*finish/i, "findings review keeps the finish hint");
-  assert.match(fixGate[0]!.text, /Accept/, "Fix Now gate keeps its accept action");
-  assert.match(report[0]!.text, /g\/G top\/bottom/, "report viewer keeps its navigation hint");
-});
-

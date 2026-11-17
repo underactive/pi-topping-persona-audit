@@ -22,6 +22,8 @@ export interface AdditionalContext {
 export interface ParsedAdditionalContext {
   context: AdditionalContext;
   warnings: string[];
+  /** The draft's image lines that were attached, as written (unquoted), in order. */
+  attached: string[];
 }
 
 function unquote(value: string): string {
@@ -38,6 +40,7 @@ export async function parseAdditionalContext(draft: string, cwd: string): Promis
   const textLines: string[] = [];
   const images: ImageContent[] = [];
   const warnings: string[] = [];
+  const attached: string[] = [];
 
   for (const rawLine of draft.split(/\r?\n/)) {
     const trimmed = rawLine.trim();
@@ -82,12 +85,14 @@ export async function parseAdditionalContext(draft: string, cwd: string): Promis
 
     const data = await readFile(absolutePath);
     images.push({ type: "image", data: data.toString("base64"), mimeType });
+    attached.push(candidate);
     textLines.push(`[Attached image: ${path.basename(candidate)}]`);
   }
 
   return {
     context: { text: textLines.join("\n").trim(), images },
     warnings,
+    attached,
   };
 }
 

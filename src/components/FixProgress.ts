@@ -2,22 +2,18 @@
  * Fix Now surfaces, split by lifecycle responsibility. Working and settling
  * status lives in the audit table as nested detail under the `fix now · …`
  * row (via the sink below) — it is not a prompt, so Pi must not bracket it as
- * a user wait. Each accept/retry/discard decision opens one fresh bottom-anchored
- * overlay (FixGate) through ctx.ui.custom with overlay: true — the only
- * lifecycle prompt here. The gate calls done the moment the user decides,
- * ending the prompt span before retry/discard cleanup, commit summarization,
- * or commit work begins.
+ * a user wait. Each accept/retry/discard decision opens one fresh overlay, the
+ * generated `FixGate` dialog (`../ui/review-dialogs.ts`), through ctx.ui.custom
+ * — the only lifecycle prompt here. The gate calls done the moment the user
+ * decides, ending the prompt span before retry/discard cleanup, commit
+ * summarization, or commit work begins.
  */
 
-import type { Component, Focusable, KeybindingsManager, OverlayOptions, TUI } from "@earendil-works/pi-tui";
-import { Input, isKeyRelease, Key, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
-import type { ExtensionCommandContext, TerminalInputHandler, Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
+import { isKeyRelease, Key, matchesKey } from "@earendil-works/pi-tui";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AuditProgressWidget } from "./AuditProgress.ts";
 import type { Finding, HeadlessProgress } from "../types.ts";
-import { dialogFits, FIX_GATE_DIALOG_SIZE, readTerminalSize } from "../ui/dialog-fit.ts";
 import { openFixGateDialog } from "../ui/review-dialogs.ts";
-import { sanitizeDiffLine, sanitizeTerminalText } from "./AuditProgress.ts";
-import { overlayViewportRows, renderFramedBottom, renderFramedRow, renderFramedTop, showOverlayPrompt, type ViewportHost, wrapText } from "./menuChrome.ts";
 
 export interface FixChatMessage {
   role: "user" | "assistant";
@@ -25,17 +21,6 @@ export interface FixChatMessage {
 }
 
 export type FixGateDecision = "accept" | "retry" | "discard" | { type: "chat"; message: string };
-
-/** The slice of pi's `TUI` the surfaces need. Structural so tests can supply a stub. */
-export interface FixProgressHost extends ViewportHost {
-  requestRender(force?: boolean): void;
-}
-
-/** The slice of pi's `Theme` the surfaces need. Structural so tests can supply a stub. */
-export interface FixProgressTheme {
-  fg(color: ThemeColor, text: string): string;
-  bold(text: string): string;
-}
 
 /** What the fix flow feeds into the gate view. */
 export interface FixGateInput {
@@ -52,299 +37,6 @@ export interface FixGateInput {
   chatHistory?: FixChatMessage[];
 }
 
-// ── Shared gate helpers ────────────────────────────────────────────────────
-// The gate overlay's frame, header, and diff coloring, factored so the gate
-// body and its tests share one implementation.
-
-/** "file:line · category/severity" label shown under the frame title. */
-function findingLabel(finding: Finding): string {
-  const loc = finding.line > 0 ? `${finding.file}:${finding.line}` : finding.file;
-  return `${loc} · ${finding.category}/${finding.severity}`;
-}
-
-/** Diff-line coloring: headers dim, hunks accent, additions green, removals red. */
-function colorDiffLine(theme: FixProgressTheme, line: string): string {
-  if (line.startsWith("+++") || line.startsWith("---") || line.startsWith("diff --git") || line.startsWith("index ")) {
-    return theme.fg("dim", line);
-  }
-  if (line.startsWith("@@")) return theme.fg("accent", line);
-  if (line.startsWith("+")) return theme.fg("success", line);
-  if (line.startsWith("-")) return theme.fg("error", line);
-  return theme.fg("muted", line);
-}
-
-/** Content viewport: the shared overlay budget, which the gate splits between diff and chat. */
-function viewportHeight(tui: FixProgressHost): number {
-  return overlayViewportRows(tui, 1);
-}
-
-/** Frame title, finding label, and rationale — identical on both surfaces. */
-function renderFixHeader(theme: FixProgressTheme, finding: Finding, inner: number, attempt: number): string[] {
-  const attemptLabel = attempt > 1 ? ` · attempt ${attempt}` : "";
-  const title = `Fix Now — ${truncateToWidth(sanitizeTerminalText(finding.file), Math.max(4, inner - 24))}${attemptLabel}`;
-  return [
-    renderFramedTop(theme, inner, title),
-    " " + theme.fg("accent", truncateToWidth(sanitizeTerminalText(findingLabel(finding)), Math.max(2, inner - 2))),
-    ...wrapText(sanitizeTerminalText(finding.rationale), Math.max(2, inner - 2)).map((l) => " " + theme.fg("muted", l)),
-    "",
-  ];
-}
-
-/** Wrap header + body in the frame's side borders; the body's last row is the bottom border. */
-function assembleFixFrame(theme: FixProgressTheme, inner: number, header: string[], body: string[]): string[] {
-  return [
-    header[0]!,
-    ...[...header.slice(1), ...body.slice(0, -1)].map((row) => renderFramedRow(theme, inner, row)),
-    body[body.length - 1]!,
-  ];
-}
-
-// ── FixGate: one decision overlay per gate ─────────────────────────────────
-
-/**
- * The accept/retry/discard decision view: verdict, warnings, a scrollable
- * diff, and the decision keys. A fresh instance is constructed for every
- * gate — ctx.ui.custom disposes the component when the overlay closes, so a
- * retry must never reuse one. A/R/D and the second Escape call done
- * immediately, ending the prompt lifecycle span before the flow's follow-up
- * work begins.
- */
-export class FixGate implements Component, Focusable {
-  private readonly theme: FixProgressTheme;
-  private readonly tui: FixProgressHost;
-  private readonly finding: Finding;
-  private readonly input: FixGateInput;
-  private readonly done: (decision: FixGateDecision) => void;
-  private readonly inputWidget: Input;
-
-  private readonly diffLines: string[];
-  private scrollOffset = 0;
-  private awaitingDiscardConfirm = false;
-  private isChatMode = false;
-  private _focused = false;
-  private settled = false;
-
-  private cachedWidth: number | undefined;
-  private cachedViewport: number | undefined;
-  private cachedLines: string[] | undefined;
-
-  constructor(
-    finding: Finding,
-    input: FixGateInput,
-    theme: FixProgressTheme,
-    tui: FixProgressHost,
-    done: (decision: FixGateDecision) => void,
-  ) {
-    this.finding = finding;
-    this.input = input;
-    this.theme = theme;
-    this.tui = tui;
-    this.done = done;
-    this.diffLines = input.diff.replace(/\r/g, "").split("\n");
-    this.inputWidget = new Input();
-  }
-
-  get focused(): boolean {
-    return this._focused;
-  }
-
-  set focused(value: boolean) {
-    this._focused = value;
-    this.inputWidget.focused = value && this.isChatMode;
-  }
-
-  isInChatMode(): boolean {
-    return this.isChatMode;
-  }
-
-  private decide(decision: FixGateDecision): void {
-    if (this.settled) return;
-    this.settled = true;
-    this.done(decision);
-  }
-
-  handleInput(data: string): void {
-    if (this.settled) return;
-
-    if (this.isChatMode) {
-      if (matchesKey(data, Key.escape)) {
-        this.isChatMode = false;
-        this.inputWidget.focused = false;
-        this.inputWidget.setValue("");
-        this.invalidate();
-        this.tui.requestRender();
-        return;
-      }
-      if (matchesKey(data, Key.enter)) {
-        const text = this.inputWidget.getValue().trim();
-        if (!text) return;
-        this.decide({ type: "chat", message: text });
-        return;
-      }
-      this.inputWidget.handleInput(data);
-      this.invalidate();
-      this.tui.requestRender();
-      return;
-    }
-
-    if (matchesKey(data, Key.escape)) {
-      if (!this.awaitingDiscardConfirm) {
-        this.awaitingDiscardConfirm = true;
-        this.invalidate();
-        this.tui.requestRender();
-        return;
-      }
-      this.decide("discard");
-      return;
-    }
-    // Any other input disarms a pending discard confirmation.
-    if (this.awaitingDiscardConfirm) {
-      this.awaitingDiscardConfirm = false;
-      this.invalidate();
-    }
-
-    if (data === "c" || data === "C") {
-      this.isChatMode = true;
-      this.inputWidget.focused = true;
-      this.invalidate();
-      this.tui.requestRender();
-      return;
-    }
-    if (data === "a" || data === "A") {
-      this.decide("accept");
-      return;
-    }
-    if (data === "r" || data === "R") {
-      this.decide("retry");
-      return;
-    }
-    if (data === "d" || data === "D") {
-      this.decide("discard");
-      return;
-    }
-
-    const step = matchesKey(data, Key.up) ? -1
-      : matchesKey(data, Key.down) ? 1
-        : matchesKey(data, Key.pageUp) ? -10
-          : matchesKey(data, Key.pageDown) ? 10
-            : 0;
-    if (step !== 0) {
-      this.scrollOffset = Math.max(0, this.scrollOffset + step);
-      this.invalidate();
-      this.tui.requestRender();
-    }
-  }
-
-  invalidate(): void {
-    this.cachedWidth = undefined;
-    this.cachedViewport = undefined;
-    this.cachedLines = undefined;
-  }
-
-  render(width: number): string[] {
-    const viewport = viewportHeight(this.tui);
-    // Pi does not invalidate on resize, so a height change must miss the cache too.
-    if (this.cachedLines && this.cachedWidth === width && this.cachedViewport === viewport) return this.cachedLines;
-    const inner = Math.max(0, width - 2);
-    const header = renderFixHeader(this.theme, this.finding, inner, this.input.attempt);
-    const body = this.renderGateBody(inner, viewport, header.length);
-    const lines = assembleFixFrame(this.theme, inner, header, body);
-    this.cachedWidth = width;
-    this.cachedViewport = viewport;
-    this.cachedLines = lines;
-    return lines;
-  }
-
-  /** Gate body: verdict, warnings, chat history, input prompt, scrollable diff, decision keys. */
-  private renderGateBody(inner: number, viewport: number, headerLines: number): string[] {
-    const t = this.theme;
-    const input = this.input;
-    const pre: string[] = [];
-    if (input.verdictNote) {
-      pre.push(...wrapText(`✓ ${sanitizeTerminalText(input.verdictNote)}`, Math.max(2, inner - 2)).map((l) => " " + t.fg("success", l)));
-    }
-    for (const warning of input.warnings ?? []) {
-      pre.push(...wrapText(`⚠ ${sanitizeTerminalText(warning)}`, Math.max(2, inner - 2)).map((l) => " " + t.fg("warning", l)));
-    }
-    if (pre.length > 0) pre.push("");
-
-    const chatLines: string[] = [];
-    if (input.chatHistory && input.chatHistory.length > 0) {
-      for (const msg of input.chatHistory) {
-        const isUser = msg.role === "user";
-        const prefix = isUser ? t.bold(t.fg("accent", "You: ")) : t.bold(t.fg("muted", "Agent: "));
-        const prefixLen = isUser ? 5 : 7;
-        const textLines = wrapText(sanitizeTerminalText(msg.text), Math.max(2, inner - prefixLen - 2));
-        if (textLines.length === 0) continue;
-        chatLines.push(" " + prefix + (isUser ? t.fg("accent", textLines[0]!) : textLines[0]!));
-        const indent = " ".repeat(prefixLen + 1);
-        for (let i = 1; i < textLines.length; i++) {
-          chatLines.push(indent + (isUser ? t.fg("accent", textLines[i]!) : textLines[i]!));
-        }
-      }
-      chatLines.push("");
-    }
-
-    const chatInputLines: string[] = [];
-    if (this.isChatMode) {
-      for (const line of this.inputWidget.render(Math.max(2, inner - 2))) {
-        chatInputLines.push(" " + line);
-      }
-      chatInputLines.push("");
-    }
-
-    const acceptLabel = input.commitPlanned === false ? "A accept (no commit)" : "A accept & commit";
-    const keybinds = this.isChatMode
-      ? "Enter send · Esc cancel chat"
-      : `${acceptLabel} · R retry · D discard · C chat / modify · ↑↓/PgUp/PgDn scroll`;
-    const footer: string[] = [""];
-    if (this.awaitingDiscardConfirm) {
-      footer.push(" " + t.fg("warning", "Press Esc again to discard this fix"));
-    }
-    footer.push(...wrapText(keybinds, Math.max(2, inner - 2)).map((l) => " " + t.fg("dim", l)));
-
-    const maxChatBudget = Math.max(3, viewport - headerLines - pre.length - chatInputLines.length - footer.length - 5);
-    let boundedChatLines = chatLines;
-    if (chatLines.length > maxChatBudget) {
-      const omitted = chatLines.length - maxChatBudget;
-      boundedChatLines = [
-        " " + t.fg("dim", `↑ ${omitted} earlier chat lines…`),
-        ...chatLines.slice(-maxChatBudget + 1),
-      ];
-    }
-
-    const diffBudget = Math.max(
-      1,
-      viewport - headerLines - pre.length - boundedChatLines.length - chatInputLines.length - footer.length - 2,
-    );
-    const maxOffset = Math.max(0, this.diffLines.length - diffBudget);
-    this.scrollOffset = Math.min(this.scrollOffset, maxOffset);
-    const windowed = this.diffLines
-      .slice(this.scrollOffset, this.scrollOffset + diffBudget)
-      .map((line) => " " + colorDiffLine(t, truncateToWidth(sanitizeDiffLine(line), Math.max(2, inner - 2), "…")));
-    if (this.diffLines.length === 0 || (this.diffLines.length === 1 && this.diffLines[0] === "")) {
-      windowed.length = 0;
-      windowed.push(" " + t.fg("dim", "No changes on disk."));
-    }
-
-    const below = this.diffLines.length - this.scrollOffset - diffBudget;
-    const scrollHint = [
-      this.scrollOffset > 0 ? `↑ ${this.scrollOffset} more` : "",
-      below > 0 ? `↓ ${below} more` : "",
-    ].filter(Boolean).join(" · ");
-    if (scrollHint) windowed.push(" " + t.fg("dim", scrollHint));
-
-    return [
-      ...pre,
-      ...boundedChatLines,
-      ...chatInputLines,
-      ...windowed,
-      ...footer,
-      renderFramedBottom(t, inner),
-    ];
-  }
-}
-
 // ── Controller ─────────────────────────────────────────────────────────────
 
 /** Handle the fix flow drives for the life of one fix episode. */
@@ -359,16 +51,10 @@ export interface FixProgressController {
 /**
  * The slice of pi's extension `ui` openFixProgress needs: one raw input
  * listener for the double-Escape cancel gesture and focused custom overlays
- * for the decision gates. Structural so tests can supply a stub.
+ * for the decision gates. The context carrying it says which mode pi runs in,
+ * since the gate needs TUI mode.
  */
-export interface FixProgressUi {
-  onTerminalInput(handler: TerminalInputHandler): () => void;
-  notify?(message: string, type?: "info" | "warning" | "error"): void;
-  custom<T>(
-    factory: (tui: TUI, theme: Theme, keybindings: KeybindingsManager, done: (result: T) => void) => Component,
-    options?: { overlay?: boolean; overlayOptions?: OverlayOptions },
-  ): Promise<T>;
-}
+export type FixProgressUi = Pick<ExtensionContext["ui"], "onTerminalInput" | "custom"> & Partial<Pick<ExtensionContext["ui"], "notify">>;
 
 /** Where working/settling status goes: nested detail on the audit table's fix-now row. */
 export interface FixProgressSink {
@@ -386,7 +72,7 @@ export interface FixProgressSink {
  * unfocused, so it keeps its own release guard.
  */
 export function openFixProgress(
-  ctx: ExtensionCommandContext | { ui: FixProgressUi },
+  ctx: { mode: ExtensionContext["mode"]; ui: FixProgressUi },
   finding: Finding,
   onCancelRequest: () => void,
   sink?: FixProgressSink,
@@ -452,28 +138,15 @@ export function openFixProgress(
     gate: async (input) => {
       if (closed) return "discard";
       gateActive = true;
-      const extensionContext = "modelRegistry" in ctx ? ctx : undefined;
-      const terminal = extensionContext?.mode === "tui" ? await readTerminalSize(extensionContext) : undefined;
-      const legacyGate = (): Promise<FixGateDecision> => showOverlayPrompt<FixGateDecision>(ctx, (tui, theme, done) => {
-        settleGate = done;
-        return new FixGate(finding, input, theme, tui, done);
-      });
-      let shown: Promise<FixGateDecision>;
-      if (closed) {
-        shown = Promise.resolve("discard");
-      } else if (extensionContext?.mode === "tui" && terminal && dialogFits(terminal, FIX_GATE_DIALOG_SIZE)) {
-        const generated = await openFixGateDialog(
-          { mode: extensionContext.mode, ui: extensionContext.ui },
-          finding,
-          input,
-          terminal.rows,
-          (settle) => { settleGate = settle; },
-          (error) => ctx.ui.notify?.(`Persona-audit Fix Now gate dialog failed: ${error instanceof Error ? error.message : String(error)}`, "error"),
-        );
-        shown = generated === undefined ? legacyGate() : Promise.resolve(generated);
-      } else {
-        shown = legacyGate();
-      }
+      // Outside TUI mode the dialog resolves with its fallback at once, and a gate that fails to
+      // open (it has said why) settles the same way: an unreviewed fix is never kept.
+      const shown = openFixGateDialog(
+        { mode: ctx.mode, ui: ctx.ui },
+        finding,
+        input,
+        (settle) => { settleGate = settle; },
+        (error) => ctx.ui.notify?.(`Persona-audit Fix Now gate dialog failed: ${error instanceof Error ? error.message : String(error)}`, "error"),
+      ).then((decision) => decision ?? "discard");
       return shown
         .then((decision) => {
           if (!closed) {

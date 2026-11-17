@@ -13,7 +13,10 @@ import {
   MIN_VERIFY_ROUNDS,
   parsePersonaAuditSettings,
   resolveMeterColor,
+  seedPhaseSelections,
+  type ModelRef,
   type PersonaAuditConfig,
+  type PhaseModelSelection,
 } from "../src/modelConfig.ts";
 
 test("parsePersonaAuditSettings round-trips a well-formed settings file", () => {
@@ -227,4 +230,63 @@ test("a decision block keeps a usable pin and rejects a malformed one", () => {
   assert.equal(stored({ enabled: true, useForTriage: true })?.useForTriage, true);
   assert.equal(stored({ enabled: true, useForDispatcher: false })?.useForDispatcher, false);
   assert.equal(stored({ enabled: true, circuitBreakerEnabled: false })?.circuitBreakerEnabled, false);
+});
+
+test("seedPhaseSelections replaces a retired saved model and recomputes thinking", () => {
+  const fallbackRef: ModelRef = { provider: "session", id: "current" };
+  const seeded = seedPhaseSelections(
+    { review: { ref: { provider: "gone", id: "retired" }, thinking: "max" } },
+    undefined,
+    [fallbackRef],
+    fallbackRef,
+    () => "low",
+  );
+
+  assert.deepEqual(seeded.selections.review, { ref: fallbackRef, thinking: "low" });
+  assert.deepEqual(seeded.dropped, ["gone/retired"]);
+});
+
+test("seedPhaseSelections preserves live saved choices and gives initial choices precedence", () => {
+  const fallbackRef: ModelRef = { provider: "session", id: "current" };
+  const live = { ref: { provider: "saved", id: "live" }, thinking: "high" } as const;
+  const unsaved = { ref: { provider: "unsaved", id: "picked" }, thinking: "xhigh" } as const;
+  const initial: PhaseModelSelection = {
+    review: unsaved,
+    triage: unsaved,
+    implement: unsaved,
+    verify: unsaved,
+  };
+
+  const savedOnly = seedPhaseSelections(
+    { review: live },
+    undefined,
+    [fallbackRef, live.ref],
+    fallbackRef,
+    () => "low",
+  );
+  assert.deepEqual(savedOnly.selections.review, live);
+
+  const initialWins = seedPhaseSelections(
+    { review: live },
+    initial,
+    [fallbackRef, live.ref],
+    fallbackRef,
+    () => "low",
+  );
+  assert.deepEqual(initialWins.selections.review, unsaved);
+  assert.deepEqual(initialWins.dropped, [], "initial choices are not revalidated against the catalogue");
+});
+
+test("seedPhaseSelections reports each retired saved model once", () => {
+  const fallbackRef: ModelRef = { provider: "session", id: "current" };
+  const retired = { ref: { provider: "gone", id: "retired" }, thinking: "medium" } as const;
+  const seeded = seedPhaseSelections(
+    { review: retired, triage: retired },
+    undefined,
+    [fallbackRef],
+    fallbackRef,
+    () => "off",
+  );
+
+  assert.deepEqual(seeded.dropped, ["gone/retired"]);
 });

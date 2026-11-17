@@ -6,19 +6,16 @@ import {
   AUDIT_PROGRESS_WIDGET_KEY,
   AuditProgressTable,
   AuditProgressWidget,
-  contextCell,
   formatElapsed,
   formatTokens,
   renderAuditSnapshot,
-  tableColumns,
   totalCost,
   type AuditProgressContext,
   type AuditProgressSnapshot,
   type ProgressHost,
   type ProgressTheme,
 } from "../src/components/AuditProgress.ts";
-import { ACTIVITY_METER_WIDTH } from "@underactive/pi-topping-primitives/activity";
-import { FULLSCREEN_WIDGET_RESERVE_ROWS } from "../src/components/menuChrome.ts";
+import { FULLSCREEN_WIDGET_RESERVE_ROWS } from "../src/components/viewport.ts";
 import type { Finding, HeadlessProgress } from "../src/types.ts";
 
 const strip = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
@@ -45,7 +42,10 @@ after(() => {
 });
 
 /** Fake extension context mirroring pi's setWidget replace/dispose semantics. */
-function fakeCtx(terminalRows = 40, theme: ProgressTheme = { fg: (_color, text) => text, bold: (text) => text }, mode?: TuiMode) {
+/** The two members the OpenTUI runtime resolves its palette from; every token paints as the terminal default. */
+const PLAIN_THEME: ProgressTheme = { colors: {}, getColorMode: () => "truecolor" };
+
+function fakeCtx(terminalRows = 40, theme: ProgressTheme = PLAIN_THEME, mode?: TuiMode) {
   const state: { table: AuditProgressTable | undefined; mounts: number; disposed: number } = {
     table: undefined,
     mounts: 0,
@@ -82,6 +82,11 @@ function fakeCtx(terminalRows = 40, theme: ProgressTheme = { fg: (_color, text) 
 function lines(table: AuditProgressTable | undefined, width = 120): string[] {
   assert.ok(table, "expected a mounted table");
   return table.render(width).map(strip);
+}
+
+/** The table's rows without the dialog rail down their left edge. */
+function content(rendered: string[]): string[] {
+  return rendered.map((line) => line.replace(/^▌ ?/, ""));
 }
 
 // ── mounting & lifecycle ───────────────────────────────────────────────────
@@ -184,7 +189,7 @@ test("settleOpenRows only touches rows that never finished", () => {
 
 // ── phase grouping ─────────────────────────────────────────────────────────
 
-test("phase groups keep their data flags and render dim headings only for non-empty groups", () => {
+test("phase groups keep their data flags and render headings only for non-empty groups", () => {
   const { ctx, state } = fakeCtx();
   const widget = new AuditProgressWidget(ctx);
   widget.addRow("Review", "a", "Security Engineer", { state: "done" });
@@ -202,17 +207,16 @@ test("phase groups keep their data flags and render dim headings only for non-em
     ],
   );
 
-  const rendered = lines(state.table);
-  const body = rendered.join("\n");
-  assert.equal(body.match(/^  ── Review ─+  $/gm)?.length, 1, "the Review heading has a horizontal rule");
-  assert.equal(body.match(/^  ── Triage ─+  $/gm)?.length, 1, "the Triage heading has a horizontal rule");
-  assert.match(body, /Slop Auditor.*\n\s*\n  ── Triage/, "a blank line separates the phase groups");
-  assert.ok(!body.includes("PHASE"), "rendered rows use the compact agent layout");
+  const body = content(lines(state.table)).join("\n");
+  assert.equal(body.match(/^REVIEW\s*$/gm)?.length, 1, "one Review heading");
+  assert.equal(body.match(/^TRIAGE\s*$/gm)?.length, 1, "one Triage heading");
+  assert.doesNotMatch(body, /^(IMPLEMENT|VERIFY)\s*$/m, "empty phases have no heading");
+  assert.match(body, /Slop Auditor.*\n\s*\nTRIAGE/, "a blank line separates the phase groups");
   assert.ok(!/[├│└]/.test(body), "rendered rows have no tree connectors");
   widget.stop();
 });
 
-test("agent rows start with status icons and tool calls align under the status column", () => {
+test("agent rows start with status icons, and a working row's tool call sits under it", () => {
   const { ctx, state } = fakeCtx();
   const widget = new AuditProgressWidget(ctx);
   widget.addRow("Review", "a", "Code Quality Engineer", { state: "done" });
@@ -223,37 +227,11 @@ test("agent rows start with status icons and tool calls align under the status c
   widget.applyProgress("d", progressSnapshot({ activity: "read  src/audit.ts" }));
   widget.mount();
 
-  const body = lines(state.table).join("\n");
-  assert.match(body, /  ── Review ─+\s*\n  ✓ Code Quality Engineer/);
-  assert.match(body, /  ✓ Security Engineer/);
-  assert.match(body, /  ── Triage ─+\s*\n  ✓ collection/);
-  assert.match(body, /  ◐ adjudicator · reconcile/);
-  // The tool call starts at the status-column width, matching the sibling agent table.
-  assert.match(body, /    ↳ read  src\/audit\.ts/);
-  assert.ok(!/^  [✓◐○✗]/.test(body), "the header is not an agent row");
-  widget.stop();
-});
-
-test("tool activity sub-rows color each segment without changing their width", () => {
-  const codes: Record<string, number> = { dim: 102, accent: 103, toolTitle: 105 };
-  const taggingTheme: ProgressTheme = {
-    fg: (color, text) => `\x1b[${codes[color] ?? 199}m${text}\x1b[0m`,
-    bold: (text) => `\x1b[1m${text}\x1b[22m`,
-  };
-  const { ctx, state } = fakeCtx(40, taggingTheme);
-  const widget = new AuditProgressWidget(ctx);
-  widget.addRow("Review", "a", "Security Engineer");
-  widget.startRow("a", "reviewing…");
-  widget.applyProgress("a", progressSnapshot({ activity: "read  src/audit.ts" }));
-  widget.mount();
-
-  const activityLine = state.table?.render(120).find((line) => strip(line).includes("↳ read  src/audit.ts"));
-  assert.ok(activityLine, "the activity sub-row renders");
-  assert.match(activityLine, /\x1b\[102m↳ \x1b\[0m/, "the gutter is dimmed independently");
-  assert.match(activityLine, /\x1b\[105m\x1b\[1mread\x1b\[22m\x1b\[0m/, "the tool name is bold and toolTitle-colored");
-  assert.match(activityLine, /\x1b\[103msrc\/audit\.ts\x1b\[0m/, "the argument is accent-colored");
-  assert.equal(visibleWidth(activityLine), visibleWidth(strip(activityLine)), "ANSI styling does not change visible width");
-  assert.ok(visibleWidth(activityLine) <= 120, "the styled activity row does not overflow");
+  const body = content(lines(state.table)).join("\n");
+  assert.match(body, /REVIEW\s*\n✓ Code Quality Engineer/);
+  assert.match(body, /✓ Security Engineer/);
+  assert.match(body, /TRIAGE\s*\n✓ collection/);
+  assert.match(body, /\S adjudicator · reconcile.*\n  ↳ read  src\/audit\.ts/, "the tool call is on the row under its agent");
   widget.stop();
 });
 
@@ -280,10 +258,11 @@ test("table renders the header columns, scope and live footer summary", () => {
   widget.setSummary("3/6 reviewer passes · 12 findings");
   widget.mount();
 
-  const rendered = lines(state.table);
-  assert.match(rendered[0] ?? "", /^══ Persona-audit ═+ src\/ ══$/);
-  assert.match(rendered[1] ?? "", /AGENT.*CTX.*MONITOR.*ACTIVITY.*TURNS.*TOOLS.*COST.*TIME/);
-  assert.match(rendered.at(-2) ?? "", /3\/6 reviewer passes · 12 findings/);
+  const rendered = content(lines(state.table));
+  assert.ok(rendered.some((line) => /^PERSONA-AUDIT · SRC\/\s*$/.test(line)), "the title names the scope");
+  assert.ok(rendered.some((line) => /AGENT.*CTX.*MONITOR.*ACTIVITY.*TURNS.*TOOLS.*COST.*TIME/.test(line)));
+  assert.ok(rendered.some((line) => line.includes("3/6 reviewer passes · 12 findings")), "the summary is shown");
+  assert.match(rendered.at(-2) ?? "", /total cost .* · total .*ctrl\+shift\+c cancel/, "totals and the cancel key close the table");
   widget.stop();
 });
 
@@ -292,34 +271,31 @@ test("title bar carries the diff base hash after the scope, or alone when the sc
   const scopedWidget = new AuditProgressWidget(scoped.ctx, "src/components", "a1b2c3d");
   scopedWidget.addRow("Review", "a", "Security Engineer", { state: "done" });
   scopedWidget.mount();
-  assert.match(
-    lines(scoped.state.table)[0] ?? "",
-    /^══ Persona-audit ═+ src\/components · @a1b2c3d ══$/,
-  );
+  assert.match(content(lines(scoped.state.table))[1] ?? "", /^PERSONA-AUDIT · SRC\/COMPONENTS · @A1B2C3D\s*$/);
   scopedWidget.stop();
 
   const unscoped = fakeCtx();
   const unscopedWidget = new AuditProgressWidget(unscoped.ctx, undefined, "a1b2c3d");
   unscopedWidget.addRow("Review", "a", "Security Engineer", { state: "done" });
   unscopedWidget.mount();
-  assert.match(lines(unscoped.state.table)[0] ?? "", /^══ Persona-audit ═+ @a1b2c3d ══$/);
+  assert.match(content(lines(unscoped.state.table))[1] ?? "", /^PERSONA-AUDIT · @A1B2C3D\s*$/);
   unscopedWidget.stop();
 });
 
 // ── responsive layout ──────────────────────────────────────────────────────
 
-test("tableColumns sheds the stats block before squeezing the label, then activity", () => {
-  const wide = tableColumns(140, ["Security Engineer"]);
-  assert.equal(wide.stats, true);
-  assert.ok(wide.activity >= 10);
+test("a narrow table sheds the stats columns before it squeezes the agent label", () => {
+  const { ctx, state } = fakeCtx();
+  const widget = new AuditProgressWidget(ctx);
+  widget.addRow("Review", "a", "Security Engineer", { state: "done", statusText: "812 tokens" });
+  widget.mount();
 
-  const medium = tableColumns(70, ["Security Engineer"]);
-  assert.equal(medium.stats, false, "ambient stats go first on a narrow terminal");
-  assert.equal(tableColumns(95, ["Security Engineer"]).stats, false);
-  assert.equal(tableColumns(96, ["Security Engineer"]).stats, true);
-
-  const tiny = tableColumns(35, ["Security Engineer"]);
-  assert.equal(tiny.activity, 0, "activity is dropped once the label cannot fit beside it");
+  const header = (width: number) => lines(state.table, width).find((line) => line.includes("AGENT")) ?? "";
+  assert.match(header(120), /TURNS.*TOOLS.*COST.*TIME/, "a wide table has the stats columns");
+  assert.doesNotMatch(header(80), /TURNS|TOOLS|COST|TIME/, "the ambient stats go first at 80 columns");
+  assert.ok(lines(state.table, 80).some((line) => line.includes("Security Engineer")), "the label is kept whole");
+  assert.ok(lines(state.table, 80).some((line) => line.includes("812 tokens")), "so is the status");
+  widget.stop();
 });
 
 test("rendered lines never exceed the requested width", () => {
@@ -389,11 +365,10 @@ test("phase headings consume height budget before activity sub-rows", () => {
   }
   widget.mount();
 
-  const rendered = lines(state.table);
-  assert.equal(rendered.filter((line) => /^  ── (Review|Triage|Implement|Verify) ─+  $/.test(line)).length, 4);
-  assert.equal(rendered.filter((line) => line.trim() === "").length, 3, "blank lines separate the phase groups");
-  assert.equal(rendered.filter((line) => line.includes("↳")).length, 0, "phase separators leave no activity slots at the budget limit");
-  assert.equal(rendered.length, 20, "phase headings and separators fit inside the existing half-height budget");
+  const rendered = content(lines(state.table));
+  assert.equal(rendered.filter((line) => /^(REVIEW|TRIAGE|IMPLEMENT|VERIFY)\s*$/.test(line)).length, 4);
+  assert.equal(rendered.filter((line) => line.includes("↳")).length, 0, "phase headings leave no activity slots at the budget limit");
+  for (let i = 0; i < 5; i++) assert.ok(rendered.some((line) => line.includes(`Review agent ${i}`)), "every working row is kept");
   widget.stop();
 });
 
@@ -457,7 +432,7 @@ test("a frozen snapshot renders every row, since it has no terminal to budget ag
   const snapshot = widget.snapshot();
   widget.stop();
 
-  const theme: ProgressTheme = { fg: (_color, text) => text, bold: (text) => text };
+  const theme = PLAIN_THEME;
   const frozen = renderAuditSnapshot(snapshot, theme).render(120).map(strip);
 
   assert.equal(snapshot.rows.length, 200, "the snapshot keeps the full row list");
@@ -467,10 +442,10 @@ test("a frozen snapshot renders every row, since it has no terminal to budget ag
   assert.ok(!frozen.some((l) => l.includes("passes done")), "a frozen transcript folds nothing");
 });
 
-/** Twelve settled passes: inside a 40-row terminal's half-height budget, past it once pi's dock is taken off. */
-function twelveSettledWidget(ctx: AuditProgressContext): AuditProgressWidget {
+/** Eight settled passes: inside a 40-row terminal's half-height budget, past it once pi's dock is taken off. */
+function eightSettledWidget(ctx: AuditProgressContext): AuditProgressWidget {
   const widget = new AuditProgressWidget(ctx);
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < 8; i++) {
     widget.addRow("Review", `done:${i}`, `done reviewer ${i}`);
     widget.startRow(`done:${i}`, "reviewing…");
     widget.settleRow(`done:${i}`, "done", "812 tokens");
@@ -481,15 +456,15 @@ function twelveSettledWidget(ctx: AuditProgressContext): AuditProgressWidget {
 test("in fullscreen the table budgets against the rows above pi's dock", () => {
   const regular = fakeCtx(40, undefined, "regular");
   const fullscreen = fakeCtx(40, undefined, "fullscreen");
-  const regularWidget = twelveSettledWidget(regular.ctx);
-  const fullscreenWidget = twelveSettledWidget(fullscreen.ctx);
+  const regularWidget = eightSettledWidget(regular.ctx);
+  const fullscreenWidget = eightSettledWidget(fullscreen.ctx);
   regularWidget.mount();
   fullscreenWidget.mount();
 
   const regularLines = lines(regular.state.table);
   const fullscreenLines = lines(fullscreen.state.table);
-  assert.ok(regularLines.some((l) => l.includes("done reviewer 11")), "twelve passes fit a regular 40-row budget");
-  assert.ok(fullscreenLines.some((l) => l.includes("12 passes done")), "the same passes fold once the dock's rows are reserved");
+  assert.ok(regularLines.some((l) => l.includes("done reviewer 7")), "eight passes fit a regular 40-row budget");
+  assert.ok(fullscreenLines.some((l) => l.includes("8 passes done")), "the same passes fold once the dock's rows are reserved");
   const budget = Math.floor((40 - FULLSCREEN_WIDGET_RESERVE_ROWS) * 0.5);
   assert.ok(fullscreenLines.length <= budget, `the table stays inside the rows above the dock, got ${fullscreenLines.length} lines`);
 
@@ -500,8 +475,8 @@ test("in fullscreen the table budgets against the rows above pi's dock", () => {
 test("a regular host budgets exactly like a host that reports no mode", () => {
   const regular = fakeCtx(40, undefined, "regular");
   const unknown = fakeCtx(40);
-  const regularWidget = twelveSettledWidget(regular.ctx);
-  const unknownWidget = twelveSettledWidget(unknown.ctx);
+  const regularWidget = eightSettledWidget(regular.ctx);
+  const unknownWidget = eightSettledWidget(unknown.ctx);
   regularWidget.mount();
   unknownWidget.mount();
 
@@ -513,12 +488,12 @@ test("a regular host budgets exactly like a host that reports no mode", () => {
 
 test("the table re-budgets when pi switches renderer under a mounted widget", () => {
   const { ctx, state, tui } = fakeCtx(40, undefined, "fullscreen");
-  const widget = twelveSettledWidget(ctx);
+  const widget = eightSettledWidget(ctx);
   widget.mount();
-  assert.ok(lines(state.table).some((l) => l.includes("12 passes done")), "fullscreen folds the passes");
+  assert.ok(lines(state.table).some((l) => l.includes("8 passes done")), "fullscreen folds the passes");
 
   tui.mode = "regular";
-  assert.ok(lines(state.table).some((l) => l.includes("done reviewer 11")), "the next render reads the new mode and unfolds them");
+  assert.ok(lines(state.table).some((l) => l.includes("done reviewer 7")), "the next render reads the new mode and unfolds them");
 
   widget.stop();
 });
@@ -550,12 +525,21 @@ test("a short fullscreen terminal floors the budget at the table's chrome", () =
 
 // ── cell formatting ────────────────────────────────────────────────────────
 
-test("contextCell shows a percentage when the window is known and raw tokens otherwise", () => {
-  assert.match(contextCell(42_000, CONTEXT_WINDOW).trim(), /^21\.0%\/200\.0K$/);
-  assert.equal(contextCell(12_345, undefined).trim(), "12.3K tok");
-  assert.equal(contextCell(0, undefined).trim(), "—");
-  assert.equal(contextCell(undefined, undefined).trim(), "—");
-  assert.match(contextCell(undefined, CONTEXT_WINDOW).trim(), /^0\.0%\/200\.0K$/);
+test("the context column shows a percentage when the window is known and raw tokens otherwise", () => {
+  const { ctx, state } = fakeCtx();
+  const widget = new AuditProgressWidget(ctx, undefined, undefined, (provider) => (provider === "known" ? CONTEXT_WINDOW : undefined));
+  widget.addRow("Review", "a", "windowed", { state: "done" });
+  widget.applyProgress("a", progressSnapshot({ contextTokens: 42_000, provider: "known" }));
+  widget.addRow("Review", "b", "unwindowed", { state: "done" });
+  widget.applyProgress("b", progressSnapshot({ contextTokens: 12_345, provider: "other" }));
+  widget.addRow("Review", "c", "idle", { state: "queued" });
+  widget.mount();
+
+  const rendered = lines(state.table, 120);
+  assert.match(rendered.find((line) => line.includes("windowed") && !line.includes("unwindowed")) ?? "", /21\.0%\/200\.0K/);
+  assert.match(rendered.find((line) => line.includes("unwindowed")) ?? "", /12\.3K tok/);
+  assert.match(rendered.find((line) => line.includes("idle")) ?? "", /idle\s+—/);
+  widget.stop();
 });
 
 test("formatTokens and formatElapsed use compact, non-rolling units", () => {
@@ -586,10 +570,9 @@ test("stats columns render right-aligned turns, tool calls, cost, and elapsed ti
   widget.applyProgress("a", progressSnapshot({ turns: 7, toolCalls: 3, costUsd: 0.1234 }));
   widget.mount();
 
-  const rendered = lines(state.table, 120);
-  const dataLine = rendered.find((line) => line.includes("Security Engineer"));
+  const dataLine = lines(state.table, 120).find((line) => line.includes("Security Engineer"));
   assert.ok(dataLine, "expected a data row");
-  assert.ok(dataLine.trimEnd().endsWith("7      3    $0.123    0:00"), `stats should be right-aligned: ${JSON.stringify(dataLine)}`);
+  assert.match(dataLine.trimEnd(), /\s7\s{6}3\s{3}\$0\.123\s{3}0:00$/, `stats should be right-aligned: ${JSON.stringify(dataLine)}`);
   widget.stop();
 });
 
@@ -601,9 +584,9 @@ test("band is suppressed entirely when no phase has an assigned model", () => {
   widget.addRow("Review", "a", "Security Engineer", { state: "done" });
   widget.mount();
 
-  const rendered = lines(state.table);
-  assert.match(rendered[0] ?? "", /^══ Persona-audit/, "top border is unaffected");
-  assert.match(rendered[1] ?? "", /AGENT.*CTX.*MONITOR/, "the header row follows the top border directly");
+  const rendered = content(lines(state.table));
+  assert.match(rendered[1] ?? "", /^PERSONA-AUDIT/, "the title is unaffected");
+  assert.match(rendered[3] ?? "", /AGENT.*CTX.*MONITOR/, "the header row follows the title directly");
   widget.stop();
 });
 
@@ -619,10 +602,10 @@ test("phase/model band renders all four phases and their assigned models above t
   });
   widget.mount();
 
-  const rendered = lines(state.table);
+  const rendered = content(lines(state.table));
   const headerIndex = rendered.findIndex((l) => /AGENT.*CTX.*MONITOR/.test(l));
-  assert.equal(headerIndex, 4, "two band rows plus their separator push the header to row 4");
-  const band = rendered.slice(1, 3).join("\n");
+  assert.equal(headerIndex, 6, "two band rows plus their rule push the header down three rows");
+  const band = rendered.slice(3, 5).join("\n");
   for (const phase of ["Review", "Triage", "Implement", "Verify"]) {
     assert.ok(band.includes(phase), `band shows phase name "${phase}"`);
   }
@@ -632,88 +615,23 @@ test("phase/model band renders all four phases and their assigned models above t
   widget.stop();
 });
 
-test("the phase band draws an aligned two-row powerline chevron between each column", () => {
-  // U+E0B9 "\" on the name row over U+E0BB "/" on the model row; stacked in the
-  // same terminal column they read as one tall right-chevron.
-  const TOP = "\u{E0B9}";
-  const BOTTOM = "\u{E0BB}";
+test("the band marks the active phase, done phases and pending ones, and a frozen copy stops its spinner", () => {
   const { ctx, state } = fakeCtx();
   const widget = new AuditProgressWidget(ctx);
   widget.addRow("Review", "a", "Security Engineer", { state: "done" });
-  widget.setPhaseModels({
-    Review: "deepseek/deepseek-v4-pro",
-    Triage: "openai/gpt-5.6-luna",
-    Implement: "anthropic/claude-opus-4-6",
-    Verify: "zhipu/glm-5p2",
-  });
-  widget.mount();
-
-  const rendered = lines(state.table);
-  const colsOf = (row: string, glyph: string): number[] =>
-    [...row].flatMap((ch, i) => (ch === glyph ? [i] : []));
-  const topCols = colsOf(rendered[1] ?? "", TOP);
-  const botCols = colsOf(rendered[2] ?? "", BOTTOM);
-  assert.equal(topCols.length, 3, "three separators divide the four phases on the name row");
-  assert.equal(botCols.length, 3, "three separators divide the four models on the model row");
-  assert.deepEqual(botCols, topCols, "each chevron's two halves share a column so they stack into one glyph");
-  widget.stop();
-});
-
-test("only the active phase shimmers with a truecolor gradient in the band", () => {
-  // Real (if arbitrary) SGR codes, not literal bracket text: visibleWidth/truncateToWidth
-  // only treat true ANSI escapes as zero-width, so a literal-text tagging theme would
-  // inflate the line past bodyWidth and get truncated before the last column.
-  const taggingTheme: ProgressTheme = {
-    fg: (color, text) => `\x1b[${color === "text" ? 97 : 90}m${text}\x1b[0m`,
-    bold: (text) => `\x1b[1m${text}\x1b[22m`,
-    getFgAnsi: (color) => (color === "text" ? "\x1b[38;2;255;255;255m" : "\x1b[38;2;120;120;120m"),
-  };
-  const { ctx, state } = fakeCtx(40, taggingTheme);
-  const widget = new AuditProgressWidget(ctx);
-  widget.addRow("Review", "a", "Security Engineer", { state: "working" });
-  widget.setPhaseModels({
-    Review: "anthropic/claude-opus-4",
-    Triage: "anthropic/claude-opus-4",
-    Implement: "anthropic/claude-opus-4",
-    Verify: "anthropic/claude-opus-4",
-  });
-  widget.setActivePhase("Triage");
-  widget.mount();
-
-  assert.ok(state.table, "expected a mounted table");
-  const rendered = state.table.render(120).slice(1, 3);
-  const band = rendered.join("\n");
-  assert.ok(strip(band).includes("Triage"), "the active phase name still reads correctly once colors are stripped");
-  assert.match(
-    band,
-    /\x1b\[38;2;\d+;\d+;\d+mT\x1b\[22m/,
-    "the active phase shimmers with a per-character truecolor gradient",
-  );
-  assert.doesNotMatch(band, /\x1b\[97m\s*Triage/, "the active phase no longer uses the flat highlighted tag");
-  assert.match(band, /\x1b\[90m\s*Review/, "inactive phases stay dim");
-  assert.match(band, /\x1b\[90m\s*Implement/);
-  assert.match(band, /\x1b\[90m\s*Verify/);
-  assert.doesNotMatch(band, /\x1b\[97m\s*Review/);
-  // Separators touching the active phase join its shimmer; the one between two
-  // inactive phases (Implement│Verify) stays dim.
-  assert.match(band, /\x1b\[38;2;\d+;\d+;\d+m[\u{E0B9}\u{E0BB}]/u, "a separator beside the active phase shimmers");
-  assert.match(band, /\x1b\[90m[\u{E0B9}\u{E0BB}]/u, "a separator between two inactive phases stays dim");
-  widget.stop();
-});
-
-test("the active phase falls back to the flat highlighted tone when the theme has no getFgAnsi", () => {
-  const taggingTheme: ProgressTheme = { fg: (color, text) => `\x1b[${color === "text" ? 97 : 90}m${text}\x1b[0m`, bold: (text) => `\x1b[1m${text}\x1b[22m` };
-  const { ctx, state } = fakeCtx(40, taggingTheme);
-  const widget = new AuditProgressWidget(ctx);
-  widget.addRow("Review", "a", "Security Engineer", { state: "working" });
+  widget.addRow("Triage", "b", "adjudicator", { state: "working" });
   widget.setPhaseModels({ Review: "anthropic/claude-opus-4", Triage: "anthropic/claude-opus-4" });
   widget.setActivePhase("Triage");
   widget.mount();
 
-  assert.ok(state.table, "expected a mounted table");
-  const band = state.table.render(120).slice(1, 3).join("\n");
-  assert.match(band, /\x1b\[97m\s*Triage/, "the active phase name keeps the flat highlighted tone");
-  assert.match(band, /\x1b\[90m\s*Review/, "inactive phases stay dim");
+  const band = content(lines(state.table))[3] ?? "";
+  assert.match(band, /✓ Review/, "a phase before the active one is done");
+  assert.match(band, /[◐◓◑◒▖▘▝▗] Triage/, "the live active phase spins");
+  assert.match(band, /○ Implement.*○ Verify/, "later phases are pending");
+
+  const frozenBand = content(renderAuditSnapshot(widget.snapshot(), PLAIN_THEME).render(120).map(strip))[3] ?? "";
+  assert.match(frozenBand, /✓ Review/, "a frozen copy reads a settled phase as done");
+  assert.doesNotMatch(frozenBand, /[◐◓◑◒▖▘▝▗]/, "and has no active phase to spin");
   widget.stop();
 });
 
@@ -724,11 +642,9 @@ test("a narrow terminal drops the band even when models are assigned", () => {
   widget.setPhaseModels({ Review: "anthropic/claude-opus-4" });
   widget.mount();
 
-  const narrow = lines(state.table, 50); // bodyWidth 46 → 11/col, below the 12-column floor
-  assert.match(narrow[1] ?? "", /AGENT.*CTX.*MONITOR/, "band suppressed, header follows the top border directly");
-
-  const wide = lines(state.table, 60); // bodyWidth 56 → 14/col, clears the floor
-  assert.doesNotMatch(wide[1] ?? "", /AGENT.*CTX.*MONITOR/, "band shown, so the header is pushed down");
+  const headerRow = (width: number) => content(lines(state.table, width)).findIndex((line) => /AGENT.*CTX.*MONITOR/.test(line));
+  assert.equal(headerRow(54), 3, "body 50 → 11 columns a phase, under the 12-column floor: no band");
+  assert.equal(headerRow(56), 6, "body 52 → 12 columns a phase: the band pushes the header down");
   widget.stop();
 });
 
@@ -762,7 +678,7 @@ test("rendered lines never exceed the requested width with the band present", ()
 // ── frozen transcript snapshot ─────────────────────────────────────────────
 
 test("snapshot survives a JSON round-trip and renderAuditSnapshot redraws the settled table", async () => {
-  const { ctx, state } = fakeCtx();
+  const { ctx } = fakeCtx();
   const widget = new AuditProgressWidget(ctx, "src/components", "a1b2c3d");
   widget.addRow("Review", "a", "Security Engineer");
   widget.startRow("a", "reviewing…");
@@ -778,20 +694,23 @@ test("snapshot survives a JSON round-trip and renderAuditSnapshot redraws the se
   const roundTripped: AuditProgressSnapshot = JSON.parse(JSON.stringify(snapshot));
   widget.stop();
 
-  assert.equal(roundTripped.meterLevels.a?.length, ACTIVITY_METER_WIDTH, "the meter trace round-trips at full width");
+  assert.equal(roundTripped.meterLevels.a?.length, 8, "the meter trace round-trips at full width");
   assert.deepEqual(roundTripped.phaseThinking, { Review: "high" });
 
-  const theme: ProgressTheme = { fg: (_color, text) => text, bold: (text) => text };
-  const frozenLines = renderAuditSnapshot(roundTripped, theme).render(120).map(strip);
-
+  const frozenLines = renderAuditSnapshot(roundTripped, PLAIN_THEME).render(120).map(strip);
   assert.ok(frozenLines.some((l) => l.includes("Security Engineer")), "settled row survives the round trip");
   assert.ok(frozenLines.some((l) => l.includes("1/1 reviewer passes")), "footer summary survives the round trip");
-  assert.ok(frozenLines.some((l) => l.includes("src/components · @a1b2c3d")), "scope and base hash survive the round trip");
+  assert.ok(frozenLines.some((l) => l.includes("SRC/COMPONENTS · @A1B2C3D")), "scope and base hash survive the round trip");
   assert.ok(frozenLines.some((l) => l.includes("claude-opus-4")), "band survives the round trip");
+  assert.ok(!frozenLines.some((l) => l.includes("ctrl+shift+c")), "a frozen copy offers no cancel key");
 });
 
 test("the meter resolves thinking-level colours per phase and preserves fixed colours", () => {
-  const tagged: ProgressTheme = { fg: (color, text) => `<${color}>${text}`, bold: (text) => text };
+  // Distinct colours for the tokens in play, so each shows up as its own truecolor escape.
+  const colourful: ProgressTheme = {
+    colors: { thinkingHigh: rgb("#11ee11"), thinkingLow: rgb("#1111ee"), error: rgb("#ee1111"), accent: rgb("#eeee11") },
+    getColorMode: () => "truecolor",
+  };
   const snapshot: AuditProgressSnapshot = {
     summary: "done",
     phaseModels: {},
@@ -825,13 +744,16 @@ test("the meter resolves thinking-level colours per phase and preserves fixed co
       b: [0, 0, 0, 0, 0, 0, 0, 7],
     },
   };
+  const rowOf = (rendered: string[], label: string) => rendered.find((line) => strip(line).includes(label)) ?? "";
 
-  const thinking = renderAuditSnapshot(snapshot, tagged, { color: "thinkingLevel", direction: "ltr" }).render(120).join("\n");
-  assert.match(thinking, /<thinkingHigh>⣿/);
-  assert.match(thinking, /<thinkingLow>⣿/);
+  const thinking = renderAuditSnapshot(snapshot, colourful, { color: "thinkingLevel", direction: "ltr" }).render(120);
+  assert.ok(rowOf(thinking, "Security Engineer").includes(escape("#11ee11")), "a high-thinking phase's meter");
+  assert.ok(rowOf(thinking, "collection").includes(escape("#1111ee")), "a low-thinking phase's meter");
 
-  const configured = renderAuditSnapshot(snapshot, tagged, { color: "error", direction: "ltr" }).render(120).join("\n");
-  assert.match(configured, /<error>⣿/);
+  const configured = renderAuditSnapshot(snapshot, colourful, { color: "error", direction: "ltr" }).render(120);
+  assert.ok(rowOf(configured, "Security Engineer").includes(escape("#ee1111")), "a fixed colour replaces the thinking colour");
+  assert.ok(rowOf(configured, "collection").includes(escape("#ee1111")));
+  assert.ok(!rowOf(configured, "Security Engineer").includes(escape("#11ee11")));
 
   const legacySnapshot: AuditProgressSnapshot = {
     summary: snapshot.summary,
@@ -839,10 +761,10 @@ test("the meter resolves thinking-level colours per phase and preserves fixed co
     rows: snapshot.rows,
     meterLevels: snapshot.meterLevels,
   };
-  const fallback = renderAuditSnapshot(legacySnapshot, tagged).render(120).join("\n");
-  assert.match(fallback, /<accent>⣿/);
-  const legacy = renderAuditSnapshot(legacySnapshot, { fg: (_color, text) => text, bold: (text) => text }).render(120).join("\n");
-  assert.match(legacy, /Security Engineer.*0.*—.*0:01/, "legacy rows default missing telemetry to 0 and —");
+  const fallback = renderAuditSnapshot(legacySnapshot, colourful).render(120);
+  assert.ok(rowOf(fallback, "Security Engineer").includes(escape("#eeee11")), "without settings the default accent colour is used");
+  const legacy = renderAuditSnapshot(legacySnapshot, PLAIN_THEME).render(120).map(strip).join("\n");
+  assert.match(legacy, /Security Engineer.*3\s+0\s+—\s+0:01/, "legacy rows default missing telemetry to 0 and —");
 });
 
 test("a frozen snapshot render never starts a ticker", () => {
@@ -853,7 +775,7 @@ test("a frozen snapshot render never starts a ticker", () => {
     return originalSetInterval(...args);
   }) as typeof setInterval;
   try {
-    const theme: ProgressTheme = { fg: (_color, text) => text, bold: (text) => text };
+    const theme = PLAIN_THEME;
     const snapshot: AuditProgressSnapshot = { summary: "completed", phaseModels: {}, rows: [], meterLevels: {} };
     renderAuditSnapshot(snapshot, theme).render(120);
   } finally {
@@ -864,36 +786,34 @@ test("a frozen snapshot render never starts a ticker", () => {
 
 // ── total run time ─────────────────────────────────────────────────────────
 
-const footerOf = (snapshot: AuditProgressSnapshot, width: number): string[] => {
-  const theme: ProgressTheme = { fg: (_color, text) => text, bold: (text) => text };
-  const lines = renderAuditSnapshot(snapshot, theme).render(width).map(strip);
-  // The footer is everything between the last rule and the closing border.
-  const rule = lines.lastIndexOf("─".repeat(Math.max(20, width)));
-  return lines.slice(rule + 1, -1);
+/** A pi colour value from `#rrggbb`. */
+const rgb = (hex: string) => ({ kind: "rgb" as const, r: parseInt(hex.slice(1, 3), 16), g: parseInt(hex.slice(3, 5), 16), b: parseInt(hex.slice(5, 7), 16) });
+/** The SGR parameters a truecolor foreground of `#rrggbb` is written with. */
+const escape = (hex: string) => `38;2;${parseInt(hex.slice(1, 3), 16)};${parseInt(hex.slice(3, 5), 16)};${parseInt(hex.slice(5, 7), 16)}`;
+
+/** A frozen table's run summary and its totals row. */
+const footerOf = (snapshot: AuditProgressSnapshot, width: number): { summary: string; totals: string } => {
+  const rendered = content(renderAuditSnapshot(snapshot, PLAIN_THEME).render(width).map(strip));
+  return {
+    summary: rendered.find((line) => line.startsWith("▌ ")) ?? "",
+    totals: rendered.find((line) => line.startsWith("total cost")) ?? "",
+  };
 };
 
-test("the footer pins total run time to the right edge alongside the summary", () => {
+test("the footer keeps the run summary whole and the totals on the row under the rule", () => {
   const footer = footerOf(
     { summary: "3/3 reviewer passes · 12 findings", totalMs: 697_000, phaseModels: {}, rows: [], meterLevels: {} },
     120,
   );
-  assert.equal(footer.length, 1, "a short summary shares one line with the total");
-  assert.ok(footer[0]?.includes("3/3 reviewer passes"), "summary is kept");
-  assert.ok(
-    footer[0]?.trimEnd().endsWith("total cost $0.000  total 11:37"),
-    `cost and elapsed total are right-aligned: ${JSON.stringify(footer[0])}`,
-  );
+  assert.match(footer.summary, /3\/3 reviewer passes · 12 findings/, "summary is kept");
+  assert.equal(footer.totals.trimEnd(), "total cost $0.000 · total 11:37", "cost and the elapsed total share the totals row");
 });
 
-test("the footer moves total run time to its own line rather than truncating a long summary", () => {
+test("a long summary is never truncated to make room for the totals", () => {
   const summary = "12/12 reviewer passes · 40 findings · 18 accepted · fixes 18/18 landed · verify 3/3 · 1 rejected";
-  const footer = footerOf({ summary, totalMs: 3_600_000, phaseModels: {}, rows: [], meterLevels: {} }, 100);
-  assert.equal(footer.length, 2, "a colliding summary pushes the total onto its own line");
-  assert.ok(footer[0]?.includes("verify 3/3"), "the summary is not truncated to make room");
-  assert.ok(
-    footer[1]?.trimEnd().endsWith("total cost $0.000  total 60:00"),
-    "cost and elapsed time stay together, with minutes never rolling into hours",
-  );
+  const footer = footerOf({ summary, totalMs: 3_600_000, phaseModels: {}, rows: [], meterLevels: {} }, 110);
+  assert.ok(footer.summary.includes("verify 3/3 · 1 rejected"), "the summary is not truncated");
+  assert.equal(footer.totals.trimEnd(), "total cost $0.000 · total 60:00", "minutes never roll into hours");
 });
 
 test("the footer shows excluded user wait and preserves legacy snapshots", () => {
@@ -901,14 +821,13 @@ test("the footer shows excluded user wait and preserves legacy snapshots", () =>
     { summary: "3/3 reviewer passes · 12 findings", totalMs: 697_000, waitingMs: 125_000, phaseModels: {}, rows: [], meterLevels: {} },
     120,
   );
-  assert.ok(waiting[0]?.trimEnd().endsWith("total cost $0.000  total 11:37 (+2:05 waiting)"));
+  assert.equal(waiting.totals.trimEnd(), "total cost $0.000 · total 11:37 (+2:05 waiting)");
 
   const legacy = footerOf(
     { summary: "3/3 reviewer passes · 12 findings", totalMs: 697_000, phaseModels: {}, rows: [], meterLevels: {} },
     120,
   );
-  assert.ok(legacy[0]?.trimEnd().endsWith("total cost $0.000  total 11:37"));
-  assert.ok(!legacy[0]?.includes("waiting"));
+  assert.equal(legacy.totals.trimEnd(), "total cost $0.000 · total 11:37");
 });
 
 test("the footer shows complete and partial aggregate costs for live and frozen rows", () => {
@@ -920,7 +839,7 @@ test("the footer shows complete and partial aggregate costs for live and frozen 
   assert.deepEqual(widget.totalCost(), { costUsd: 0.1234, incomplete: true });
 
   const partial = footerOf({ ...widget.snapshot(), totalMs: 697_000 }, 160);
-  assert.ok(partial[0]?.includes("total cost $0.123*  total 11:37"));
+  assert.ok(partial.totals.includes("total cost $0.123* · total 11:37"));
 
   const complete = footerOf(
     {
@@ -935,14 +854,14 @@ test("the footer shows complete and partial aggregate costs for live and frozen 
     },
     160,
   );
-  assert.ok(complete[0]?.includes("total cost $0.750  total 0:00"));
-  assert.ok(!complete[0]?.includes("$0.750*"));
+  assert.ok(complete.totals.includes("total cost $0.750 · total 0:00"));
+  assert.ok(!complete.totals.includes("$0.750*"));
 
   const allMissing = footerOf(
     { summary: "done", totalMs: 0, phaseModels: {}, rows: widget.progressRows().map(({ costUsd: _costUsd, ...row }) => row), meterLevels: {} },
     160,
   );
-  assert.ok(allMissing[0]?.includes("total cost $0.000*  total 0:00"));
+  assert.ok(allMissing.totals.includes("total cost $0.000* · total 0:00"));
 });
 
 test("total run time keeps running while mounted and freezes once the widget stops", async () => {
@@ -1009,7 +928,7 @@ function fixNowHarness(terminalRows = 40, finding: Finding = fixNowFinding) {
     indexes: () => {
       const rendered = lines(state.table);
       const at = (needle: string) => rendered.findIndex((l) => l.includes(needle));
-      return { row: at("fix now ·"), meta: at("security/high"), status: at("implementing fix"), hint: at("Esc cancel fix") };
+      return { row: at("fix now ·"), meta: at("security/high"), status: at("implementing fix"), hint: at("esc cancel fix") };
     },
   };
 }
@@ -1022,7 +941,7 @@ test("the fix-now detail nests meta, rationale, phase status, and cancel hint un
   assert.ok(rendered.some((l) => l.includes("security/high")), "meta line");
   assert.ok(rendered.some((l) => l.includes("SQL string is concatenated from user input")), "rationale line");
   assert.ok(rendered.some((l) => l.includes("implementing fix · applying security fix")), "phase status line");
-  assert.ok(rendered.some((l) => l.includes("Esc cancel fix")), "cancel hint");
+  assert.ok(rendered.some((l) => l.includes("esc cancel fix")), "cancel hint");
 
   const idx = h.indexes();
   assert.ok(idx.row >= 0 && idx.meta > idx.row && idx.status > idx.meta && idx.hint > idx.status, "nested lines sit under the row, in order");
@@ -1048,7 +967,7 @@ test("arming the cancel gesture swaps the hint, disarming restores it", () => {
 
   h.widget.setFixNowCancelArmed("fix", false);
   const rendered = h.rendered();
-  assert.ok(rendered.some((l) => l.includes("Esc cancel fix")));
+  assert.ok(rendered.some((l) => l.includes("esc cancel fix")));
   assert.ok(!rendered.some((l) => l.includes("Press Esc again")), "the armed warning is gone");
 
   h.widget.stop();
@@ -1060,7 +979,7 @@ test("settling shows the decision's busy state and Please wait", () => {
   let rendered = committing.rendered();
   assert.ok(rendered.some((l) => l.includes("accepting fix · committing changes")));
   assert.ok(rendered.some((l) => l.includes("Please wait…")));
-  assert.ok(!rendered.some((l) => l.includes("Esc cancel fix")), "no cancel hint once decided");
+  assert.ok(!rendered.some((l) => l.includes("esc cancel fix")), "no cancel hint once decided");
   committing.widget.stop();
 
   const saving = fixNowHarness();
@@ -1109,7 +1028,7 @@ test("the tool-activity sub-row still renders alongside the detail block", () =>
 test("settling the row clears its detail, and snapshots never carry it", () => {
   const h = fixNowHarness();
   h.widget.settleRow("fix", "done", "fixed");
-  assert.ok(!h.rendered().some((l) => l.includes("security/high") || l.includes("Esc cancel fix")), "a settled row renders no detail");
+  assert.ok(!h.rendered().some((l) => l.includes("security/high") || l.includes("esc cancel fix")), "a settled row renders no detail");
 
   const withDetail = fixNowHarness();
   const snap = withDetail.widget.snapshot();
@@ -1125,13 +1044,21 @@ test("a short terminal sheds the rationale, then the meta line, before the statu
   assert.ok(tallRendered.some((l) => l.includes("SQL string")), "tall terminal shows the rationale");
   tall.widget.stop();
 
-  // 20 rows → budget leaves exactly 3 sub-rows: meta survives, rationale sheds.
-  const short = fixNowHarness(20);
+  // 30 rows → a 15-row budget leaves the block 3 rows: meta survives, rationale sheds.
+  const short = fixNowHarness(30);
   const shortRendered = short.rendered();
   assert.ok(!shortRendered.some((l) => l.includes("SQL string")), "rationale sheds first");
   assert.ok(shortRendered.some((l) => l.includes("security/high")), "meta survives");
   assert.ok(shortRendered.some((l) => l.includes("implementing fix")), "phase status is kept");
-  assert.ok(shortRendered.some((l) => l.includes("Esc cancel fix")), "cancel hint is kept");
+  assert.ok(shortRendered.some((l) => l.includes("esc cancel fix")), "cancel hint is kept");
   assert.ok(shortRendered.some((l) => l.includes("fix now · src/a.ts:12")), "the agent row itself is untouched");
   short.widget.stop();
+
+  // 20 rows → the block has only its two floor rows: the meta line sheds too.
+  const shorter = fixNowHarness(20);
+  const shorterRendered = shorter.rendered();
+  assert.ok(!shorterRendered.some((l) => l.includes("security/high")), "meta sheds after the rationale");
+  assert.ok(shorterRendered.some((l) => l.includes("implementing fix")), "phase status is still kept");
+  assert.ok(shorterRendered.some((l) => l.includes("esc cancel fix")), "cancel hint is still kept");
+  shorter.widget.stop();
 });

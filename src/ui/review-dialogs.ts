@@ -3,22 +3,30 @@ import { showOpenTuiDialog, type DialogHost } from "@underactive/pi-topping-open
 import { isThinkingLevel, type ThinkingLevel } from "@underactive/pi-topping-primitives/models";
 import { createElement } from "react";
 import type { FixGateInput, FixGateDecision } from "../components/FixProgress.ts";
-import type { ReportViewerHeader } from "../components/ReportViewer.ts";
+import { normalizeFindingText } from "../dedup.ts";
 import { hasSuggestion, type TriageSuggestion, type TriageSuggestionFeed } from "../decision/triage.ts";
+import { compareFindingsByExploitability, compareFindingsBySuggestion } from "../findingOrder.ts";
+import { gitHeadCommit } from "../git.ts";
 import { modelRefLabel, type ModelRef, type PhaseModelChoice } from "../modelConfig.ts";
-import type { Finding, FixedFinding, FindingsReviewOutcome, FindingsReviewResult, ReviewSessionState } from "../types.ts";
+import { handoffRelPath, renderDeferredHandoff, writeReportFile } from "../report.ts";
+import { SEVERITY_ORDER } from "../types.ts";
+import type { Finding, FixedFinding, FindingsReviewOutcome, FindingsReviewResult, ReviewSessionState, ReviewSortMode } from "../types.ts";
 import { modelKey, readDialogModels } from "./dialog-models.ts";
-import {
-  DIALOG_MAX_HEIGHT,
-  FIX_GATE_DIALOG_SIZE,
-  FINDINGS_REVIEW_DIALOG_SIZE,
-  REPORT_VIEWER_DIALOG_SIZE,
-  RETRY_DIALOG_SIZE,
-} from "./dialog-fit.ts";
+import { DIALOG_MAX_HEIGHT, DIALOG_WIDTH } from "./dialog-fit.ts";
 import { FindingsReview, type ReviewOutcome as DialogReviewOutcome, type ReviewState as DialogReviewState } from "./generated/persona-audit/findings-review.ts";
 import type { Finding as DialogFinding, FindingSuggestion, ModelChoice as DialogModelChoice } from "./generated/persona-audit/data.ts";
 import { RetryCheckpoint, type RetryKind, type RetryResult, type ReviewerFailure as DialogReviewerFailure } from "./generated/persona-audit/prompts.ts";
 import { FixGate, ReportViewer } from "./generated/persona-audit/viewers.ts";
+
+/** Header metadata shown above the saved report. */
+export interface ReportViewerHeader {
+  /** Optional replacement for the standard audit-report heading. */
+  title?: string;
+  status: string;
+  findingCount: number;
+  verification: string;
+  reportPath: string;
+}
 
 function reportFailure(ctx: Pick<ExtensionCommandContext, "ui">, label: string, error: unknown): void {
   ctx.ui.notify(`${label} dialog failed: ${error instanceof Error ? error.message : String(error)}`, "error");
@@ -116,10 +124,48 @@ function fromDialogReviewOutcome(
   return { kind: "finalized", result };
 }
 
+/**
+ * The review's order within a recommendation group, by finding index: the extension's ranking,
+ * not the mockup's sample one. File sorts by path, line, then severity; priority is the
+ * exploitability order the report uses; reviewer ignores case; blast puts the widest reach
+ * first; suggested ranks by what the decision classifier suggested, read from the live feed
+ * so it matches the badges, and falls back to the exploitability order. Ties keep the
+ * adjudicator's order.
+ */
+export function findingsComparator(
+  findings: readonly Finding[],
+  feed?: TriageSuggestionFeed,
+): (sort: ReviewSortMode, a: number, b: number) => number {
+  const suggested = (index: number): Finding => {
+    const finding = findings[index]!;
+    const suggestion = feed?.get(index);
+    return suggestion ? { ...finding, triageSuggestion: suggestion } : finding;
+  };
+  return (sort, a, b) => {
+    const left = findings[a]!;
+    const right = findings[b]!;
+    const severity = SEVERITY_ORDER.indexOf(left.severity) - SEVERITY_ORDER.indexOf(right.severity);
+    const file = left.file.localeCompare(right.file);
+    const line = left.line - right.line;
+    const original = a - b;
+    switch (sort) {
+      case "file":
+        return file || line || severity || original;
+      case "priority":
+        return compareFindingsByExploitability(left, right) || original;
+      case "reviewer":
+        return left.reviewer.localeCompare(right.reviewer, undefined, { sensitivity: "base" }) || severity || file || line || original;
+      case "blast":
+        return (right.blastRadius?.score ?? -1) - (left.blastRadius?.score ?? -1) || severity || file || line || original;
+      case "suggested":
+        return compareFindingsBySuggestion(suggested(a), suggested(b)) || original;
+    }
+  };
+}
+
 export async function openFindingsReviewDialog(
   ctx: ExtensionCommandContext,
   findings: Finding[],
-  terminalRows: number,
   degradationNote?: string,
   restore?: ReviewSessionState,
   feed?: TriageSuggestionFeed,
@@ -130,9 +176,9 @@ export async function openFindingsReviewDialog(
     const outcome = await showOpenTuiDialog<DialogReviewOutcome>(
       ctx,
       (done) => createElement(FindingsReview, {
-        width: FINDINGS_REVIEW_DIALOG_SIZE.columns,
-        height: terminalRows,
+        width: DIALOG_WIDTH,
         findings: dialogFindings,
+        compare: findingsComparator(findings, feed),
         ...(degradationNote ? { degradationNote } : {}),
         ...(restore ? { restore: toDialogReviewState(restore) } : {}),
         ...(onWriteHandoff ? {
@@ -146,7 +192,7 @@ export async function openFindingsReviewDialog(
       }),
       {
         title: "persona-audit: Findings Review",
-        width: FINDINGS_REVIEW_DIALOG_SIZE.columns,
+        width: DIALOG_WIDTH,
         maxHeight: DIALOG_MAX_HEIGHT,
         fallback: { kind: "cancelled", state: { statuses: [], selected: 0, sort: "file", expanded: [], fixedSha: {} } },
       },
@@ -195,17 +241,20 @@ export async function openRetryCheckpointDialog(
     return await showOpenTuiDialog<RetryResult>(
       ctx,
       (done) => createElement(RetryCheckpoint, {
-        width: RETRY_DIALOG_SIZE.columns,
+        width: DIALOG_WIDTH,
         kind,
         current: selected,
         models,
-        ...(options.detail !== undefined ? { detail: options.detail } : {}),
-        ...(options.failures !== undefined ? { failures: options.failures } : {}),
+        // Provider errors arrive with line breaks and stray control bytes; the checkpoint shows them as one line.
+        ...(options.detail !== undefined ? { detail: normalizeFindingText(options.detail) } : {}),
+        ...(options.failures !== undefined
+          ? { failures: options.failures.map((failure) => ({ ...failure, detail: normalizeFindingText(failure.detail).replace(/\s+/g, " ") })) }
+          : {}),
         onDone: done,
       }),
       {
         title: `persona-audit: ${kind} retry checkpoint`,
-        width: RETRY_DIALOG_SIZE.columns,
+        width: DIALOG_WIDTH,
         maxHeight: DIALOG_MAX_HEIGHT,
         fallback,
       },
@@ -224,7 +273,6 @@ export async function openFixGateDialog(
   ctx: DialogHost,
   finding: Finding,
   input: FixGateInput,
-  terminalRows: number,
   onReady?: (settle: (decision: FixGateDecision) => void) => void,
   onError?: (error: unknown) => void,
 ): Promise<FixGateDecision | undefined> {
@@ -234,8 +282,7 @@ export async function openFixGateDialog(
       (done) => {
         onReady?.(done);
         return createElement(FixGate, {
-          width: FIX_GATE_DIALOG_SIZE.columns,
-          height: terminalRows,
+          width: DIALOG_WIDTH,
           finding: toDialogFixFinding(finding),
           diff: input.diff,
           ...(input.verdictNote ? { verdict: input.verdictNote } : {}),
@@ -248,7 +295,7 @@ export async function openFixGateDialog(
       },
       {
         title: `persona-audit: Fix Now — ${finding.file}`,
-        width: FIX_GATE_DIALOG_SIZE.columns,
+        width: DIALOG_WIDTH,
         maxHeight: DIALOG_MAX_HEIGHT,
         fallback: "discard",
       },
@@ -263,15 +310,13 @@ export async function openReportViewerDialog(
   ctx: ExtensionCommandContext,
   reportText: string,
   header: ReportViewerHeader,
-  terminalRows: number,
 ): Promise<boolean> {
   const title = header.title ?? `Audit Report — ${header.status} · ${header.findingCount} findings · verification ${header.verification}`;
   try {
     await showOpenTuiDialog<void>(
       ctx,
       (done) => createElement(ReportViewer, {
-        width: REPORT_VIEWER_DIALOG_SIZE.columns,
-        height: terminalRows,
+        width: DIALOG_WIDTH,
         title,
         path: header.reportPath,
         markdown: reportText,
@@ -279,7 +324,7 @@ export async function openReportViewerDialog(
       }),
       {
         title: `persona-audit: ${title}`,
-        width: REPORT_VIEWER_DIALOG_SIZE.columns,
+        width: DIALOG_WIDTH,
         maxHeight: DIALOG_MAX_HEIGHT,
         fallback: undefined,
       },
@@ -289,4 +334,50 @@ export async function openReportViewerDialog(
     reportFailure(ctx, "Persona-audit report viewer", error);
     return false;
   }
+}
+
+/** Show the scrollable report after a completed audit. A dialog that fails has said why. */
+export async function showReportViewer(
+  ctx: ExtensionCommandContext,
+  reportText: string,
+  header: ReportViewerHeader,
+): Promise<void> {
+  if (ctx.mode !== "tui") return;
+  await openReportViewerDialog(ctx, reportText, header);
+}
+
+/**
+ * Show the findings review. Deferred findings handed off from inside it are written to a handoff
+ * file here. Outside TUI mode, or when the dialog fails (it has said why), the review is cancelled,
+ * which keeps any Fix Now fixes and applies nothing else.
+ */
+export async function showFindingsReview(
+  ctx: ExtensionCommandContext,
+  findings: Finding[],
+  handoff: { slug: string; isoDate: string; scope: string; reviewers: string[] },
+  degradationNote?: string,
+  restore?: ReviewSessionState,
+  /** Live classifier suggestions; badges repaint as they arrive. */
+  feed?: TriageSuggestionFeed,
+): Promise<FindingsReviewOutcome> {
+  const onWriteHandoff = async (deferred: Finding[]): Promise<string> => {
+    const relPath = handoffRelPath(handoff.slug);
+    const headCommit = await gitHeadCommit(ctx.cwd);
+    await writeReportFile(
+      ctx.cwd,
+      relPath,
+      renderDeferredHandoff(
+        {
+          isoDate: handoff.isoDate,
+          scope: handoff.scope,
+          reviewers: handoff.reviewers,
+          ...(headCommit ? { headCommit } : {}),
+        },
+        deferred,
+      ),
+    );
+    return relPath;
+  };
+  if (ctx.mode !== "tui") return { kind: "cancelled" };
+  return (await openFindingsReviewDialog(ctx, findings, degradationNote, restore, feed, onWriteHandoff)) ?? { kind: "cancelled" };
 }

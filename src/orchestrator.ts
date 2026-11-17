@@ -26,9 +26,13 @@ import { fallbackSteSummary, MAX_FINDING_SUMMARY_LENGTH } from "./findingSummary
 import { type AuditProgressWidget, formatTokens } from "./components/AuditProgress.ts";
 import { TIERS } from "./components/ReviewerData.ts";
 import { RunClock } from "@underactive/pi-topping-primitives/activity";
-import type { ReviewerFailurePrompt } from "./components/ReviewerRetry.ts";
-import type { AdjudicatorFailurePrompt, AdjudicatorRetryDecision } from "./components/AdjudicatorRetry.ts";
-import type { VerifierFailurePrompt, VerifierRetryDecision } from "./components/VerifierRetry.ts";
+import type {
+  AdjudicatorFailurePrompt,
+  AdjudicatorRetryDecision,
+  ReviewerFailurePrompt,
+  VerifierFailurePrompt,
+  VerifierRetryDecision,
+} from "./ui/retry-prompts.ts";
 import {
   ADJUDICATOR_APPLY_DIRECTIVE,
   ADJUDICATOR_RECONCILE_DIRECTIVE,
@@ -2321,7 +2325,7 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
     // parked on a human decision.
     runSummary.note = "awaiting triage decisions";
     refreshSummary();
-    const { showFindingsReview } = await import("./components/FindingsReview.ts");
+    const { showFindingsReview } = await import("./ui/review-dialogs.ts");
     const { runFixNow } = await import("./fixNow.ts");
     const { openFixProgress } = await import("./components/FixProgress.ts");
 

@@ -35,6 +35,7 @@ test("loads relative, quoted, and mixed image paths", async () => fixture(async 
   assert.equal(parsed.context.images.length, 2);
   assert.deepEqual(parsed.context.images.map((image) => image.mimeType), ["image/png", "image/jpeg"]);
   assert.equal(parsed.context.text, "Prioritize layout\n[Attached image: screen.png]\n[Attached image: two.jpg]");
+  assert.deepEqual(parsed.attached, ["screen.png", "two.jpg"], "the attached lines, unquoted, in order");
 }));
 
 test("keeps missing and unsupported paths as text with warnings", async () => fixture(async (cwd) => {
@@ -42,6 +43,7 @@ test("keeps missing and unsupported paths as text with warnings", async () => fi
   const parsed = await parseAdditionalContext("missing.webp\nnotes.bmp", cwd);
   assert.equal(parsed.context.text, "missing.webp\nnotes.bmp");
   assert.equal(parsed.context.images.length, 0);
+  assert.deepEqual(parsed.attached, []);
   assert.match(parsed.warnings.join("\n"), /not found.*missing\.webp/i);
   assert.match(parsed.warnings.join("\n"), /unsupported.*notes\.bmp/i);
 }));
@@ -54,6 +56,7 @@ test("rejects oversized files and files beyond the image count limit", async () 
   const paths = Array.from({ length: MAX_CONTEXT_IMAGES + 1 }, (_, index) => `${index}.png`).join("\n");
   const parsed = await parseAdditionalContext(`large.png\n${paths}`, cwd);
   assert.equal(parsed.context.images.length, MAX_CONTEXT_IMAGES);
+  assert.deepEqual(parsed.attached, paths.split("\n").slice(0, MAX_CONTEXT_IMAGES), "an image past a limit is not listed");
   assert.match(parsed.warnings.join("\n"), /exceeds 5 MiB/);
   assert.match(parsed.warnings.join("\n"), /Image limit reached/);
 }));

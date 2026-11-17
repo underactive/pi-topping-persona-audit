@@ -12,11 +12,11 @@ import { homedir } from "node:os";
 import * as path from "node:path";
 import { createElement } from "react";
 import { formatAge, formatBytes, type ArtifactEntry } from "../artifacts.ts";
-import { DIALOG_MAX_HEIGHT, PURGE_DIALOG_SIZE, type TerminalSize } from "./dialog-fit.ts";
+import { DIALOG_MAX_HEIGHT, DIALOG_WIDTH } from "./dialog-fit.ts";
 import { PurgeMenu, type PurgeResult } from "./generated/persona-audit/admin.ts";
 import type { Artifact } from "./generated/persona-audit/data.ts";
 
-/** Reported to pi as the question the session is blocked on, as the pi-tui menu does. */
+/** Reported to pi as the question the session is blocked on. */
 export const PURGE_DIALOG_TITLE = "Persona-audit: Purge artifacts";
 
 /** The directory with the home directory written as `~`. */
@@ -65,20 +65,18 @@ export async function openPurgeDialog(
   ctx: ExtensionCommandContext,
   entries: readonly ArtifactEntry[],
   preTagged: ReadonlySet<string>,
-  terminal: TerminalSize,
 ): Promise<ArtifactEntry[] | null | undefined> {
   try {
     const result = await showOpenTuiDialog<PurgeResult>(
       ctx,
       (done) => createElement(PurgeMenu, {
-        width: PURGE_DIALOG_SIZE.columns,
-        height: Math.max(PURGE_DIALOG_SIZE.rows - 6, terminal.rows - 6),
+        width: DIALOG_WIDTH,
         artifacts: toDialogArtifacts(entries, preTagged),
         loadPreview: previewLoader(entries),
         notify: (message, kind) => ctx.ui.notify(message, kind),
         onDone: done,
       }),
-      { title: PURGE_DIALOG_TITLE, width: PURGE_DIALOG_SIZE.columns, maxHeight: DIALOG_MAX_HEIGHT, fallback: null },
+      { title: PURGE_DIALOG_TITLE, width: DIALOG_WIDTH, maxHeight: DIALOG_MAX_HEIGHT, fallback: null },
     );
     if (!result) return null;
     const ids = new Set(result.deleted.map((artifact) => artifact.id));

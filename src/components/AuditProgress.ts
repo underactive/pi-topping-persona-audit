@@ -4,32 +4,23 @@
  * elapsed time, grouped by phase.
  */
 
-import type { ThemeColor, WidgetPlacement } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth, visibleWidth, type Component } from "@earendil-works/pi-tui";
+import type { WidgetPlacement } from "@earendil-works/pi-coding-agent";
+import type { Component } from "@earendil-works/pi-tui";
+import type { ThemeSource } from "@underactive/pi-topping-opentui/theme";
 import {
-  ACTIVITY_METER_WIDTH,
   ActivityMeter,
   type ActivityMeterLevel,
   formatElapsedClock as formatElapsed,
-  MIN_WAIT_DISPLAY_MS,
   rateToLevel,
   RunClock,
   TokRateTracker,
 } from "@underactive/pi-topping-primitives/activity";
-import {
-  type AnsiTheme,
-  highlightActivity,
-  renderIdleMeter,
-  renderMeter as renderMeterCells,
-  shimmerString,
-} from "@underactive/pi-topping-primitives/activity-tui";
 import { QUADRANT_SPINNER_FRAMES as TABLE_FRAMES } from "@underactive/pi-topping-primitives/glyphs";
-import { formatCostUsd as formatCost, sanitizeTerminalBytes as sanitizeTerminalText } from "@underactive/pi-topping-primitives/text";
 import { normalizeFindingText } from "../dedup.ts";
-import { DEFAULT_METER_SETTINGS, resolveMeterColor, type MeterSettings, type ThinkingLevel } from "../modelConfig.ts";
+import { DEFAULT_METER_SETTINGS, type MeterSettings, type ThinkingLevel } from "../modelConfig.ts";
 import type { Finding, HeadlessProgress } from "../types.ts";
-import { FULLSCREEN_WIDGET_RESERVE_ROWS, usableTerminalRows, type ViewportHost, wrapText } from "./menuChrome.ts";
-import { isThemeSource, renderOpenTuiProgress } from "./AuditProgressOpenTui.ts";
+import { renderOpenTuiProgress } from "./AuditProgressOpenTui.ts";
+import { FULLSCREEN_WIDGET_RESERVE_ROWS, usableTerminalRows, type ViewportHost } from "./viewport.ts";
 
 export const AUDIT_PROGRESS_WIDGET_KEY = "persona-audit-progress";
 const SPINNER_INTERVAL_MS = 100;
@@ -39,9 +30,6 @@ export const AUDIT_PHASES = ["Review", "Triage", "Implement", "Verify"] as const
 export type AuditPhase = (typeof AUDIT_PHASES)[number];
 
 export type RowState = "queued" | "working" | "done" | "error" | "cancelled";
-
-/** Highest wrapped line count the fix-now rationale may claim under its row. */
-const FIX_NOW_RATIONALE_MAX_LINES = 3;
 
 /**
  * Nested Fix Now status rendered as sub-rows under the `fix now · …` row while
@@ -60,11 +48,6 @@ export interface FixNowDetail {
   awaitingCancelConfirm: boolean;
 }
 
-const TABLE_TITLE = "Persona-audit";
-/** Shortest rule run allowed between the title and the right-side run metadata before that side is dropped. */
-const MIN_TITLE_SCOPE_GAP = 2;
-/** Shortest gap allowed between the footer summary and the total before the total moves to its own line. */
-const MIN_FOOTER_TOTAL_GAP = 2;
 /**
  * Share of the terminal the table may claim. Lower than an overlay's would be:
  * this sits above the editor for the whole run and cannot be dismissed, so it
@@ -72,55 +55,14 @@ const MIN_FOOTER_TOTAL_GAP = 2;
  * above pi's dock, since the table shares the dock with the editor and footer.
  */
 const TABLE_HEIGHT_RATIO = 0.5;
-/** Border, header, separator, footer and bottom border — the rows a table always costs. */
+/** The fewest rows the table is ever budgeted, however short the terminal. */
 const TABLE_CHROME_ROWS = 5;
-/** One horizontal-rule heading row per phase group. */
-const PHASE_HEADING_ROWS = 1;
-/** One blank row between each adjacent phase group. */
-const PHASE_SEPARATOR_ROWS = 1;
-/** Two band text lines plus their separator rule — the extra rows the phase/model band costs when shown. */
-const PHASE_BAND_ROWS = 3;
-/** Narrowest a band column may get before its centered label becomes unreadable; below this the band is dropped. */
-const PHASE_BAND_MIN_COL = 12;
-/**
- * The two halves of the tall right-chevron drawn between phase columns: a "\"
- * powerline diagonal (U+E0B9) on the name row stacked over a "/" (U+E0BB) on
- * the model row. Needs a Powerline/Nerd Font to render; plainer fonts show tofu.
- */
-const PHASE_SEP_TOP = "\u{E0B9}";
-const PHASE_SEP_BOTTOM = "\u{E0BB}";
-
-const COLUMN_GAP = 2;
-const STATUS_COL_WIDTH = 2;
-const CTX_COL_WIDTH = 14;
-const ELAPSED_COL_WIDTH = 6;
-const TURNS_COL_WIDTH = 5;
-const TOOLS_COL_WIDTH = 5;
-const COST_COL_WIDTH = 8;
-const LABEL_COL_MIN = 8;
-/** Label width below which reviewer names stop being distinguishable from their siblings. */
-const LABEL_COL_READABLE = 24;
-const ACTIVITY_COL_MIN = 10;
 
 /** Format a token count as `X.XM` / `X.XK`, or raw when small. */
 export function formatTokens(tokens: number): string {
   if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`;
   if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(1)}K`;
   return String(tokens);
-}
-
-/**
- * Context usage as a right-aligned `${pct}/${window}`. When the context window
- * cannot be resolved, shows the raw token count instead of a percentage that
- * would be guesswork.
- */
-export function contextCell(contextTokens: number | undefined, contextWindow: number | undefined): string {
-  const used = contextTokens && contextTokens > 0 ? contextTokens : 0;
-  if (!contextWindow || contextWindow <= 0) {
-    return (used > 0 ? `${formatTokens(used)} tok` : "—").padStart(CTX_COL_WIDTH);
-  }
-  const ratio = Math.max(0, Math.min(1, used / contextWindow));
-  return `${(ratio * 100).toFixed(1)}%/${formatTokens(contextWindow)}`.padStart(CTX_COL_WIDTH);
 }
 
 /** Aggregate model-cost telemetry across every progress row. */
@@ -144,12 +86,12 @@ export function totalCost(rows: AuditProgressRow[]): TotalCost {
 }
 
 /**
- * Shared helpers under the names this module's importers and tests already use: the elapsed
- * clock (`M:SS`, minutes keep counting past 60), the cost formatter and the terminal-byte sanitiser.
+ * The elapsed clock (`M:SS`, minutes keep counting past 60), under the name this module's
+ * importers and tests already use.
  */
-export { formatCost, formatElapsed, sanitizeTerminalText };
+export { formatElapsed };
 
-/** Working rows animate, render bright, and may carry a tool-activity sub-row. */
+/** Working rows animate and sample their output rate into the activity meter. */
 function isActive(state: RowState): boolean {
   return state === "working";
 }
@@ -247,13 +189,8 @@ export interface ProgressHost extends ViewportHost {
   requestRender(force?: boolean): void;
 }
 
-/** The slice of pi's `Theme` the table needs. Structural so tests can supply a stub. */
-export interface ProgressTheme {
-  fg(color: ThemeColor, text: string): string;
-  bold(text: string): string;
-  /** 24-bit ANSI escape for a color, used to shimmer the active phase in the band. Optional so structural test stubs need not implement it; the active phase falls back to its flat highlighted tone when absent. */
-  getFgAnsi?(color: ThemeColor): string;
-}
+/** The slice of pi's `Theme` the table needs: what the OpenTUI runtime resolves its palette from. Structural so tests can supply a stub. */
+export type ProgressTheme = ThemeSource;
 
 /** The slice of pi's extension context the widget needs. Structural so tests can stub it. */
 export interface AuditProgressContext {
@@ -615,130 +552,18 @@ export class AuditProgressWidget implements AuditProgressView {
   }
 }
 
-/**
- * Folds the Review phase down when the table outgrows its row budget. Review is
- * the only phase that scales with the reviewer × pass matrix, so a large run
- * buries the live work under hundreds of settled and queued rows. Done and
- * queued passes collapse into one summary row each; working, failed and
- * cancelled passes are always kept, so nothing in flight or broken is hidden.
- *
- * Render-only — `progressRows()` and `snapshot()` keep the full list, which is
- * what leaves frozen transcripts complete.
- */
-export function collapseReviewRows(rows: AuditProgressRow[], maxBaseRows: number): AuditProgressRow[] {
-  if (rows.length <= maxBaseRows) return rows;
-
-  const start = rows.findIndex((row) => row.phase === "Review");
-  if (start < 0) return rows;
-  // progressRows() sorts by phase, so the Review rows are one contiguous block.
-  const review = rows.filter((row) => row.phase === "Review");
-
-  let done = 0;
-  let queued = 0;
-  const unfoldable: AuditProgressRow[] = [];
-  for (const row of review) {
-    if (row.state === "done") done++;
-    else if (row.state === "queued") queued++;
-    else unfoldable.push(row);
-  }
-  if (done + queued === 0) return rows;
-
-  const folded = [
-    ...(done > 0 ? [reviewSummaryRow("done", `${done} ${done === 1 ? "pass" : "passes"} done`)] : []),
-    ...unfoldable,
-    ...(queued > 0 ? [reviewSummaryRow("queued", `${queued} queued`)] : []),
-  ];
-  const collapsed = [...rows.slice(0, start), ...folded, ...rows.slice(start + review.length)];
-  return collapsed.map((row, index) => ({
-    ...row,
-    firstOfPhase: collapsed[index - 1]?.phase !== row.phase,
-  }));
-}
-
-/** An aggregate stand-in for folded passes. Its key has no meter, so it draws the idle trace. */
-function reviewSummaryRow(state: "done" | "queued", label: string): AuditProgressRow {
-  return {
-    key: `review:summary:${state}`,
-    phase: "Review",
-    label,
-    state,
-    statusText: defaultStatusText(state),
-    elapsedMs: 0,
-    turns: 0,
-    toolCalls: 0,
-    outputTokens: 0,
-    outputRevision: 0,
-    firstOfPhase: false,
-  };
-}
-
-/** Count the render-only heading and blank separator rows needed for the phase groups in `rows`. */
-function phaseSectionRows(rows: AuditProgressRow[]): number {
-  const headingCount = rows.reduce(
-    (count, row, index) => count + (index === 0 || rows[index - 1]?.phase !== row.phase ? 1 : 0),
-    0,
-  );
-  return headingCount * PHASE_HEADING_ROWS + Math.max(0, headingCount - 1) * PHASE_SEPARATOR_ROWS;
-}
-
-/** Column widths for the table, shedding columns as the terminal narrows. */
-export function tableColumns(
-  bodyWidth: number,
-  labels: string[],
-): { label: number; activity: number; stats: boolean } {
-  const fixed = STATUS_COL_WIDTH + COLUMN_GAP + CTX_COL_WIDTH + COLUMN_GAP + ACTIVITY_METER_WIDTH + COLUMN_GAP;
-  const statsWidth =
-    ELAPSED_COL_WIDTH +
-    COLUMN_GAP +
-    COST_COL_WIDTH +
-    COLUMN_GAP +
-    TOOLS_COL_WIDTH +
-    COLUMN_GAP +
-    TURNS_COL_WIDTH +
-    COLUMN_GAP;
-  // Elapsed, turns, tool calls, and cost go first on a narrow terminal: they are ambient readings,
-  // and are not worth truncating the row label down to an unreadable stub.
-  const stats = bodyWidth - fixed - statsWidth >= LABEL_COL_READABLE + ACTIVITY_COL_MIN;
-  const available = bodyWidth - fixed - (stats ? statsWidth : 0);
-  if (available < LABEL_COL_MIN) return { label: Math.max(1, available), activity: 0, stats };
-
-  const widest = labels.reduce((max, label) => Math.max(max, visibleWidth(label)), 0);
-  const label = Math.min(Math.max(LABEL_COL_MIN, widest), Math.max(LABEL_COL_MIN, available - ACTIVITY_COL_MIN));
-  return { label, activity: available - label, stats };
-}
-
-/** Pad or truncate a possibly-ANSI-colored cell to exactly `width` columns. */
-function cell(text: string, width: number, align: "left" | "right" | "center" = "left"): string {
-  if (width <= 0) return "";
-  const shown = visibleWidth(text) > width ? truncateToWidth(text, width, "…") : text;
-  const padding = Math.max(0, width - visibleWidth(shown));
-  if (align === "right") return " ".repeat(padding) + shown;
-  if (align === "center") {
-    const left = Math.floor(padding / 2);
-    return " ".repeat(left) + shown + " ".repeat(padding - left);
-  }
-  return shown + " ".repeat(padding);
-}
-
-/** Like sanitizeTerminalText but keeps tab — git diff lines rely on it for indentation. */
-export function sanitizeDiffLine(text: string): string {
-  return text.replace(/[\x00-\x08\x0a-\x1f\x7f-\x9f]/g, "");
-}
-
-/** Shorten a `provider/id` model label (or a bare frontmatter id) to its id, for the space-constrained band. */
-function shortModelId(label: string | undefined): string {
-  if (!label) return "default";
-  const sanitized = sanitizeTerminalText(label);
-  const idx = sanitized.lastIndexOf("/");
-  return idx === -1 ? sanitized : sanitized.slice(idx + 1);
-}
-
 interface RowMeter {
   meter: ActivityMeter;
   tracker: TokRateTracker;
   revision: number;
 }
 
+/**
+ * The docked table, drawn by the generated `ProgressTable` (`./AuditProgressOpenTui.ts`). This
+ * component owns what the drawing cannot: the ticker that animates working rows and samples
+ * their output rate into the activity meters, the settled traces a frozen copy is seeded with,
+ * and the row budget that keeps the table from crowding out the editor.
+ */
 export class AuditProgressTable implements Component {
   private readonly tui: ProgressHost;
   private readonly theme: ProgressTheme;
@@ -747,7 +572,6 @@ export class AuditProgressTable implements Component {
   private readonly meters = new Map<string, RowMeter>();
   private readonly meterSettings: MeterSettings;
   private readonly frozen: boolean;
-  private readonly createdAt = Date.now();
   private spinFrame = 0;
 
   /** `frozenMeters`, when given, seeds settled traces and skips the ticker entirely — used for the read-only transcript copy. */
@@ -811,13 +635,6 @@ export class AuditProgressTable implements Component {
     }
   }
 
-  private renderMeter(key: string, active: boolean, phase: AuditPhase): string {
-    const meter = this.meters.get(key)?.meter;
-    if (!meter) return renderIdleMeter(this.theme);
-    const color = resolveMeterColor(this.meterSettings.color, this.view.phaseThinking()[phase]);
-    return renderMeterCells(meter, this.theme, color, !active);
-  }
-
   /**
    * How many lines the table may use, so it never crowds out the editor below
    * it. In fullscreen the ratio applies to the rows above pi's dock, since the
@@ -830,303 +647,18 @@ export class AuditProgressTable implements Component {
     return Math.max(TABLE_CHROME_ROWS, Math.floor(usableTerminalRows(this.tui, FULLSCREEN_WIDGET_RESERVE_ROWS) * TABLE_HEIGHT_RATIO));
   }
 
-  /**
-   * Two centered rows — phase names, then their assigned model ids — shown
-   * above the table header, with a two-row powerline chevron standing between
-   * adjacent columns to trace the phase flow. Self-suppresses when no phase has
-   * a model, or the terminal is too narrow to keep each column readable. The
-   * active phase (and the chevrons touching it) shimmers in place of its flat
-   * highlighted tone when the theme can supply truecolor ANSI, matching
-   * pi-topping's "working" loader sweep.
-   */
-  private phaseModelBand(bodyWidth: number, now: number): string[] {
-    const models = this.view.phaseModels();
-    if (!AUDIT_PHASES.some((phase) => models[phase])) return [];
-    const sepCount = AUDIT_PHASES.length - 1;
-    const colWidth = Math.floor((bodyWidth - sepCount) / AUDIT_PHASES.length);
-    if (colWidth < PHASE_BAND_MIN_COL) return [];
-
-    const th = this.theme;
-    const active = this.view.activePhase();
-    const paint = (lit: boolean, text: string) => {
-      if (!lit) return th.fg("dim", text);
-      return th.getFgAnsi
-        ? shimmerString(text, now - this.createdAt, th as AnsiTheme, "ltr", "normal", true)
-        : th.fg("text", text);
-    };
-    // Each boundary carries a two-row powerline chevron: the "\" half on the name
-    // row stacks over the "/" half on the model row. Both rows share one column
-    // layout, so the halves land in the same terminal column and read as a
-    // single tall chevron. A separator lights with either phase it divides, so
-    // the active highlight flows along the pipeline.
-    const bandRow = (sep: string, textFor: (phase: AuditPhase) => string): string => {
-      const parts: string[] = [];
-      AUDIT_PHASES.forEach((phase, i) => {
-        parts.push(paint(phase === active, cell(textFor(phase), colWidth, "center")));
-        const next = AUDIT_PHASES[i + 1];
-        if (next !== undefined) parts.push(paint(phase === active || next === active, sep));
-      });
-      return parts.join("");
-    };
-    const nameRow = bandRow(PHASE_SEP_TOP, (phase) => phase);
-    const modelRow = bandRow(PHASE_SEP_BOTTOM, (phase) => shortModelId(models[phase]));
-    return [nameRow, modelRow];
-  }
-
   render(width: number): string[] {
-    if (isThemeSource(this.theme)) {
-      return renderOpenTuiProgress({
-        view: this.view,
-        width,
-        maxRows: this.rowBudget(),
-        frozen: this.frozen,
-        spin: this.spinFrame,
-        meterDirection: this.meterSettings.direction,
-        meterLevels: this.meterLevels(),
-        theme: this.theme,
-      });
-    }
-    const th = this.theme;
-    const innerWidth = Math.max(20, width);
-    const bodyWidth = Math.max(10, innerWidth - 4);
-    const border = (s: string) => th.fg("border", s);
-    const row = (s: string) => `  ${truncateToWidth(s, bodyWidth, "…", true)}  `;
-    const band = this.phaseModelBand(bodyWidth, Date.now());
-    const sourceRows = this.view.progressRows();
-    const footer = this.footerLines(bodyWidth, totalCost(sourceRows));
-    const maxBaseRows = Math.max(
-      1,
-      this.rowBudget() -
-        TABLE_CHROME_ROWS -
-        (footer.length - 1) -
-        (band.length > 0 ? PHASE_BAND_ROWS : 0) -
-        phaseSectionRows(sourceRows),
-    );
-    const rows = collapseReviewRows(sourceRows, maxBaseRows);
-    const cols = tableColumns(
-      bodyWidth,
-      rows.map((r) => sanitizeTerminalText(r.label)),
-    );
-    const spin = TABLE_FRAMES[this.spinFrame % TABLE_FRAMES.length] ?? "◐";
-
-    const gap = " ".repeat(COLUMN_GAP);
-    // Turns, tool calls, cost, and elapsed are pinned to the right edge so the
-    // activity column, whose values are by far the longest, keeps every column the others don't need.
-    interface LineParams { icon: string; label: string; ctx: string; meter: string; activity: string; turns: string; toolCalls: string; cost: string; elapsed: string }
-    const line = (p: LineParams) => {
-      const parts = [
-        `${cell(p.icon, STATUS_COL_WIDTH)}${cell(p.label, cols.label)}`,
-        cell(p.ctx, CTX_COL_WIDTH, "right"),
-        p.meter,
-      ];
-      if (cols.activity > 0) parts.push(cell(p.activity, cols.activity));
-      if (cols.stats) {
-        parts.push(
-          cell(p.turns, TURNS_COL_WIDTH, "right"),
-          cell(p.toolCalls, TOOLS_COL_WIDTH, "right"),
-          cell(p.cost, COST_COL_WIDTH, "right"),
-          cell(p.elapsed, ELAPSED_COL_WIDTH, "right"),
-        );
-      }
-      return row(parts.join(gap));
-    };
-
-    const dim = (s: string) => th.fg("dim", s);
-    const lines: string[] = [this.topBorder(innerWidth, border)];
-    for (const bandLine of band) lines.push(row(bandLine));
-    if (band.length > 0) lines.push(border("─".repeat(innerWidth)));
-    lines.push(
-      line({
-        icon: "",
-        label: dim("AGENT"),
-        ctx: dim("CTX"),
-        meter: dim(cell("MONITOR", ACTIVITY_METER_WIDTH)),
-        activity: dim("ACTIVITY"),
-        turns: dim("TURNS"),
-        toolCalls: dim("TOOLS"),
-        cost: dim("COST"),
-        elapsed: dim("TIME"),
-      }),
-    );
-
-    const freeBeforeDetail = Math.max(
-      0,
-      this.rowBudget() -
-        TABLE_CHROME_ROWS -
-        (footer.length - 1) -
-        rows.length -
-        phaseSectionRows(rows) -
-        (band.length > 0 ? PHASE_BAND_ROWS : 0),
-    );
-    // Nested fix-now detail consumes the same sub-row budget as tool activity.
-    // Shed order on a short terminal: rationale lines first, then the meta
-    // line, then activity sub-rows — the phase status and its cancel hint are
-    // the last lines standing, and agent rows are never touched.
-    let free = freeBeforeDetail;
-    const detailBlocks = new Map<string, string[]>();
-    for (const r of rows) {
-      const detail = isActive(r.state) ? r.fixNowDetail : undefined;
-      if (!detail) continue;
-      const block = this.fixNowDetailBlock(detail, bodyWidth);
-      const tail = [block.status, block.hint];
-      const head: string[] = [];
-      let room = free - tail.length;
-      if (room >= 1) {
-        head.push(block.meta);
-        room -= 1;
-      }
-      head.push(...block.rationale.slice(0, Math.max(0, room)));
-      free = Math.max(0, free - head.length - tail.length);
-      detailBlocks.set(r.key, [...head, ...tail]);
-    }
-    const activeRows = rows.filter((r) => isActive(r.state));
-    let subRowBudget = Math.min(free, activeRows.filter((r) => r.activity).length);
-    // Reserve one line under every active row before it reports activity. When
-    // a tool call arrives, it replaces that line instead of growing the table.
-    // On a short terminal, activity still outranks these cosmetic placeholders.
-    const reservedActivitySlots = free >= activeRows.length;
-    let renderedPhase = false;
-
-    for (const r of rows) {
-      const active = isActive(r.state);
-      const icon =
-        r.state === "done"
-          ? th.fg("success", "✓")
-          : r.state === "error" || r.state === "cancelled"
-            ? th.fg("error", "✗")
-            : r.state === "queued"
-              ? th.fg("dim", "○")
-              : th.fg("accent", spin);
-      const rowLabel = sanitizeTerminalText(r.label);
-      const statusText = sanitizeTerminalText(r.statusText);
-      const label = active ? th.fg("text", rowLabel) : th.fg("dim", rowLabel);
-      const status = r.state === "error" ? th.fg("error", statusText) : th.fg("dim", statusText);
-      if (r.firstOfPhase) {
-        if (renderedPhase) lines.push(row(""));
-        const heading = `── ${r.phase} `;
-        lines.push(row(dim(heading + "─".repeat(Math.max(0, bodyWidth - visibleWidth(heading))))));
-        renderedPhase = true;
-      }
-      lines.push(
-        line({
-          icon,
-          label,
-          ctx: contextCell(r.contextTokens, r.contextWindow),
-          meter: this.renderMeter(r.key, active, r.phase),
-          activity: status,
-          turns: String(r.turns),
-          toolCalls: String(r.toolCalls ?? 0),
-          cost: formatCost(r.costUsd),
-          elapsed: formatElapsed(r.elapsedMs),
-        }),
-      );
-
-      if (active && r.activity && subRowBudget > 0) {
-        subRowBudget--;
-        lines.push(row(this.activitySubRow(sanitizeTerminalText(r.activity), bodyWidth)));
-      } else if (active && reservedActivitySlots) {
-        lines.push(row(""));
-      }
-      const detailBlock = detailBlocks.get(r.key);
-      if (detailBlock) {
-        for (const detailLine of detailBlock) lines.push(row(detailLine));
-      }
-    }
-
-    lines.push(border("─".repeat(innerWidth)));
-    for (const footerLine of footer) lines.push(row(footerLine));
-    lines.push(border("═".repeat(innerWidth)));
-    return lines;
-  }
-
-  /**
-   * Run summary on the left; whole-run cost and work time on the right. The
-   * elapsed time is the run's own duration, not the sum of row clocks, which
-   * overlap whenever passes run concurrently, and excludes user-decision spans.
-   */
-  private footerLines(bodyWidth: number, cost: TotalCost): string[] {
-    const dim = (s: string) => this.theme.fg("dim", s);
-    const summary = sanitizeTerminalText(this.view.footerSummary());
-    // An asterisk means at least one row has unavailable or invalid cost telemetry.
-    const waiting = this.view.waitingMs();
-    const waitingSuffix = waiting >= MIN_WAIT_DISPLAY_MS ? ` (+${formatElapsed(waiting)} waiting)` : "";
-    const total = `total cost ${formatCost(cost.costUsd)}${cost.incomplete ? "*" : ""}  total ${formatElapsed(this.view.totalMs())}${waitingSuffix}`;
-    const rhs = this.frozen ? dim(total) : `${dim(total)}  ${dim("ctrl+shift+c: cancel")}`;
-    const gap = bodyWidth - visibleWidth(summary) - visibleWidth(rhs);
-    if (gap >= MIN_FOOTER_TOTAL_GAP) return [dim(summary) + " ".repeat(gap) + rhs];
-    return [dim(summary), cell(rhs, bodyWidth, "right")];
-  }
-
-  /**
-   * Merged-cell tool activity line, indented past the status icon so it aligns
-   * with the row labels above.
-   */
-  private activitySubRow(activity: string, bodyWidth: number): string {
-    const indent = STATUS_COL_WIDTH;
-    const room = Math.max(0, bodyWidth - indent);
-    return `${" ".repeat(indent)}${cell(`${this.theme.fg("dim", "↳ ")}${highlightActivity(this.theme, activity)}`, room)}`;
-  }
-
-  /**
-   * The nested fix-now block under a `fix now · …` row: meta, wrapped
-   * rationale (capped, with a trailing ellipsis when cut), phase status, and
-   * the cancel/settling hint. Indented like the activity sub-row; the caller
-   * decides how much of it fits the height budget.
-   */
-  private fixNowDetailBlock(
-    detail: FixNowDetail,
-    bodyWidth: number,
-  ): { meta: string; rationale: string[]; status: string; hint: string } {
-    const indent = " ".repeat(STATUS_COL_WIDTH);
-    const room = Math.max(2, bodyWidth - STATUS_COL_WIDTH);
-    const th = this.theme;
-    const settling = detail.phase === "accepting" || detail.phase === "retrying" || detail.phase === "discarding";
-
-    const meta = indent + th.fg("dim", `${sanitizeTerminalText(detail.category)}/${sanitizeTerminalText(detail.severity)}${detail.attempt > 1 ? ` · attempt ${detail.attempt}` : ""}`);
-
-    const wrapped = wrapText(sanitizeTerminalText(detail.rationale), room);
-    const truncated = wrapped.length > FIX_NOW_RATIONALE_MAX_LINES;
-    const rationale = wrapped.slice(0, FIX_NOW_RATIONALE_MAX_LINES).map((line, index) =>
-      indent + th.fg("dim", truncated && index === FIX_NOW_RATIONALE_MAX_LINES - 1 ? `${line} …` : line),
-    );
-
-    const phaseLabel = detail.phase === "fixing"
-      ? "implementing fix"
-      : detail.phase === "verifying"
-        ? "verifying fix"
-        : detail.phase === "accepting"
-          ? "accepting fix"
-          : detail.phase === "retrying"
-            ? "preparing retry"
-            : "discarding fix";
-    const status = indent + th.fg("accent", `${phaseLabel} · ${sanitizeTerminalText(detail.statusText)}`);
-
-    const hint = settling
-      ? indent + th.fg("dim", "Please wait…")
-      : detail.awaitingCancelConfirm
-        ? indent + th.fg("warning", "Press Esc again to cancel this fix — clean edits will be reverted")
-        : indent + th.fg("dim", "Esc cancel fix");
-
-    return { meta, rationale, status, hint };
-  }
-
-  private topBorder(innerWidth: number, border: (s: string) => string): string {
-    const title = ` ${TABLE_TITLE} `;
-    const head = `${border("══")}${this.theme.fg("accent", title)}`;
-    const hash = this.view.baseHash ? `@${sanitizeTerminalText(this.view.baseHash)}` : undefined;
-    const scope = this.view.scope ? sanitizeTerminalText(this.view.scope) : undefined;
-    const rhs = [scope, hash].filter(Boolean).join(" · ");
-    const right = rhs ? ` ${rhs} ` : "";
-    const rightFill = innerWidth - 4 - visibleWidth(title) - visibleWidth(right);
-    // A narrow terminal drops the right side rather than truncating it: a
-    // cut-off path reads as a different scope, and both path and base hash are
-    // in the report.
-    if (right && rightFill >= MIN_TITLE_SCOPE_GAP) {
-      return `${head}${border("═".repeat(rightFill))}${this.theme.fg("dim", right)}${border("══")}`;
-    }
-    const fill = innerWidth - 2 - visibleWidth(title);
-    if (fill < 0) return border("═".repeat(innerWidth));
-    return `${head}${border("═".repeat(fill))}`;
+    return renderOpenTuiProgress({
+      view: this.view,
+      width,
+      maxRows: this.rowBudget(),
+      frozen: this.frozen,
+      spin: this.spinFrame,
+      meterColor: this.meterSettings.color,
+      meterDirection: this.meterSettings.direction,
+      meterLevels: this.meterLevels(),
+      theme: this.theme,
+    });
   }
 
   invalidate(): void {}

@@ -1,32 +1,24 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { Component, KeybindingsManager, TUI, TuiMode } from "@earendil-works/pi-tui";
-import type { TerminalInputHandler, Theme } from "@earendil-works/pi-coding-agent";
+import type { Component } from "@earendil-works/pi-tui";
+import type { TerminalInputHandler } from "@earendil-works/pi-coding-agent";
 import {
-  FixGate,
   openFixProgress,
-  type FixGateDecision,
   type FixGateInput,
-  type FixProgressHost,
-  type FixProgressTheme,
   type FixProgressUi,
 } from "../src/components/FixProgress.ts";
 import type { AuditProgressWidget } from "../src/components/AuditProgress.ts";
-import { PROMPT_OVERLAY_OPTIONS } from "../src/components/menuChrome.ts";
 import type { Finding } from "../src/types.ts";
+import { DIALOG_WIDTH } from "../src/ui/dialog-fit.ts";
+import { press, screen, type ShownComponent } from "./helpers/dialog-harness.ts";
 
-const strip = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
 const ESCAPE = "\x1b";
 /** Kitty keyboard protocol release event for the Escape key (CSI 27;1:3u). */
 const ESCAPE_RELEASE = "\x1b[27;1:3u";
-const DOWN = "\x1b[B";
-const CTRL_C = "";
-const WIDTH = 90;
+const CTRL_C = "\x03";
 
-const theme: FixProgressTheme = {
-  fg: (_color, text) => text,
-  bold: (text) => text,
-};
+/** The two members the OpenTUI runtime resolves its palette from; every token paints as the terminal default. */
+const theme = { colors: {}, getColorMode: () => "truecolor" };
 
 const finding: Finding = {
   reviewer: "Security Engineer",
@@ -48,233 +40,23 @@ const progress = {
   outputRevision: 0,
 };
 
-// ── FixGate (one decision overlay per gate) ────────────────────────────────
-
-function gateHarness(input: FixGateInput, rows = 40, mode?: TuiMode) {
-  const host: FixProgressHost = { requestRender: () => {}, terminal: { rows }, mode };
-  const decisions: FixGateDecision[] = [];
-  const component = new FixGate(finding, input, theme, host, (decision) => decisions.push(decision));
-  return {
-    component,
-    host,
-    lines: () => component.render(WIDTH).map(strip),
-    press: (key: string) => component.handleInput(key),
-    decisions: () => decisions,
-  };
-}
-
-test("the gate preserves tab indentation in diff lines", () => {
-  const ui = gateHarness({
-    diff: [
-      "@@ -358,3 +358,5 @@ export class MoaProgressWidget implements MoaProgressView {",
-      " else s.endedAt = undefined;",
-      "+else {",
-      "+\t\ts.startedAt ??= Date.now();",
-      "+\t\ts.endedAt = undefined;",
-      "+}",
-    ].join("\n"),
-    commitPlanned: true,
-    attempt: 1,
-  });
-
-  const lines = ui.lines();
-  assert.ok(
-    lines.some((l) => l.includes("+\t\ts.startedAt ??= Date.now();")),
-    "tab-indented added lines must keep their leading tabs",
-  );
-  assert.ok(
-    lines.some((l) => l.includes("+\t\ts.endedAt = undefined;")),
-    "every added line in the hunk keeps indentation",
-  );
-});
-
-test("the gate shows the finding header, verdict, warnings, diff, and decision keys", () => {
-  const ui = gateHarness({
-    diff: "diff --git a/src/a.ts b/src/a.ts\n@@ -1 +1 @@\n-const a = 1;\n+const a = 2;",
-    verdictNote: "verifier: fixed — parameterized",
-    warnings: ["something to know"],
-    commitPlanned: true,
-    attempt: 1,
-  });
-
-  const lines = ui.lines();
-  assert.ok(lines.some((l) => l.includes("Fix Now — src/a.ts")));
-  assert.ok(lines.some((l) => l.includes("src/a.ts:12 · security/high")));
-  assert.ok(lines.some((l) => l.includes("✓ verifier: fixed")));
-  assert.ok(lines.some((l) => l.includes("⚠ something to know")));
-  assert.ok(lines.some((l) => l.includes("-const a = 1;")));
-  assert.ok(lines.some((l) => l.includes("+const a = 2;")));
-  assert.ok(lines.some((l) => l.includes("A accept & commit · R retry · D discard")));
-});
-
-test("A resolves accept, and decides exactly once", () => {
-  const ui = gateHarness({ diff: "+x", commitPlanned: true, attempt: 1 });
-
-  ui.press("a");
-  assert.deepEqual(ui.decisions(), ["accept"]);
-
-  ui.press("r");
-  ui.press("d");
-  ui.press(ESCAPE);
-  ui.press(ESCAPE);
-  assert.deepEqual(ui.decisions(), ["accept"], "input after the decision is inert");
-});
-
-test("R and D resolve retry and discard; the accept key relabels when commit is off", () => {
-  const retrying = gateHarness({ diff: "+x", commitPlanned: false, attempt: 2 });
-  assert.ok(retrying.lines().some((l) => l.includes("A accept (no commit)")));
-  assert.ok(retrying.lines().some((l) => l.includes("attempt 2")), "the header carries the attempt number");
-  retrying.press("r");
-  assert.deepEqual(retrying.decisions(), ["retry"]);
-
-  const discarding = gateHarness({ diff: "+x", commitPlanned: true, attempt: 1 });
-  discarding.press("d");
-  assert.deepEqual(discarding.decisions(), ["discard"]);
-});
-
-test("a long diff scrolls and reports what is hidden", () => {
-  const diff = Array.from({ length: 100 }, (_, i) => `+line ${i}`).join("\n");
-  const ui = gateHarness({ diff, commitPlanned: true, attempt: 1 }, 24);
-
-  assert.ok(ui.lines().some((l) => l.includes("↓") && l.includes("more")));
-  ui.press(DOWN);
-  ui.press(DOWN);
-  assert.ok(ui.lines().some((l) => l.includes("↑ 2 more")));
-});
-
-test("Esc Esc discards; a single Esc only arms", () => {
-  const ui = gateHarness({ diff: "+x", commitPlanned: true, attempt: 1 });
-
-  ui.press(ESCAPE);
-  assert.ok(ui.lines().some((l) => l.includes("Press Esc again to discard")));
-  assert.deepEqual(ui.decisions(), []);
-  ui.press(ESCAPE);
-  assert.deepEqual(ui.decisions(), ["discard"]);
-});
-
-test("an empty diff reads as no changes", () => {
-  const ui = gateHarness({ diff: "", commitPlanned: true, attempt: 1 });
-  assert.ok(ui.lines().some((l) => l.includes("No changes on disk.")));
-});
-
-test("C enters chat mode and shows chat input and key hints", () => {
-  const ui = gateHarness({ diff: "+x", commitPlanned: true, attempt: 1 });
-  assert.equal(ui.component.isInChatMode(), false);
-  assert.ok(ui.lines().some((l) => l.includes("C chat / modify")));
-
-  ui.press("c");
-  assert.equal(ui.component.isInChatMode(), true);
-  const lines = ui.lines();
-  assert.ok(lines.some((l) => l.includes("Enter send · Esc cancel chat")));
-});
-
-test("typing in chat mode routes to input and does not trigger A/R/D shortcuts", () => {
-  const ui = gateHarness({ diff: "+x", commitPlanned: true, attempt: 1 });
-  ui.press("c");
-
-  // Type characters including 'a', 'r', 'd'
-  ui.press("a");
-  ui.press("r");
-  ui.press("d");
-  assert.deepEqual(ui.decisions(), [], "typing letters must not trigger accept/retry/discard");
-
-  // Enter sends the chat decision
-  ui.press("\r");
-  assert.deepEqual(ui.decisions(), [{ type: "chat", message: "ard" }]);
-});
-
-test("pressing Enter with empty text in chat mode does not decide", () => {
-  const ui = gateHarness({ diff: "+x", commitPlanned: true, attempt: 1 });
-  ui.press("c");
-  ui.press("\r");
-  ui.press("   ");
-  ui.press("\r");
-  assert.deepEqual(ui.decisions(), []);
-});
-
-test("Escape in chat mode leaves chat mode without arming discard", () => {
-  const ui = gateHarness({ diff: "+x", commitPlanned: true, attempt: 1 });
-  ui.press("c");
-  assert.equal(ui.component.isInChatMode(), true);
-
-  ui.press(ESCAPE);
-  assert.equal(ui.component.isInChatMode(), false);
-  assert.deepEqual(ui.decisions(), []);
-
-  // Now press Escape again in nav mode — this only arms discard
-  ui.press(ESCAPE);
-  assert.ok(ui.lines().some((l) => l.includes("Press Esc again to discard")));
-  assert.deepEqual(ui.decisions(), []);
-});
-
-test("renders conversation history cleanly with role styling", () => {
-  const ui = gateHarness({
-    diff: "+x",
-    commitPlanned: true,
-    attempt: 1,
-    chatHistory: [
-      { role: "user", text: "What is the impact on callers?" },
-      { role: "assistant", text: "Only test/a.test.ts calls this function." },
-    ],
-  });
-
-  const lines = ui.lines();
-  assert.ok(lines.some((l) => l.includes("You: What is the impact on callers?")));
-  assert.ok(lines.some((l) => l.includes("Agent: Only test/a.test.ts calls this function.")));
-});
-
-test("bounds long chat history on a short terminal", () => {
-  const chatHistory = Array.from({ length: 20 }, (_, i) => ({
-    role: (i % 2 === 0 ? "user" : "assistant") as "user" | "assistant",
-    text: `Message number ${i} with detail`,
-  }));
-  const ui = gateHarness({ diff: "+x", commitPlanned: true, attempt: 1, chatHistory }, 20);
-
-  const lines = ui.lines();
-  assert.ok(lines.some((l) => l.includes("earlier chat lines")));
-});
-
-const LONG_DIFF = Array.from({ length: 60 }, (_, i) => `+line ${i}`).join("\n");
-
-test("re-renders after a height-only resize, since pi does not invalidate on resize", () => {
-  const ui = gateHarness({ diff: LONG_DIFF, commitPlanned: true, attempt: 1 }, 40);
-  const tall = ui.lines();
-
-  ui.host.terminal = { rows: 20 };
-  const short = ui.lines();
-  assert.ok(short.length < tall.length, `the gate shrinks to the new height without invalidate(), got ${tall.length} then ${short.length} lines`);
-});
-
-test("a fullscreen host sizes the gate exactly like a regular one, since overlays paint over pi's dock", () => {
-  const input: FixGateInput = { diff: LONG_DIFF, commitPlanned: true, attempt: 1 };
-  const fullscreen = gateHarness(input, 40, "fullscreen").lines();
-  assert.ok(fullscreen.length < gateHarness(input, 1000).lines().length, "the diff is long enough to be height-limited at 40 rows");
-  assert.deepEqual(fullscreen, gateHarness(input, 40, "regular").lines());
-  assert.deepEqual(fullscreen, gateHarness(input, 40).lines());
-});
-
-test("propagates focus state to the embedded input widget", () => {
-  const ui = gateHarness({ diff: "+x", commitPlanned: true, attempt: 1 });
-  ui.component.focused = true;
-  assert.equal(ui.component.focused, true);
-  ui.press("c");
-  assert.equal(ui.component.focused, true);
-  ui.press(ESCAPE);
-  assert.equal(ui.component.focused, true);
-});
+// The gate's look and keys are the generated FixGate dialog's, pinned by the
+// persona-audit-fix-gate parity cases at full size and at 80×24. These tests
+// cover the controller around it.
 
 // ── openFixProgress (raw listener + gate-only overlays + table sink) ───────
 
 interface CustomCall {
   options: unknown;
-  component: Component;
+  /** The generated gate dialog pi would show. */
+  component: ShownComponent;
   /** Whether the sink already showed a settling state when done fired. */
   settlingAtDone: boolean;
   reject: (error: Error) => void;
 }
 
 function controllerHarness(rows = 40, withSink = true) {
-  const host: FixProgressHost = { requestRender: () => {}, terminal: { rows } };
+  const host = { requestRender: () => {}, terminal: { rows, columns: 120 } };
   const customCalls: CustomCall[] = [];
   let inputHandler: TerminalInputHandler | undefined;
   let cancelRequests = 0;
@@ -298,43 +80,43 @@ function controllerHarness(rows = 40, withSink = true) {
     activePhase: () => bandPhase,
   } as unknown as AuditProgressWidget;
 
-  const ui: FixProgressUi = {
+  const notifications: string[] = [];
+  const ui = {
     onTerminalInput(handler: TerminalInputHandler): () => void {
       inputHandler = handler;
       return () => {
         inputHandler = undefined;
       };
     },
+    notify(message: string) {
+      notifications.push(message);
+    },
     custom<T>(
-      factory: (tui: TUI, theme: Theme, keybindings: KeybindingsManager, done: (result: T) => void) => Component,
-      options?: { overlay?: boolean },
+      factory: (tui: unknown, theme: unknown, keybindings: unknown, done: (result: T) => void) => Component,
+      options?: unknown,
     ): Promise<T> {
       const call: CustomCall = {
         options,
-        component: undefined as unknown as Component,
+        component: undefined as unknown as ShownComponent,
         settlingAtDone: false,
         reject: () => {},
       };
       const promise = new Promise<T>((resolve, reject) => {
         call.reject = reject;
-        call.component = factory(
-          host as unknown as TUI,
-          theme as unknown as Theme,
-          {} as unknown as KeybindingsManager,
-          (value: T) => {
-            // done must fire before the sink transitions to its settling state.
-            call.settlingAtDone = log.some((entry) => entry.startsWith("settling:"));
-            resolve(value);
-          },
-        );
+        call.component = factory(host, theme, {}, (value: T) => {
+          // done must fire before the sink transitions to its settling state.
+          call.settlingAtDone = log.some((entry) => entry.startsWith("settling:"));
+          call.component.dispose?.();
+          resolve(value);
+        }) as ShownComponent;
       });
       customCalls.push(call);
       return promise;
     },
-  };
+  } as unknown as FixProgressUi;
 
   const controller = openFixProgress(
-    { ui },
+    { mode: "tui", ui },
     finding,
     () => { cancelRequests += 1; },
     withSink ? { key: "row-key", progress: sink } : undefined,
@@ -348,6 +130,7 @@ function controllerHarness(rows = 40, withSink = true) {
     listenerActive: () => inputHandler !== undefined,
     send: (data: string) => inputHandler?.(data),
     cancelRequests: () => cancelRequests,
+    notifications,
   };
 }
 
@@ -446,7 +229,9 @@ test("the gate opens a focused overlay; done fires before the settling update", 
 
   const decision = h.controller.gate(gateInput);
   assert.equal(h.customCalls.length, 1);
-  assert.deepEqual(h.lastCustomCall().options, PROMPT_OVERLAY_OPTIONS);
+  const options = h.lastCustomCall().options as { overlay?: boolean; overlayOptions?: { width?: number } };
+  assert.equal(options.overlay, true, "the gate is an overlay, which pi focuses");
+  assert.equal(options.overlayOptions?.width, DIALOG_WIDTH);
 
   // While the gate is open the raw listener leaves every key — Escape
   // included — untouched so the focused overlay receives it.
@@ -454,8 +239,7 @@ test("the gate opens a focused overlay; done fires before the settling update", 
   assert.equal(h.send(ESCAPE), undefined);
   assert.equal(h.cancelRequests(), 0, "gate input cannot arm the working cancel");
 
-  const gate = h.lastCustomCall().component as FixGate;
-  gate.handleInput("a");
+  await press(h.lastCustomCall().component, "a");
   assert.equal(h.lastCustomCall().settlingAtDone, false, "done fires before the sink settles");
   assert.equal(await decision, "accept");
   assert.ok(h.log.includes("settling:accept:true"), "the row detail shows the settling state after the gate");
@@ -467,7 +251,7 @@ test("Escape stays inert once a decision is settling", async () => {
   const h = controllerHarness();
 
   const decision = h.controller.gate(gateInput);
-  (h.lastCustomCall().component as FixGate).handleInput("a");
+  await press(h.lastCustomCall().component, "a");
   assert.equal(await decision, "accept");
 
   assert.deepEqual(h.send(ESCAPE), { consume: true }, "consumed so it cannot reach the editor mid-commit");
@@ -481,16 +265,16 @@ test("each retry opens exactly one fresh gate overlay", async () => {
   const h = controllerHarness();
 
   const first = h.controller.gate(gateInput);
-  (h.customCalls[0]!.component as FixGate).handleInput("r");
+  await press(h.customCalls[0]!.component, "r");
   assert.equal(await first, "retry");
   h.controller.setPhase("fixing", "applying security fix", 2);
 
   const second = h.controller.gate({ ...gateInput, attempt: 2 });
   assert.equal(h.customCalls.length, 2);
   assert.notEqual(h.customCalls[1]!.component, h.customCalls[0]!.component, "a disposed gate is never reused");
-  assert.ok((h.customCalls[1]!.component as FixGate).render(WIDTH).map(strip).some((l) => l.includes("attempt 2")));
+  assert.match(screen(h.customCalls[1]!.component, DIALOG_WIDTH), /attempt 2/i);
 
-  (h.customCalls[1]!.component as FixGate).handleInput("d");
+  await press(h.customCalls[1]!.component, "d");
   assert.equal(await second, "discard");
   assert.ok(h.log.includes("settling:discard:true"));
 
@@ -524,12 +308,13 @@ test("close during an open gate settles it as discard and cleans everything up",
   assert.equal(h.log.filter((e) => e.startsWith("clear:")).length, 1, "still idempotent");
 });
 
-test("a rejected gate overlay restores working-input routing", async () => {
+test("a rejected gate overlay is reported, settles as discard, and restores working-input routing", async () => {
   const h = controllerHarness();
 
   const decision = h.controller.gate(gateInput);
   h.lastCustomCall().reject(new Error("overlay host closed"));
-  await assert.rejects(decision, /overlay host closed/);
+  assert.equal(await decision, "discard", "an unreviewed fix is never kept");
+  assert.match(h.notifications.join("\n"), /Fix Now gate dialog failed: overlay host closed/);
 
   assert.deepEqual(h.send(ESCAPE), { consume: true }, "Escape is the working cancel again");
   assert.equal(h.cancelRequests(), 0, "and it only arms");

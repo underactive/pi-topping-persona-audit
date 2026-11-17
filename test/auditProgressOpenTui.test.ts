@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
-import type { ThemeSource } from "@underactive/pi-topping-opentui/theme";
 import type { AuditProgressTable, AuditProgressContext, ProgressHost, ProgressTheme } from "../src/components/AuditProgress.ts";
 import { AuditProgressWidget, renderAuditSnapshot } from "../src/components/AuditProgress.ts";
 import type { Finding } from "../src/types.ts";
@@ -13,11 +12,9 @@ afterEach(() => {
   mountedWidgets.clear();
 });
 
-const theme: ProgressTheme & ThemeSource = {
+const theme: ProgressTheme = {
   colors: {},
   getColorMode: () => "truecolor",
-  fg: (_color, text) => text,
-  bold: (text) => text,
 };
 
 function openTuiContext() {

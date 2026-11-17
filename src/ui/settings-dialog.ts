@@ -26,12 +26,12 @@ import {
   type PersonaAuditConfig,
   type Temperament,
 } from "../modelConfig.ts";
-import { DIALOG_MAX_HEIGHT, SETTINGS_DIALOG_SIZE } from "./dialog-fit.ts";
+import { DIALOG_MAX_HEIGHT, DIALOG_WIDTH } from "./dialog-fit.ts";
 import { dialogReviewers, modelKey, readDialogModels, readModelRefs } from "./dialog-models.ts";
 import type { Classifier, Model, ModelChoice, ReviewerInfo, Settings } from "./generated/persona-audit/data.ts";
 import { SettingsMenu, type SettingsResult } from "./generated/persona-audit/admin.ts";
 
-/** Reported to pi as the question the session is blocked on, as the pi-tui menu does. */
+/** Reported to pi as the question the session is blocked on. */
 export const SETTINGS_DIALOG_TITLE = "Persona-audit: Settings";
 
 /** The classifier the dialog selects: `auto`, or `provider/model`. */
@@ -170,11 +170,11 @@ export async function openSettingsDialog(
       ctx,
       (done) => createElement(SettingsMenu, {
         ...props,
-        width: SETTINGS_DIALOG_SIZE.columns,
+        width: DIALOG_WIDTH,
         notify: (message, kind) => ctx.ui.notify(message, kind),
         onDone: done,
       }),
-      { title: SETTINGS_DIALOG_TITLE, width: SETTINGS_DIALOG_SIZE.columns, maxHeight: DIALOG_MAX_HEIGHT, fallback: { action: "cancel" } },
+      { title: SETTINGS_DIALOG_TITLE, width: DIALOG_WIDTH, maxHeight: DIALOG_MAX_HEIGHT, fallback: { action: "cancel" } },
     );
     return result.action === "save" ? fromDialogSettings(draft, result.draft, refs) : null;
   } catch (error) {

@@ -26,6 +26,7 @@ import {
   isModelRef,
   isThinkingLevel,
   modelRefLabel,
+  validateSavedChoice,
   type ModelRef,
   type ThinkingLevel,
 } from "@underactive/pi-topping-primitives/models";
@@ -374,4 +375,38 @@ export function updatePersonaAuditConfig(
 
 export function phaseModelChoiceLabel(choice: PhaseModelChoice): string {
   return `${modelRefLabel(choice.ref)} (thinking: ${choice.thinking})`;
+}
+
+export interface SeededPhases {
+  selections: PhaseModelSelection;
+  /** `provider/id` of each distinct saved choice the registry no longer lists. */
+  dropped: string[];
+}
+
+/**
+ * Seed phase slots from this run's unsaved picks, then saved config, then the
+ * session model. A saved choice is atomic, so a retired ref takes its thinking
+ * level with it; the replacement model may not support that level. `initial`
+ * is never revalidated because it came from this session's own picker.
+ */
+export function seedPhaseSelections(
+  saved: Partial<PhaseModelSelection>,
+  initial: PhaseModelSelection | undefined,
+  available: readonly ModelRef[],
+  fallbackRef: ModelRef,
+  thinkingFor: (ref: ModelRef) => ThinkingLevel,
+): SeededPhases {
+  const selections = {} as PhaseModelSelection;
+  const dropped = new Set<string>();
+  for (const slot of PHASE_SLOTS) {
+    const seeded = initial?.[slot];
+    if (seeded) {
+      selections[slot] = seeded;
+      continue;
+    }
+    const validated = validateSavedChoice(saved[slot], available);
+    if (validated.dropped) dropped.add(validated.dropped);
+    selections[slot] = validated.choice ?? { ref: fallbackRef, thinking: thinkingFor(fallbackRef) };
+  }
+  return { selections, dropped: [...dropped] };
 }

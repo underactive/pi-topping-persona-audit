@@ -26,7 +26,7 @@ function host(extra: Parameters<typeof createDialogHost>[0] = {}): DialogHost {
 }
 
 async function open(h: DialogHost, entries: readonly ArtifactEntry[], preTagged: Set<string> = new Set()) {
-  const result = openPurgeDialog(h.ctx, entries, preTagged, ROOMY_TERMINAL);
+  const result = openPurgeDialog(h.ctx, entries, preTagged);
   return { result, dialog: await h.dialog() };
 }
 
@@ -125,12 +125,12 @@ test("the preview loader refuses an artifact that is not in the scan", async () 
 
 test("outside TUI mode nothing is shown and the answer is a cancel", async () => {
   const h = host({ mode: "rpc" });
-  assert.equal(await openPurgeDialog(h.ctx, ENTRIES, new Set(), ROOMY_TERMINAL), null);
+  assert.equal(await openPurgeDialog(h.ctx, ENTRIES, new Set()), null);
   assert.equal(h.customOptions.length, 0);
 });
 
 test("a dialog that cannot open is reported and answers undefined, so the caller can fall back", async () => {
   const h = host({ failCustom: new Error("no overlay") });
-  assert.equal(await openPurgeDialog(h.ctx, ENTRIES, new Set(), ROOMY_TERMINAL), undefined);
+  assert.equal(await openPurgeDialog(h.ctx, ENTRIES, new Set()), undefined);
   assert.deepEqual(h.notifications, [{ message: "Persona-audit purge dialog failed: no overlay", type: "error" }]);
 });
