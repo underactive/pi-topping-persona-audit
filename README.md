@@ -215,7 +215,7 @@ Authorization & Tenancy is the highest-value slot — it is pure reasoning rathe
 ## Scan Modes
 
 - **Diff mode (`--diff`)** — scans changed files from a git diff, then heuristically includes direct importers of changed JS/TS modules.
-- **Full-tree mode (`--full [path] [--exclude <dir-or-path>]...`)** — scans a sorted, language-agnostic directory manifest without requiring git, excludes common vendor/build/cache directories plus repeatable command-specific directory exclusions, and caps the scan at 500 files with a warning when extra files are excluded.
+- **Full-tree mode (`--full [path] [--exclude <dir-or-path>]...`)** — scans a sorted, language-agnostic directory manifest without requiring git, excludes common vendor/build/cache directories plus repeatable command-specific directory exclusions, and caps the scan at 1000 files with a warning when extra files are excluded.
 
 ## Workflow
 
@@ -601,7 +601,7 @@ This ensures that when you change a module, all files that depend on it are also
 
 - **No git required** — works on any directory, including plain-filesystem projects, extracted archives, or generated exports that were never git-initialized
 - **Language-agnostic scan** — unlike the diff-mode heuristic JS/TS importer scan, the full-tree manifest uses a broad extension allowlist covering many common languages and config formats
-- **Deterministic, capped, never sampled** — the manifest is sorted and capped at 500 files; if the scan finds more, the excess is excluded (not randomly sampled) and a warning is surfaced in chat and in the report so you can narrow `[path]`
+- **Deterministic, capped, never sampled** — the manifest is sorted and capped at 1000 files; if the scan finds more, the excess is excluded (not randomly sampled) and a warning is surfaced in chat and in the report so you can narrow `[path]`
 - **Built-in and per-command exclusions** — always skips `node_modules`, `.git`, build/output directories, virtualenvs, and common lockfiles across ecosystems. Repeat `--exclude <value>` to add literal directory exclusions for one full-tree run: names match globally at any depth, while paths match one exact directory relative to the project root. Exclusions prune before recursion, do not affect same-named files, and are unavailable in diff or handoff mode.
 - **Security note: the verify gate runs the audited tree's scripts** — after fixes are applied, the verify gate runs whatever `check`/`lint`/`test` scripts the audited directory's own `package.json` declares (`npm run <script>`, from the project root), and the authored regression tests execute against the tree. Auditing an untrusted directory — an extracted archive or downloaded export — is therefore arbitrary code execution on your machine: audit only trees you trust, or review `package.json` scripts before accepting fixes. Pi's project trust only decides whether audit sessions load the project's pi settings and resources; it does not sandbox the verify gate or the agents' file tools.
 

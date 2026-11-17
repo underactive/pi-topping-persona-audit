@@ -440,7 +440,7 @@ function resolveContextWindow(
 }
 
 /** Default cap for --full mode file manifests (deterministic, sorted, no silent sampling). */
-const FULL_TREE_FILE_CAP = 500;
+const FULL_TREE_FILE_CAP = 1000;
 
 /**
  * Deterministic sort + cap + truncation-detection over a file list.
