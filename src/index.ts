@@ -9,7 +9,7 @@ import { lstat, readdir, readFile, realpath } from "node:fs/promises";
 import { promisify } from "node:util";
 import { hostProjectTrust } from "./agentRunner.ts";
 import { runAudit } from "./orchestrator.ts";
-import { createHerdrReporter, sessionFileOf } from "./herdr.ts";
+import { attachHerdrActivity } from "./herdr.ts";
 import { collectArtifacts, deleteArtifacts, formatBytes, isOlderThan, type ArtifactEntry } from "./artifacts.ts";
 import { filterExistingFindings, parseHandoffPayload, type HandoffPayload } from "./handoff.ts";
 import { gitHeadCommit } from "./git.ts";
@@ -502,6 +502,12 @@ export async function getFullTreeManifest(
  * registered — collection/dedup/triage are direct function calls.
  */
 export default function (pi: ExtensionAPI): void {
+  // herdr derives working/idle from the root agent loop, which never runs
+  // during an audit, so the audit reports to herdr itself. Attached before the
+  // session starts so it can follow the root session; a no-op outside herdr.
+  // See src/herdr.ts.
+  const herdr = attachHerdrActivity(pi);
+
   // ── Audit summary renderer (Step 7 chat sink) ──────────────────────
   pi.registerMessageRenderer("persona-audit-summary", (message) => {
     const content = typeof message.content === "string"
@@ -982,12 +988,7 @@ export default function (pi: ExtensionAPI): void {
       );
       activeProgress = progress;
       progress.mount();
-
-      // herdr derives working/idle from the root agent loop, which never runs
-      // during an audit (all work is in subprocess sessions). Tell it directly;
-      // no-op outside herdr. See src/herdr.ts.
-      const herdr = createHerdrReporter({ sessionFile: sessionFileOf(ctx) });
-      void herdr.report("working");
+      void herdr.setAuditActive(true);
 
       // ── Step 3: Deterministic orchestration (no child LLM session) ───
       const auditController = new AbortController();
@@ -1047,6 +1048,8 @@ export default function (pi: ExtensionAPI): void {
               current?.thinking ?? pi.getThinkingLevel(),
             ),
         });
+        // The run is over; the report viewer below waits on the user.
+        void herdr.setAuditActive(false);
 
         // Frozen transcript copy of the finished table, excluded from LLM
         // context (unlike the summary message below). Captured before the
@@ -1109,7 +1112,7 @@ export default function (pi: ExtensionAPI): void {
         // Unmount here rather than leaving the table up: its ticker must not
         // outlive the run, and a later /reload would otherwise find it stale.
         progress.stop();
-        void herdr.report("idle");
+        void herdr.setAuditActive(false);
         if (activeProgress === progress) {
           activeProgress = null;
         }
