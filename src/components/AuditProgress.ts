@@ -21,6 +21,7 @@ import { DEFAULT_METER_SETTINGS, type MeterSettings, type ThinkingLevel } from "
 import type { Finding, HeadlessProgress } from "../types.ts";
 import { renderOpenTuiProgress } from "./AuditProgressOpenTui.ts";
 import { FULLSCREEN_WIDGET_RESERVE_ROWS, usableTerminalRows, type ViewportHost } from "./viewport.ts";
+import type { ProgramStatusTerminal } from "../programStatus.ts";
 
 export const AUDIT_PROGRESS_WIDGET_KEY = "persona-audit-progress";
 const SPINNER_INTERVAL_MS = 100;
@@ -186,6 +187,8 @@ export type ContextWindowResolver = (provider: string | undefined, model: string
 
 /** The slice of pi's `TUI` the table needs. Structural so tests can supply a stub. */
 export interface ProgressHost extends ViewportHost {
+  /** pi-tui's terminal. `setProgramStatus` is how the audit reports itself as working (see src/programStatus.ts). */
+  terminal?: { rows?: number } & Partial<ProgramStatusTerminal>;
   requestRender(force?: boolean): void;
 }
 
@@ -259,6 +262,7 @@ export class AuditProgressWidget implements AuditProgressView {
   private active: AuditPhase | undefined;
   private activeRowCount = 0;
   private table: AuditProgressTable | undefined;
+  private host: ProgressHost | undefined;
 
   constructor(
     ctx: AuditProgressContext,
@@ -282,11 +286,21 @@ export class AuditProgressWidget implements AuditProgressView {
     this.ctx.ui.setWidget(
       AUDIT_PROGRESS_WIDGET_KEY,
       (tui, theme) => {
+        this.host = tui;
         this.table = new AuditProgressTable(tui, theme, this, undefined, this.meter);
         return this.table;
       },
       { placement: "aboveEditor" },
     );
+  }
+
+  /**
+   * The terminal of the TUI that drew the table, once pi has built it (pi does
+   * so inside `mount()`). Undefined outside pi's TUI, where no table is built.
+   */
+  get terminal(): ProgramStatusTerminal | undefined {
+    const terminal = this.host?.terminal;
+    return typeof terminal?.setProgramStatus === "function" ? (terminal as ProgramStatusTerminal) : undefined;
   }
 
   /** Tear down the progress surface, disposing the table's ticker. Safe to call multiple times. */

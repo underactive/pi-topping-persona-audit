@@ -1068,3 +1068,22 @@ test("a short terminal sheds the rationale, then the meta line, before the statu
   assert.ok(shorterRendered.some((l) => l.includes("esc cancel fix")), "cancel hint is still kept");
   shorter.widget.stop();
 });
+
+test("the widget hands on the terminal of the TUI that drew it, for program status", () => {
+  const { ctx, tui } = fakeCtx();
+  const writes: string[] = [];
+  tui.terminal = { rows: 40, setProgramStatus: (status) => writes.push(status.state) };
+  const widget = new AuditProgressWidget(ctx);
+  const beforeMount = widget.terminal;
+  assert.equal(beforeMount, undefined, "nothing before pi builds the table");
+  widget.mount();
+  widget.terminal?.setProgramStatus({ state: "working" });
+  assert.deepEqual(writes, ["working"]);
+  widget.stop();
+
+  const bare = fakeCtx();
+  const plain = new AuditProgressWidget(bare.ctx);
+  plain.mount();
+  assert.equal(plain.terminal, undefined, "a host without setProgramStatus gives no terminal");
+  plain.stop();
+});
