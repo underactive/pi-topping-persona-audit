@@ -616,7 +616,10 @@ test("phase/model band renders all four phases and their assigned models above t
 });
 
 test("the band marks the active phase, done phases and pending ones, and a frozen copy stops its spinner", () => {
-  const { ctx, state } = fakeCtx();
+  const { ctx, state } = fakeCtx(40, {
+    colors: { accent: { kind: "rgb", r: 238, g: 238, b: 17 } },
+    getColorMode: () => "truecolor",
+  });
   const widget = new AuditProgressWidget(ctx);
   widget.addRow("Review", "a", "Security Engineer", { state: "done" });
   widget.addRow("Triage", "b", "adjudicator", { state: "working" });
@@ -628,6 +631,9 @@ test("the band marks the active phase, done phases and pending ones, and a froze
   assert.match(band, /✓ Review/, "a phase before the active one is done");
   assert.match(band, /[◐◓◑◒▖▘▝▗] Triage/, "the live active phase spins");
   assert.match(band, /○ Implement.*○ Verify/, "later phases are pending");
+  const rawBand = state.table!.render(120)[3] ?? "";
+  assert.ok(rawBand.includes("\u001b[38;2;238;238;17m"), "the accent is carried by the active chip's inverse background");
+  assert.match(rawBand, /\u001b\[[0-9;]*7m/, "active text uses inverse video for contrast");
 
   const frozenBand = content(renderAuditSnapshot(widget.snapshot(), PLAIN_THEME).render(120).map(strip))[3] ?? "";
   assert.match(frozenBand, /✓ Review/, "a frozen copy reads a settled phase as done");

@@ -464,11 +464,11 @@ the whole run and is torn down on completion, cancellation, `/reload`, and
 - **PHASE / model band** — two tab rows above the `AGENT` header show each
   phase and its assigned model. A check marks a settled phase, a spinner marks
   the active phase, and an open circle marks a pending phase; the model row
-  includes a swatch in that phase's thinking-level color. The active tab uses
-  the selection background and shimmers while live; frozen snapshots have no
-  active highlight. Values come from the per-phase model + thinking picker; the
-  band is omitted when no phase has an assigned model or the terminal is too
-  narrow to keep all four columns readable.
+  includes a swatch in that phase's thinking-level color. The active tab uses a
+  solid accent background with inverse text; frozen snapshots have no active
+  highlight. Values come from the per-phase model + thinking picker; the band
+  is omitted when no phase has an assigned model or the terminal is too narrow
+  to keep all four columns readable.
 - **AGENT** — each non-empty phase group starts with a dim phase heading, then
   its rows (`Review` has one row per reviewer×pass plus one `cross-examination` row per
   cross-examining reviewer, `Triage` has deterministic collection and adjudication, `Implement` has adjudicator fix application, and
