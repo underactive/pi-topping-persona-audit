@@ -16,6 +16,7 @@ import {
   type ProgressTheme,
 } from "../src/components/AuditProgress.ts";
 import { FULLSCREEN_WIDGET_RESERVE_ROWS } from "../src/components/viewport.ts";
+import { THINKING } from "../src/ui/generated/topping/pi.ts";
 import type { Finding, HeadlessProgress } from "../src/types.ts";
 
 const strip = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
@@ -615,15 +616,16 @@ test("phase/model band renders all four phases and their assigned models above t
   widget.stop();
 });
 
-test("the band marks the active phase, done phases and pending ones, and a frozen copy stops its spinner", () => {
+test("the band marks the active phase, preserves its thinking-level swatch, and freezes the spinner", () => {
   const { ctx, state } = fakeCtx(40, {
-    colors: { accent: { kind: "rgb", r: 238, g: 238, b: 17 } },
+    colors: { accent: rgb("#eeee11") },
     getColorMode: () => "truecolor",
   });
   const widget = new AuditProgressWidget(ctx);
   widget.addRow("Review", "a", "Security Engineer", { state: "done" });
   widget.addRow("Triage", "b", "adjudicator", { state: "working" });
   widget.setPhaseModels({ Review: "anthropic/claude-opus-4", Triage: "anthropic/claude-opus-4" });
+  widget.setPhaseThinking({ Triage: "high" });
   widget.setActivePhase("Triage");
   widget.mount();
 
@@ -631,9 +633,16 @@ test("the band marks the active phase, done phases and pending ones, and a froze
   assert.match(band, /✓ Review/, "a phase before the active one is done");
   assert.match(band, /[◐◓◑◒▖▘▝▗] Triage/, "the live active phase spins");
   assert.match(band, /○ Implement.*○ Verify/, "later phases are pending");
-  const rawBand = state.table!.render(120)[3] ?? "";
-  assert.ok(rawBand.includes("\u001b[38;2;238;238;17m"), "the accent is carried by the active chip's inverse background");
-  assert.match(rawBand, /\u001b\[[0-9;]*7m/, "active text uses inverse video for contrast");
+  const rendered = state.table!.render(120);
+  const rawBand = rendered[3] ?? "";
+  assert.ok(rawBand.includes(escape("#eeee11")), "the active phase name retains its accent background");
+  assert.match(rawBand, /\u001b\[(?:\d+;)*7(?:;\d+)*m/, "active phase text uses inverse video for contrast");
+  const activeModelRow = rendered[4] ?? "";
+  assert.ok(activeModelRow.includes(escape(THINKING.high)), "the active model swatch keeps its thinking-level colour");
+  assert.ok(activeModelRow.includes(escape("#eeee11")), "the active model row has a left accent rail");
+  assert.match(strip(activeModelRow), /▌ ■ claude-opus-4/, "the rail sits before the swatch and model");
+  assert.doesNotMatch(activeModelRow, /\u001b\[48;2;238;238;17m/, "the active model row uses the normal chip background");
+  assert.doesNotMatch(activeModelRow, /\u001b\[(?:\d+;)*7(?:;\d+)*m/, "the active model row is no longer inverted");
 
   const frozenBand = content(renderAuditSnapshot(widget.snapshot(), PLAIN_THEME).render(120).map(strip))[3] ?? "";
   assert.match(frozenBand, /✓ Review/, "a frozen copy reads a settled phase as done");
