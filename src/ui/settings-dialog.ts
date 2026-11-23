@@ -3,7 +3,7 @@
  *
  * Hand-written. The dialog itself is `./generated/persona-audit/admin.ts` (`SettingsMenu`, with the
  * roster manager and the dispatch and classifier sub-screens inside it), converted from the mockup
- * in `../opentui-dialogs`. This file translates the config in and the result out.
+ * in `../pi-topping-mockups`. This file translates the config in and the result out.
  */
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { showOpenTuiDialog } from "@underactive/pi-topping-opentui/host";

@@ -1,5 +1,5 @@
 {
-  "source": "../opentui-dialogs/src",
+  "source": "../pi-topping-mockups/src",
   "out": "src/ui/generated",
   "files": [
     "ui.tsx",
@@ -22,7 +22,7 @@
   "theme": "./theme",
   "dataModules": ["persona-audit/data", "persona-audit/reviewers", "persona-audit/run", "splash/data"],
   "entries": [],
-  "parity": "../opentui-dialogs/parity",
+  "parity": "../pi-topping-mockups/parity",
   "cases": [
     "persona-audit-settings",
     "persona-audit-settings-compact",

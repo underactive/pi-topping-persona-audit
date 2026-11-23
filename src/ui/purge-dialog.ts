@@ -3,7 +3,7 @@
  *
  * Hand-written. The dialog itself is `./generated/persona-audit/admin.ts` (`PurgeMenu`: tagging,
  * the preview viewer and the confirmation are all inside it), converted from the mockup in
- * `../opentui-dialogs`. This file translates the entries in and the confirmed ones out.
+ * `../pi-topping-mockups`. This file translates the entries in and the confirmed ones out.
  */
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { showOpenTuiDialog } from "@underactive/pi-topping-opentui/host";

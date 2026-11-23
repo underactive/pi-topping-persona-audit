@@ -1,7 +1,7 @@
 /**
  * What every generated persona-audit dialog needs from the extension: the registry's models and
  * the reviewer catalogue, in the shapes the dialogs take. Hand-written; the dialogs themselves
- * are generated from the mockups in `../opentui-dialogs`.
+ * are generated from the mockups in `../pi-topping-mockups`.
  */
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
