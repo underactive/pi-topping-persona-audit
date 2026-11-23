@@ -162,6 +162,11 @@ export function ExpertPicker({ width: fullWidth, room, budget = FULL_BUDGET, fil
             setIndex(Math.max(0, Math.min(entries.length - 1, idx + (k === "up" ? -1 : 1))));
             return setAwaiting(false);
         }
+        if (k === "pageup" || k === "pagedown") {
+            const step = rows > 0 ? rows : 10;
+            setIndex(Math.max(0, Math.min(entries.length - 1, idx + (k === "pageup" ? -step : step))));
+            return setAwaiting(false);
+        }
         if (k === "left" || k === "right") {
             if (single)
                 return;
@@ -179,8 +184,8 @@ export function ExpertPicker({ width: fullWidth, room, budget = FULL_BUDGET, fil
     const hints: Hint[] = focus === "buttons"
         ? BUTTON_KEYS
         : single
-            ? [["↑↓", "move"], ["type", "filter"], ["enter", "select"], ["tab", "buttons"], ["esc", "cancel"]]
-            : [["↑↓", "move"], ["space", "toggle"], ["←→", `passes (${passes})`], ["type", "filter"], ["enter", "confirm"], ["tab", "buttons"], ["esc", "back"]];
+            ? [["↑↓", "move"], ["PgUp/PgDn", "page"], ["type", "filter"], ["enter", "select"], ["tab", "buttons"], ["esc", "cancel"]]
+            : [["↑↓", "move"], ["PgUp/PgDn", "page"], ["space", "toggle"], ["←→", `passes (${passes})`], ["type", "filter"], ["enter", "confirm"], ["tab", "buttons"], ["esc", "back"]];
     const { width, inner, rows } = pickerLayout(room ?? terminal, fullWidth, budget, hints);
     const compact = rows < COMPACT_BELOW;
     // An open card: the name, the description, the focus areas (one row of them in a short room), a gap.
