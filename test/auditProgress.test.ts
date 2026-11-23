@@ -759,7 +759,7 @@ test("the meter resolves thinking-level colours per phase and preserves fixed co
       b: [0, 0, 0, 0, 0, 0, 0, 7],
     },
   };
-  const rowOf = (rendered: string[], label: string) => rendered.find((line) => strip(line).includes(label)) ?? "";
+  const rowOf = (rendered: readonly string[], label: string) => rendered.find((line) => strip(line).includes(label)) ?? "";
 
   const thinking = renderAuditSnapshot(snapshot, colourful, { color: "thinkingLevel", direction: "ltr" }).render(120);
   assert.ok(rowOf(thinking, "Security Engineer").includes(escape("#11ee11")), "a high-thinking phase's meter");

@@ -9,7 +9,7 @@ import type { TerminalSize } from "../../src/ui/dialog-fit.ts";
 
 export type Notification = { message: string; type?: string };
 export interface ShownComponent {
-  render(width: number): string[];
+  render(width: number): readonly string[];
   handleInput?(data: string): void;
   dispose?(): void;
 }
