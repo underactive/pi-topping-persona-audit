@@ -40,3 +40,11 @@ test("text and image changes invalidate reviewer cache keys", async () => withPr
   assert.notEqual(first, imageA);
   assert.notEqual(imageA, imageB);
 }));
+
+test("a manifest file absent from the working tree still yields a stable cache key", async () => withProject(async (cwd) => {
+  const files = ["src/a.ts", "src/deleted.ts"];
+  const first = await buildReviewerCacheKey(cwd, files, ["Security Engineer"], 1, "full", "calibrated");
+  const second = await buildReviewerCacheKey(cwd, files, ["Security Engineer"], 1, "full", "calibrated");
+  assert.equal(second, first);
+  assert.notEqual(first, await buildReviewerCacheKey(cwd, ["src/a.ts"], ["Security Engineer"], 1, "full", "calibrated"));
+}));

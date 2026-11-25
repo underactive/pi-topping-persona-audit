@@ -5,7 +5,7 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import * as path from "node:path";
 import type { Dirent } from "node:fs";
-import { lstat, readdir, readFile, realpath } from "node:fs/promises";
+import { lstat, readdir, readFile, realpath, stat } from "node:fs/promises";
 import { promisify } from "node:util";
 import { hostProjectTrust } from "./agentRunner.ts";
 import { runAudit } from "./orchestrator.ts";
@@ -264,6 +264,12 @@ const REVIEWER_CACHE_SCHEMA = "v3";
 const CACHE_KEY_READ_CONCURRENCY = 8;
 
 /**
+ * Byte cap for one manifest file hashed into the cache key. Past it the file
+ * contributes a size sentinel instead of being read whole.
+ */
+const CACHE_KEY_MAX_FILE_BYTES = 2_000_000;
+
+/**
  * Build the incremental-cache key from the manifest file contents, reviewer
  * prompt fingerprint, selected reviewers, and pass count.
  */
@@ -278,9 +284,19 @@ export async function buildReviewerCacheKey(
   additionalContext?: AdditionalContext,
 ): Promise<string> {
   const sortedFiles = files.slice().sort();
-  const hashes = await mapWithConcurrencyLimit(sortedFiles, CACHE_KEY_READ_CONCURRENCY, async (file) =>
-    createHash("sha256").update(await readFile(path.resolve(cwd, file))).digest("hex"),
-  );
+  // A --diff manifest lists files from commit history, so one can be absent from
+  // the working tree; a failed read must not reject the whole key and drop the
+  // audit to uncached, so each read is total.
+  const hashes = await mapWithConcurrencyLimit(sortedFiles, CACHE_KEY_READ_CONCURRENCY, async (file) => {
+    const absPath = path.resolve(cwd, file);
+    try {
+      const size = (await stat(absPath)).size;
+      if (size > CACHE_KEY_MAX_FILE_BYTES) return `too-large:${size}`;
+      return createHash("sha256").update(await readFile(absPath)).digest("hex");
+    } catch {
+      return "missing";
+    }
+  });
   const fileHash = createHash("sha256");
   sortedFiles.forEach((file, i) => {
     fileHash.update(file);
