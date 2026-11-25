@@ -72,9 +72,9 @@ import {
   renderFullReport,
   renderPartialReport,
   reportRelPath,
-  resolveSafeWritePath,
   writeReportFile,
 } from "./report.ts";
+import { resolveSafeWritePath } from "./paths.ts";
 import { aggregateVerificationStatus, discoverVerifyScripts, runVerifyScript } from "./verify.ts";
 import {
   compareToSnapshots,

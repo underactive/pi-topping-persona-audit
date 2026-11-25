@@ -20,7 +20,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, unlink, writeFil
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
-import { assertWriteContained, message } from "./report.ts";
+import { assertWriteContained, message } from "./paths.ts";
 import { mapWithConcurrencyLimit, tail } from "./subprocess.ts";
 import { resolveTargetPath, verificationKey, type FileSnapshot } from "./snapshot.ts";
 import {

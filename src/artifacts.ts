@@ -2,7 +2,8 @@ import { lstat, readdir, readFile, realpath, rmdir, rm } from "node:fs/promises"
 import * as path from "node:path";
 import { HANDOFF_RESUME_MARKER } from "./handoff.ts";
 import { repoCacheDir } from "./orchestrator.ts";
-import { AUDITS_DIR, HANDOFFS_DIR, errorCode, isWithinDirectory } from "./report.ts";
+import { AUDITS_DIR, HANDOFFS_DIR } from "./report.ts";
+import { errorCode, isWithinDirectory } from "./paths.ts";
 import { SNAPSHOTS_DIR } from "./snapshot.ts";
 import { mapWithConcurrencyLimit } from "./subprocess.ts";
 

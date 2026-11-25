@@ -9,7 +9,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import * as path from "node:path";
-import { errorCode, message, resolveSafeWritePath } from "./report.ts";
+import { errorCode, message, resolveSafeWritePath } from "./paths.ts";
 import { mapWithConcurrencyLimit } from "./subprocess.ts";
 import { CATEGORY_PRIORITY, type FileChangeEvidence, type Finding, type FindingCategory, type SelfReport } from "./types.ts";
 
