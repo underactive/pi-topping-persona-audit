@@ -132,14 +132,24 @@ export interface SettingsDialogProps {
 }
 
 /**
- * Show the generated settings dialog. Resolves with the config the user saved, or `null` when they
+ * What a save hands back: the dialog's draft and the refs it was read against. The caller merges
+ * them with `fromDialogSettings` inside `updatePersonaAuditConfig`, so a config written while the
+ * dialog was open is not reverted.
+ */
+export interface SettingsDialogResult {
+  draft: Settings;
+  refs: readonly ModelRef[];
+}
+
+/**
+ * Show the generated settings dialog. Resolves with the saved draft, or `null` when they
  * cancelled. Resolves with `undefined` when the dialog failed; the failure has been reported by
  * then, so the command handler never sees it thrown.
  */
 export async function openSettingsDialog(
   ctx: ExtensionCommandContext,
   config: PersonaAuditConfig,
-): Promise<PersonaAuditConfig | null | undefined> {
+): Promise<SettingsDialogResult | null | undefined> {
   try {
     const refs = readModelRefs(ctx);
     const draft = structuredClone(config);
@@ -176,7 +186,7 @@ export async function openSettingsDialog(
       }),
       { title: SETTINGS_DIALOG_TITLE, width: DIALOG_WIDTH, maxHeight: DIALOG_MAX_HEIGHT, fallback: { action: "cancel" } },
     );
-    return result.action === "save" ? fromDialogSettings(draft, result.draft, refs) : null;
+    return result.action === "save" ? { draft: result.draft, refs } : null;
   } catch (error) {
     ctx.ui.notify(`Persona-audit settings dialog failed: ${error instanceof Error ? error.message : String(error)}`, "error");
     return undefined;

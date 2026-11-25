@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { DEFAULT_DECISION_SETTINGS, sanitizePersonaAuditSettings, type PersonaAuditConfig } from "../src/modelConfig.ts";
-import { fromDialogSettings, openSettingsDialog, toDialogClassifiers, toDialogSettings } from "../src/ui/settings-dialog.ts";
+import { fromDialogSettings, openSettingsDialog, toDialogClassifiers, toDialogSettings, type SettingsDialogResult } from "../src/ui/settings-dialog.ts";
 import { toDialogModels } from "../src/ui/dialog-models.ts";
 import { createDialogHost, KEY, press, ROOMY_TERMINAL, screen, type DialogHost } from "./helpers/dialog-harness.ts";
 
@@ -23,6 +23,11 @@ function host(extra: Parameters<typeof createDialogHost>[0] = {}): DialogHost {
 async function open(h: DialogHost, config: PersonaAuditConfig) {
   const result = openSettingsDialog(h.ctx, config);
   return { result, dialog: await h.dialog() };
+}
+
+/** What the command handler writes: the answer merged against the config it read, inside the store's lock. */
+function written(config: PersonaAuditConfig, answer: SettingsDialogResult): PersonaAuditConfig {
+  return fromDialogSettings(config, answer.draft, answer.refs);
 }
 
 test("a config survives the trip through the dialog's shape unchanged", () => {
@@ -64,8 +69,21 @@ test("saving without a change returns the config as it was", async () => {
   const { result, dialog } = await open(h, config);
   assert.match(screen(dialog, 104), /PERSONA-AUDIT: SETTINGS/);
   await press(dialog, KEY.tab, KEY.enter);
-  assert.deepEqual(await result, config);
+  const answer = await result;
+  assert.ok(answer);
+  assert.deepEqual(written(config, answer), config);
   assert.deepEqual(h.notifications, []);
+});
+
+test("the answer is merged against the config as it is now, so a write during the dialog survives", async () => {
+  const config = baseConfig();
+  const h = host();
+  const { result, dialog } = await open(h, config);
+  await press(dialog, KEY.tab, KEY.enter);
+  const answer = await result;
+  assert.ok(answer);
+  const concurrent: PersonaAuditConfig = { ...baseConfig(), thinkingOverrides: { "anthropic/claude-sonnet-5-5": "low" } };
+  assert.deepEqual(written(concurrent, answer).thinkingOverrides, concurrent.thinkingOverrides);
 });
 
 test("the dialog is shown as an overlay of its own width, over the full height", async () => {
@@ -89,8 +107,9 @@ test("changed rows and the decision classifier come back in the config", async (
   await press(dialog, ...Array.from({ length: 4 }, () => KEY.down)); // from row 3 down to "Use the decision classifier"
   await press(dialog, KEY.space);
   await press(dialog, KEY.tab, KEY.enter);
-  const saved = await result;
-  assert.ok(saved);
+  const answer = await result;
+  assert.ok(answer);
+  const saved = written(config, answer);
   assert.equal(saved.meter.color, "accent");
   assert.equal(saved.maxVerifyRounds, 2);
   assert.deepEqual(saved.decision, { ...DEFAULT_DECISION_SETTINGS, enabled: true });
@@ -108,14 +127,18 @@ test("the dispatch model is chosen from the registry's models and cleared with b
   assert.doesNotMatch(screen(dialog, 104), /Claude Opus/, "and not the mockup's sample catalogue");
   await press(dialog, KEY.enter, KEY.enter);
   await press(dialog, KEY.tab, KEY.enter);
-  const saved = await result;
-  assert.ok(saved?.dispatch);
+  const answer = await result;
+  assert.ok(answer);
+  const saved = written(config, answer);
+  assert.ok(saved.dispatch);
   assert.deepEqual(saved.dispatch.ref, REFS[0]);
 
   const again = host();
   const second = await open(again, saved);
   await press(second.dialog, ...Array.from({ length: 6 }, () => KEY.down), KEY.backspace, KEY.tab, KEY.enter);
-  assert.equal((await second.result)?.dispatch, undefined);
+  const cleared = await second.result;
+  assert.ok(cleared);
+  assert.equal(written(saved, cleared).dispatch, undefined);
 });
 
 test("esc cancels", async () => {
@@ -134,7 +157,9 @@ test("a dispatch model the registry no longer offers is dropped with a warning",
   assert.match(h.notifications[0]!.message, /gone\/model is no longer offered/);
   assert.equal(h.notifications[0]!.type, "warning");
   await press(dialog, KEY.tab, KEY.enter);
-  assert.equal((await result)?.dispatch, undefined);
+  const answer = await result;
+  assert.ok(answer);
+  assert.equal(written(config, answer).dispatch, undefined);
 });
 
 test("outside TUI mode nothing is shown and the answer is a cancel", async () => {

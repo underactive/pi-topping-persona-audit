@@ -31,7 +31,7 @@ import { DecisionClassifier } from "./decision/classifier.ts";
 import { showAdjudicatorRetryPrompt, showReviewerRetryPrompt, showVerifierRetryPrompt } from "./ui/retry-prompts.ts";
 import { showReportViewer } from "./ui/review-dialogs.ts";
 import { openPurgeDialog } from "./ui/purge-dialog.ts";
-import { openSettingsDialog } from "./ui/settings-dialog.ts";
+import { fromDialogSettings, openSettingsDialog } from "./ui/settings-dialog.ts";
 import {
   dialogPhaseChoiceLabel,
   openExpertPickerDialog,
@@ -44,7 +44,7 @@ import {
 import {
   loadPersonaAuditConfig,
   modelRefLabel,
-  savePersonaAuditConfig,
+  updatePersonaAuditConfig,
   type PersonaAuditConfig,
   type PhaseModelChoice,
   type PhaseModelSelection,
@@ -1175,7 +1175,9 @@ export default function (pi: ExtensionAPI): void {
       // Null when the user cancelled; undefined when the dialog failed, which it has reported.
       const applied = await openSettingsDialog(ctx, loadPersonaAuditConfig());
       if (!applied) return;
-      const saved = savePersonaAuditConfig(applied);
+      // Merged against the config on disk, inside the store's lock, so a write that landed while
+      // the dialog was open is not reverted.
+      const saved = updatePersonaAuditConfig((current) => fromDialogSettings(current, applied.draft, applied.refs));
       if (!saved.ok) {
         ctx.ui.notify(`Could not save persona-audit settings: ${saved.message}`, "error");
         return;
