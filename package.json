@@ -1,6 +1,6 @@
 {
   "name": "@underactive/pi-topping-persona-audit",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Pi extension implementing /persona-audit — multi-persona code reviews with TUI expert selection and findings review",
   "keywords": [
     "pi-package",
@@ -50,7 +50,7 @@
     "@earendil-works/pi-tui": "1.6.0",
     "@types/node": "^24.0.0",
     "@types/react": "^19.3.0",
-    "@underactive/pi-topping-opentui-tools": "^0.14.1",
+    "@underactive/pi-topping-opentui-tools": "0.14.4",
     "typescript": "^5.9.3"
   },
   "pi": {
@@ -60,7 +60,7 @@
     "image": "https://raw.githubusercontent.com/underactive/pi-topping-persona-audit/main/media/persona_audit_demo.png"
   },
   "dependencies": {
-    "@underactive/pi-topping-opentui": "^0.14.1",
+    "@underactive/pi-topping-opentui": "0.14.4",
     "@underactive/pi-topping-primitives": "0.13.0"
   }
 }

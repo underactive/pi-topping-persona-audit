@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-25
+
 ### Added
 
 - `/persona-audit-settings` and `/persona-audit-purge` open dialogs drawn from the OpenTUI mockups in the dialog design repository, in the same visual language as the other toppings. Settings keeps its roster manager, the dispatch model picker and the classifier pick list inside the one dialog; purge tags, previews and confirms inside its dialog, and lists the files it is about to delete with their exact total size. The dialogs are generated (`src/ui/generated/`, `npm run port:ui`, checked cell for cell against frames recorded from OpenTUI by `npm run parity:ui`) and run on `@underactive/pi-topping-opentui`, a new runtime dependency that needs no native code. Like every dialog below, they are 104 columns wide where the terminal has room and lay themselves out again on a smaller one, down to 80×24, following a resize while open; a terminal smaller than 80×24 cuts them. A dialog that fails to open says why and counts as a cancel.
@@ -18,8 +20,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- `/persona-audit --full` now scans up to 1000 files instead of 500. The sorted manifest is still cut at the cap, never sampled, and the warning in chat and in the report names the new cap.
 - **Tested against pi 1.6.0** — the extension typechecks and its 558 tests pass against 1.6.0, including from a clean `npm ci`, and the development dependencies are now pinned to 1.6.0. The published peer dependencies stay `*`, so 1.6.0 is the tested version, not a new minimum. Pi 1.6.0's one breaking change reaches the test harness, not the extension: `Component.render()` now returns `readonly string[]`, so the harness's `ShownComponent.render` and the `rowOf` helper now take `readonly string[]` (`test/helpers/dialog-harness.ts`, `test/auditProgress.test.ts`; `test/fixProgress.test.ts` compiles unchanged). The extension itself is untouched: it subclasses no `Container`, and both progress components return fresh render arrays. Audit sessions inherit host fixes for free: cancelling a `read` tool call no longer crashes pi ([#11956](https://github.com/earendil-works/pi/issues/11956)), provider errors such as `Connection closed.` and `ECONNRESET` now retry ([#12064](https://github.com/earendil-works/pi/issues/12064), [#12128](https://github.com/earendil-works/pi/issues/12128)), and `find` path patterns are relative to the search directory ([#12066](https://github.com/earendil-works/pi/issues/12066)).
 - Pin `@underactive/pi-topping-primitives` to exactly `0.13.0` (was `^0.12.1`). None of its changes reaches this extension: 0.13.0's blocked-status report is in the classifier picker and `./menu`, and `/persona-audit-settings` now draws its own classifier list inside its dialog, which reports pi as blocked, titled `Persona-audit: Settings`, for as long as it is open.
+- Pin `@underactive/pi-topping-opentui`, the new runtime dependency the dialogs run on, to exactly `0.14.4`, and the `@underactive/pi-topping-opentui-tools` development dependency to `0.14.4` with it.
 
 ## [0.5.1] - 2026-11-03
 
