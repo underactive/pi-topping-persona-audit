@@ -21,9 +21,9 @@ import type { ThinkingLevel } from "./modelConfig.ts";
 import { FIX_NOW_APPLY_DIRECTIVE, UNTRUSTED_DATA_RULE } from "./skillContent.ts";
 import { resolveTargetPath } from "./snapshot.ts";
 import { isFailedRun, withoutBash } from "./subprocess.ts";
+import { AGENT_IDLE_TIMEOUT_MS } from "./agentPolicy.ts";
 import type { Finding, FixedFinding, HeadlessOptions, HeadlessResult, ReviewSessionState } from "./types.ts";
 
-const AGENT_IDLE_TIMEOUT_MS = 600_000;
 const MAX_FIX_ATTEMPTS = 5;
 
 export type DirtyFileChoice = "proceed" | "no-commit" | "abort";

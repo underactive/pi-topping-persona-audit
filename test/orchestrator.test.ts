@@ -6,7 +6,6 @@ import {
   buildApplyTask,
   buildRepairTask,
   buildReviewerTask,
-  extractJsonArray,
   parseContestedVerdicts,
   parseFixVerdicts,
   parseRegressionPlans,
@@ -17,6 +16,7 @@ import {
   scopeAcceptedFindings,
   type AuditInput,
 } from "../src/orchestrator.ts";
+import { extractJsonArray } from "../src/jsonSalvage.ts";
 import type { PhaseModelChoice } from "../src/modelConfig.ts";
 import type { FileSnapshot } from "../src/snapshot.ts";
 import type {

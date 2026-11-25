@@ -16,7 +16,8 @@ import { classifyDispatch } from "./decision/dispatch.ts";
 import { DecisionClassifier } from "./decision/classifier.ts";
 import { TIERS } from "./components/ReviewerData.ts";
 import type { DecisionSettings, ThinkingLevel } from "./modelConfig.ts";
-import { AGENT_IDLE_TIMEOUT_MS, extractJsonArray, READ_ONLY_TOOLS } from "./orchestrator.ts";
+import { AGENT_IDLE_TIMEOUT_MS, READ_ONLY_TOOLS } from "./agentPolicy.ts";
+import { extractJsonArray } from "./jsonSalvage.ts";
 import type { HeadlessOptions, HeadlessResult } from "./types.ts";
 
 export const DISPATCHER_MIN = 3;

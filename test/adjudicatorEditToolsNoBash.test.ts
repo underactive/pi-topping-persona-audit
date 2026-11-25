@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import { EDIT_TOOLS } from "../src/orchestrator.ts";
+import { EDIT_TOOLS } from "../src/agentPolicy.ts";
 import { BUNDLED_AGENTS_DIR, loadAgentsFromDir, resolveAgentTools, withoutBash, type AgentConfig } from "../src/subprocess.ts";
 
 const srcDir = join(dirname(fileURLToPath(import.meta.url)), "..", "src");

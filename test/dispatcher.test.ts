@@ -21,7 +21,7 @@ import {
   type DispatcherRecommendation,
   type RepoFingerprint,
 } from "../src/dispatcher.ts";
-import { AGENT_IDLE_TIMEOUT_MS, READ_ONLY_TOOLS } from "../src/orchestrator.ts";
+import { AGENT_IDLE_TIMEOUT_MS, READ_ONLY_TOOLS } from "../src/agentPolicy.ts";
 import type { HeadlessOptions, HeadlessResult } from "../src/types.ts";
 
 const CATALOGUE_NAMES = TIERS.flatMap((tier) => tier.reviewers.map((reviewer) => reviewer.name));
