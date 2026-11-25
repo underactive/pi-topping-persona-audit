@@ -2675,7 +2675,18 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
         }
 
         // ── i3: red/green regression evidence for the highest-signal fixes ─
-        const candidates = input.signal?.aborted
+        // The regression harness and the npm script gate execute code from the
+        // audited tree, so they follow the same trust decision the agent sessions do.
+        if (!projectTrusted) {
+          outcome.notes.push(
+            "verification scripts and regression tests skipped — project not trusted; run them yourself",
+          );
+          progress?.addRow("Verify", regressionAuthorRow, `regression tests${suffix}`, {
+            state: "cancelled",
+            statusText: "skipped — project not trusted",
+          });
+        }
+        const candidates = input.signal?.aborted || !projectTrusted
           ? []
           : selectRegressionCandidates(review.accepted, outcome.fixVerdicts, REGRESSION_LIMIT);
         if (candidates.length > 0) {
@@ -2727,6 +2738,11 @@ export async function runAudit(ctx: ExtensionCommandContext, input: AuditInput):
         // ── i4: script gate, last so it covers newly authored tests ───────
         if (input.signal?.aborted) {
           outcome.notes.push("run aborted during verification — scripts were not run");
+        } else if (!projectTrusted) {
+          progress?.addRow("Verify", `verify:untrusted:${round}`, `verification scripts${suffix}`, {
+            state: "cancelled",
+            statusText: "skipped — project not trusted",
+          });
         } else {
           notifyPhase(`running verification scripts${suffix}…`);
           const verifyScripts = await discoverVerifyScripts(ctx.cwd);
