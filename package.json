@@ -45,12 +45,12 @@
     "@earendil-works/pi-tui": "*"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "1.6.0",
-    "@earendil-works/pi-coding-agent": "1.6.0",
-    "@earendil-works/pi-tui": "1.6.0",
+    "@earendil-works/pi-ai": "1.7.0",
+    "@earendil-works/pi-coding-agent": "1.7.0",
+    "@earendil-works/pi-tui": "1.7.0",
     "@types/node": "^24.0.0",
     "@types/react": "^19.3.0",
-    "@underactive/pi-topping-opentui-tools": "0.14.4",
+    "@underactive/pi-topping-opentui-tools": "0.15.0",
     "typescript": "^5.9.3"
   },
   "pi": {
@@ -60,7 +60,7 @@
     "image": "https://raw.githubusercontent.com/underactive/pi-topping-persona-audit/main/media/persona_audit_demo.png"
   },
   "dependencies": {
-    "@underactive/pi-topping-opentui": "0.14.4",
-    "@underactive/pi-topping-primitives": "0.13.0"
+    "@underactive/pi-topping-opentui": "0.15.0",
+    "@underactive/pi-topping-primitives": "0.15.0"
   }
 }
