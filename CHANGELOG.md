@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- The dialogs of `/persona-audit`, `/persona-audit-settings` and `/persona-audit-purge` can be used with the mouse in fullscreen mode: the reviewer source menu, the reviewer and roster pickers, the phase models, the guidance summary and its editor, the retry checkpoints, the findings review, the fix gate, the report viewer, the settings menu, the roster manager and the purge menu. A click on a button, a row, a card or a finding does what the keys do there, and the wheel moves the list or scrolls the text under the pointer. The text of a report and of a diff stays selectable, so a click on it does nothing, and the progress table has nothing to click. The keyboard works as before, regular mode has no mouse, and the dialogs look the same. This needs the mouse support of `@underactive/pi-topping-opentui` and `@underactive/pi-topping-opentui-tools`, which is not published yet: both dependencies still name `0.14.4` and are to be raised when it is.
+
+### Changed
+
+- The audit progress header now shows an animated comet underline beneath the active phase card; finished transcript snapshots retain a static separator.
+
 ## [0.6.0] - 2026-11-25
 
 ### Added

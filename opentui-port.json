@@ -53,6 +53,19 @@
     "persona-audit-report-viewer",
     "persona-audit-report-viewer-compact",
     "persona-audit-progress",
-    "persona-audit-progress-compact"
+    "persona-audit-progress-compact",
+    "persona-audit-experts-mouse",
+    "persona-audit-findings-review-mouse",
+    "persona-audit-fix-gate-mouse",
+    "persona-audit-guidance-mouse",
+    "persona-audit-phase-models-mouse",
+    "persona-audit-purge-mouse",
+    "persona-audit-report-viewer-mouse",
+    "persona-audit-retry-adjudicator-mouse",
+    "persona-audit-retry-reviewers-mouse",
+    "persona-audit-roster-picker-mouse",
+    "persona-audit-rosters-mouse",
+    "persona-audit-settings-mouse",
+    "persona-audit-source-mouse"
   ]
 }

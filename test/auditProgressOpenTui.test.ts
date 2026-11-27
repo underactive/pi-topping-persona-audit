@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
-import type { AuditProgressTable, AuditProgressContext, ProgressHost, ProgressTheme } from "../src/components/AuditProgress.ts";
+import type { AuditPhase, AuditProgressTable, AuditProgressContext, AuditProgressView, ProgressHost, ProgressTheme } from "../src/components/AuditProgress.ts";
 import { AuditProgressWidget, renderAuditSnapshot } from "../src/components/AuditProgress.ts";
+import { renderOpenTuiProgress } from "../src/components/AuditProgressOpenTui.ts";
 import type { Finding } from "../src/types.ts";
 
 const strip = (text: string): string => text.replace(/\x1b\[[0-9;]*m/g, "");
@@ -40,6 +41,50 @@ const finding: Finding = {
   rationale: "SQL string is concatenated from user input",
   suggestedChange: "use a parameterized query",
 };
+
+test("header comet follows the active card, advances two columns per tick, and freezes cleanly", () => {
+  const phases: AuditPhase[] = ["Review", "Triage", "Implement", "Verify"];
+  let phase: AuditPhase | undefined = "Review";
+  let elapsed = 0;
+  const view: AuditProgressView = {
+    progressRows: () => [],
+    footerSummary: () => "",
+    totalMs: () => elapsed,
+    waitingMs: () => 0,
+    isWaiting: () => false,
+    totalCost: () => ({ costUsd: 0, incomplete: false }),
+    scope: undefined,
+    baseHash: undefined,
+    phaseModels: () => ({ Review: "model", Triage: "model", Implement: "model", Verify: "model" }),
+    phaseThinking: () => ({}),
+    activePhase: () => phase,
+    hasActiveRows: () => true,
+  };
+  const width = 100;
+  const colWidth = Math.floor((width - 7) / 4);
+  const rule = (frozen = false, renderWidth = width): string => {
+    const lines = renderOpenTuiProgress({
+      view, width: renderWidth, maxRows: 40, frozen, spin: 0,
+      meterColor: "thinkingLevel", meterDirection: "ltr", meterLevels: {}, theme,
+    }).map(strip);
+    return lines.find((line) => /[─━]{10}/.test(line)) ?? "";
+  };
+  for (const [index, active] of phases.entries()) {
+    phase = active;
+    elapsed = 0;
+    const first = rule();
+    assert.equal(first.indexOf("━"), 2 + index * (colWidth + 1), active);
+    elapsed = 100;
+    const second = rule();
+    assert.equal(second.lastIndexOf("━") - first.lastIndexOf("━"), 2, active);
+    assert.equal(second.length, first.length, "animation does not change separator width");
+  }
+  assert.doesNotMatch(rule(true), /━/, "frozen snapshots use a plain rule");
+  phase = undefined;
+  assert.doesNotMatch(rule(), /━/, "no phase means no comet");
+  phase = "Review";
+  assert.doesNotMatch(rule(false, 40), /━/, "no band means no comet on a narrow terminal");
+});
 
 test("OpenTUI progress adapter renders live telemetry and frozen snapshots", () => {
   const { ctx, currentTable } = openTuiContext();
