@@ -6,9 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-27
+
 ### Added
 
 - The dialogs of `/persona-audit`, `/persona-audit-settings` and `/persona-audit-purge` can be used with the mouse in fullscreen mode: the reviewer source menu, the reviewer and roster pickers, the phase models, the guidance summary and its editor, the retry checkpoints, the findings review, the fix gate, the report viewer, the settings menu, the roster manager and the purge menu. A click on a button, a row, a card or a finding does what the keys do there, and the wheel moves the list or scrolls the text under the pointer. The text of a report and of a diff stays selectable, so a click on it does nothing, and the progress table has nothing to click. The keyboard works as before, regular mode has no mouse, and the dialogs look the same. This needs the mouse support of `@underactive/pi-topping-opentui` and `@underactive/pi-topping-opentui-tools`, which now name `0.15.0`, the release that ships it.
+
+### Fixed
+
+- **Verification scripts and regression tests no longer run in an untrusted project.** When the project is not trusted, verification skips `discoverVerifyScripts`/`runVerifyScript` and the regression harness, settles the corresponding rows as cancelled, and adds a note telling the user to run them themselves (`src/orchestrator.ts`).
+- **The settings dialog's save merge now lands inside the store's lock.** Saving goes through `updatePersonaAuditConfig` with `fromDialogSettings`, so a config written while the dialog was open is not reverted (`src/index.ts`, `src/ui/settings-dialog.ts`).
+- **Reviewer cache key hashing tolerates missing and oversized files.** A deleted or unreadable manifest file contributes a stable `missing` sentinel instead of failing the key, and files past a 2 MB cap contribute a size sentinel (`src/index.ts`).
 
 ### Changed
 
